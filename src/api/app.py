@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi.responses import HTMLResponse, Response
 
-from .routers import health, strategies, risk, orders, market, backtest, trading, alpha_research, reconciliation, auth, capital, audit, performance, agents, training
+from .routers import health, strategies, risk, orders, market, backtest, trading, alpha_research, reconciliation, auth, capital, audit, performance, agents, training, broker
 
 logger = logging.getLogger(__name__)
 
@@ -1376,6 +1376,21 @@ async def lifespan(app: FastAPI):
             # ── Wire ensemble_engine for prediction metadata (Sprint 8.3) ──
             _autonomous_loop._ensemble_engine = getattr(app.state, "ensemble_engine", None)
 
+            # ── Wire news sentiment into autonomous loop (Phase 1: news-aware trading) ──
+            try:
+                from src.ai.llm.client import LLMClient, LLMConfig
+                from src.ai.llm.sentiment import NewsSentimentService
+                _llm_config = LLMConfig()  # reads OPENAI_API_KEY / ANTHROPIC_API_KEY from env
+                if _llm_config.api_key:
+                    _llm_client = LLMClient(_llm_config)
+                    _sentiment_service = NewsSentimentService(_llm_client)
+                    _autonomous_loop.set_sentiment_service(_sentiment_service)
+                    logger.info("News sentiment wired to autonomous loop (provider=%s)", _llm_config.provider)
+                else:
+                    logger.info("No LLM API key set — sentiment integration skipped (set OPENAI_API_KEY or ANTHROPIC_API_KEY)")
+            except Exception as e:
+                logger.warning("Sentiment service not wired: %s", e)
+
 # ── Multi-Agent Orchestrator ──
             try:
                 from src.agents.base import AgentOrchestrator
@@ -2034,6 +2049,7 @@ def create_app() -> FastAPI:
     app.include_router(performance.router, prefix="/api/v1/performance", tags=["Performance"])
     app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
     app.include_router(training.router, prefix="/api/v1/training", tags=["Training"])
+    app.include_router(broker.router, prefix="/api/v1", tags=["Broker"])
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):

@@ -152,6 +152,56 @@ class AutonomousLoop:
         self._last_kill_switch_armed: bool = False
         self._close_attempts: Dict[str, int] = {}  # trade_key -> retry count
 
+        # ── Sentiment integration (Phase 1: news-aware trading) ──
+        self._sentiment_service = None  # set via set_sentiment_service()
+        self._last_sentiment_score: float = 0.5  # neutral default
+        self._last_sentiment_ts: Optional[float] = None
+        self._sentiment_cache_ttl: float = 300.0  # refresh sentiment every 5 min
+
+    def set_sentiment_service(self, service) -> None:
+        """Wire news sentiment service for exposure adjustment."""
+        self._sentiment_service = service
+        logger.info("Sentiment service wired to autonomous loop")
+
+    async def _fetch_sentiment(self) -> float:
+        """Fetch latest market sentiment; returns multiplier 0.5-1.2."""
+        import time as _time
+        if self._sentiment_service is None:
+            return 1.0
+        # Cache: only refresh every 5 minutes
+        now = _time.time()
+        if self._last_sentiment_ts and (now - self._last_sentiment_ts) < self._sentiment_cache_ttl:
+            return self._sentiment_to_multiplier(self._last_sentiment_score)
+        try:
+            result = await self._sentiment_service.analyze(
+                "Indian stock market overall outlook today", source="autonomous_loop"
+            )
+            if result:
+                self._last_sentiment_score = result.score
+                self._last_sentiment_ts = now
+                mult = self._sentiment_to_multiplier(result.score)
+                logger.info("Sentiment update: %s (score=%.2f, multiplier=%.2f, suggestion=%s)",
+                           result.sentiment, result.score, mult, result.risk_reduction_suggestion)
+                return mult
+        except Exception as e:
+            logger.debug("Sentiment fetch failed: %s", e)
+        return 1.0
+
+    @staticmethod
+    def _sentiment_to_multiplier(score: float) -> float:
+        """Convert sentiment score (0-1) to exposure multiplier (0.5-1.2)."""
+        # score 0.0 (very negative) → 0.5x, score 0.5 (neutral) → 1.0x, score 1.0 (very positive) → 1.2x
+        if score <= 0.3:
+            return 0.5  # Very bearish: halve exposure
+        elif score <= 0.45:
+            return 0.7  # Bearish: reduce exposure
+        elif score <= 0.55:
+            return 1.0  # Neutral: normal
+        elif score <= 0.7:
+            return 1.1  # Bullish: slight increase
+        else:
+            return 1.2  # Very bullish: max increase
+
     def _bar_ts(self) -> str:
         return self.get_bar_ts()
 
@@ -312,6 +362,10 @@ class AutonomousLoop:
             logger.warning("Tick %d: equity=%.2f, skipping allocation (no capital)", self._tick_count, equity)
             return
         exposure_mult = risk_state.get("exposure_multiplier") or 1.0
+
+        # Apply news sentiment to exposure multiplier
+        sentiment_mult = await self._fetch_sentiment()
+        exposure_mult = round(max(0.5, min(1.5, exposure_mult * sentiment_mult)), 2)
         max_position_pct = risk_state.get("max_position_pct") or 5.0
         drawdown_scale = risk_state.get("drawdown_scale")
         regime_scale = risk_state.get("regime_scale") or regime_scale_from_classifier
