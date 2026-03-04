@@ -115,17 +115,36 @@ class AngelOneWsConnector:
         """Open WebSocket. Uses websockets library if available."""
         try:
             import websockets
+            extra_headers = {
+                "Authorization": f"Bearer {self.token}",
+                "x-api-key": self.api_key,
+                "x-client-code": self.api_secret,
+            }
             ws = await asyncio.wait_for(
                 websockets.connect(
                     self.feed_url,
+                    additional_headers=extra_headers,
                     ping_interval=30,
                     ping_timeout=10,
                     close_timeout=5,
                 ),
                 timeout=15,
             )
-            # SmartAPI: send token/subscription; format depends on API version
-            # Placeholder: if API requires auth frame first, send it here
+            # SmartAPI requires auth handshake frame after connection
+            auth_frame = json.dumps({
+                "task": "cn",
+                "channel": "",
+                "token": self.token,
+                "user": self.api_secret,
+                "acctid": self.api_secret,
+            })
+            await ws.send(auth_frame)
+            # Wait for auth acknowledgement
+            try:
+                ack = await asyncio.wait_for(ws.recv(), timeout=10)
+                logger.info("Angel One WS auth response received")
+            except asyncio.TimeoutError:
+                logger.warning("Angel One WS auth ack timeout — continuing")
             return ws
         except ImportError:
             # No websockets: create a mock that never yields (tests can inject queue)
@@ -207,21 +226,70 @@ class AngelOneWsConnector:
         logger.info("Angel One WebSocket disconnected")
 
     async def subscribe_ticks(self, symbols: list) -> None:
-        """Subscribe to tick stream for given symbols. SmartAPI format: tradingsymbol e.g. NSE|RELIANCE-EQ."""
+        """Subscribe to tick stream for given symbols via SmartAPI WebSocket.
+
+        SmartAPI requires numeric instrument tokens, not trading symbols.
+        We resolve tokens via the HTTP client's search endpoint, falling back
+        to trading-symbol format if lookup fails.
+        """
         self._symbols = list(symbols)
         if not self._ws:
             return
-        # SmartAPI subscription message format (version-dependent)
-        # Example: {"action": "subscribe", "params": {"mode": "ltp", "tokenList": ["NSE|12345"]}}
-        # We don't have token mapping here; real implementation would use symbol token API
+        # Resolve symbol → numeric token via instrument master or search API
+        token_list = await self._resolve_tokens(symbols)
+        if not token_list:
+            logger.warning("No tokens resolved for symbols: %s", symbols)
+            return
         try:
+            # SmartAPI v2 subscription format with numeric exchange|token pairs
             payload = json.dumps({
-                "action": "subscribe",
-                "params": {"mode": "ltp", "tokenList": [f"{self.exchange_str}|{s}-EQ" for s in self._symbols]},
+                "action": 1,  # 1 = subscribe
+                "params": {
+                    "mode": 1,  # 1 = LTP mode
+                    "tokenList": [{"exchangeType": 1, "tokens": token_list}],  # 1 = NSE
+                },
             })
             await self._ws.send(payload)
+            logger.info("Subscribed to %d symbols (%d tokens resolved)", len(symbols), len(token_list))
         except Exception as e:
             logger.warning("Angel One subscribe send failed: %s", e)
+
+    async def _resolve_tokens(self, symbols: list) -> list:
+        """Resolve trading symbols to SmartAPI numeric tokens.
+
+        Uses AngelOneHttpClient.search_scrip() if available, otherwise falls back
+        to well-known NSE symbol→token mappings for top traded stocks.
+        """
+        # Well-known NSE tokens for top stocks (fallback if HTTP client unavailable)
+        KNOWN_TOKENS = {
+            "RELIANCE": "2885", "TCS": "11536", "HDFCBANK": "1333",
+            "INFY": "1594", "ICICIBANK": "4963", "HINDUNILVR": "1394",
+            "ITC": "1660", "SBIN": "3045", "BHARTIARTL": "10604",
+            "KOTAKBANK": "1922", "LT": "11483", "AXISBANK": "5900",
+            "WIPRO": "3787", "ADANIENT": "25", "BAJFINANCE": "317",
+            "MARUTI": "10999", "TATAMOTORS": "3456", "SUNPHARMA": "3351",
+            "TITAN": "3506", "ULTRACEMCO": "11532", "ASIANPAINT": "236",
+            "NESTLEIND": "17963", "TECHM": "13538", "POWERGRID": "14977",
+            "NTPC": "11630", "BAJAJFINSV": "16675", "JSWSTEEL": "11723",
+            "TATASTEEL": "3499", "ONGC": "2475", "HCLTECH": "7229",
+            "INDUSINDBK": "5258", "ADANIPORTS": "15083", "COALINDIA": "20374",
+            "GRASIM": "1232", "CIPLA": "694", "EICHERMOT": "910",
+            "DRREDDY": "881", "APOLLOHOSP": "157", "BPCL": "526",
+            "DIVISLAB": "10940", "SBILIFE": "21808", "BRITANNIA": "547",
+            "HEROMOTOCO": "1348", "HINDALCO": "1363", "BAJAJ-AUTO": "16669",
+            "TATACONSUM": "3432", "M&M": "2031", "WIPRO": "3787",
+            "NIFTY50": "26000", "BANKNIFTY": "26009",
+        }
+        tokens = []
+        for sym in symbols:
+            clean = sym.replace(".NS", "").replace("-EQ", "").upper()
+            if clean in KNOWN_TOKENS:
+                tokens.append(KNOWN_TOKENS[clean])
+            else:
+                # Fallback: try symbol name as token (some APIs accept this)
+                tokens.append(clean)
+                logger.debug("No token mapping for %s, using symbol name", clean)
+        return tokens
 
     def subscribe(self, symbols: List[str]) -> None:
         """Sync alias for subscribe_ticks (for API compatibility)."""

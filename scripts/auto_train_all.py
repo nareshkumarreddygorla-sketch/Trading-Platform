@@ -128,7 +128,7 @@ def step_train_xgboost():
     if not os.path.exists(script):
         logger.warning("XGBoost training script not found, skipping")
         return True
-    return run_step("XGBoost Alpha Model", [sys.executable, script], timeout=600)
+    return run_step("XGBoost Alpha Model", [sys.executable, script], timeout=3600)
 
 
 def step_train_lstm(epochs: int = 30, symbols: str = None):
@@ -138,7 +138,7 @@ def step_train_lstm(epochs: int = 30, symbols: str = None):
            "--epochs", str(epochs)]
     if symbols:
         cmd.extend(["--symbols", symbols])
-    return run_step("LSTM Predictor", cmd, timeout=1200)
+    return run_step("LSTM Predictor", cmd, timeout=3600)
 
 
 def step_train_transformer(epochs: int = 30, symbols: str = None):
@@ -148,7 +148,7 @@ def step_train_transformer(epochs: int = 30, symbols: str = None):
            "--epochs", str(epochs)]
     if symbols:
         cmd.extend(["--symbols", symbols])
-    return run_step("Transformer Predictor", cmd, timeout=1200)
+    return run_step("Transformer Predictor", cmd, timeout=3600)
 
 
 def step_train_rl(timesteps: int = 100000, symbols: str = None):
@@ -158,7 +158,7 @@ def step_train_rl(timesteps: int = 100000, symbols: str = None):
            "--timesteps", str(timesteps)]
     if symbols:
         cmd.extend(["--symbols", symbols])
-    return run_step("RL Agent (PPO)", cmd, timeout=1800)
+    return run_step("RL Agent (PPO)", cmd, timeout=3600)
 
 
 def save_training_meta(results: dict):
