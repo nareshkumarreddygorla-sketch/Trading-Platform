@@ -1,0 +1,162 @@
+groups:
+  - name: trading_core
+    rules:
+      - alert: TradingCircuitBreakerOpen
+        expr: trading_risk_circuit_open == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Risk circuit breaker is open - new orders blocked"
+
+      - alert: APIDown
+        expr: up{job="trading-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Trading API is down"
+
+  - name: risk_alerts
+    rules:
+      - alert: VaRBreachWarning
+        expr: trading_var_95_pct > 4.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VaR 95% exceeds 4% of portfolio ({{ $value }}%)"
+
+      - alert: VaRBreachCritical
+        expr: trading_var_95_pct > 5.0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "VaR 95% exceeds 5% limit ({{ $value }}%)"
+
+      - alert: DrawdownAlert
+        expr: trading_drawdown_pct > 3.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Portfolio drawdown exceeds 3% ({{ $value }}%)"
+
+      - alert: DrawdownCritical
+        expr: trading_drawdown_pct > 5.0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Portfolio drawdown exceeds 5% - circuit breaker territory ({{ $value }}%)"
+
+      - alert: PositionConcentration
+        expr: max(trading_position_pct) > 8.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Single position exceeds 8% of portfolio"
+
+      - alert: CorrelationSpike
+        expr: trading_portfolio_correlation > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Portfolio-level correlation spike ({{ $value }})"
+
+      - alert: KillSwitchStuck
+        expr: trading_kill_switch_armed_seconds > 1800
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kill switch armed for >30 minutes without disarm"
+
+  - name: model_alerts
+    rules:
+      - alert: ModelStaleness
+        expr: (time() - trading_last_retrain_timestamp) > 1209600
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI models have not been retrained for >14 days"
+
+      - alert: ModelDriftDetected
+        expr: trading_drift_layers_fired >= 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model drift detected ({{ $value }} layers)"
+
+  - name: execution_alerts
+    rules:
+      - alert: FillLatencyHigh
+        expr: histogram_quantile(0.95, trading_fill_latency_seconds_bucket) > 5.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 fill latency exceeds 5 seconds"
+
+      - alert: OrderRejectRateHigh
+        expr: rate(trading_orders_rejected_total[5m]) / (rate(trading_orders_total[5m]) + 0.001) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order rejection rate exceeds 20% in last 5 minutes"
+
+      - alert: CostOverrun
+        expr: trading_avg_cost_bps > 20.0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Average trading costs exceed 20bps ({{ $value }}bps)"
+
+      - alert: ReconciliationDelay
+        expr: (time() - trading_last_reconciliation_timestamp) > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reconciliation not run for >10 minutes"
+
+  - name: infrastructure_alerts
+    rules:
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down - fill dedup and caching affected"
+
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down - persistence affected"
+
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes{job="trading-api"} > 2147483648
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Trading API memory usage exceeds 2GB"
+
+      - alert: MarketFeedUnhealthy
+        expr: trading_market_feed_healthy == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Market data feed is unhealthy"

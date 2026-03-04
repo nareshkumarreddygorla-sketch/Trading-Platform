@@ -1,0 +1,152 @@
+# AlphaForge Trading Platform - Docker Compose
+# Full stack: API + Redis + PostgreSQL + Grafana + Prometheus
+version: "3.9"
+
+services:
+  # ── Trading API ──
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alphaforge-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - PAPER_MODE=${PAPER_MODE:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-alphaforge}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-alphaforge}
+      - ANGEL_ONE_API_KEY=${ANGEL_ONE_API_KEY:-}
+      - ANGEL_ONE_API_SECRET=${ANGEL_ONE_API_SECRET:-}
+      - ANGEL_ONE_TOKEN=${ANGEL_ONE_TOKEN:-}
+      - ANGEL_ONE_CLIENT_ID=${ANGEL_ONE_CLIENT_ID:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - INITIAL_EQUITY=${INITIAL_EQUITY:-1000000}
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    networks:
+      - alphaforge
+
+  # ── Redis (fill dedup, caching, pub/sub) ──
+  redis:
+    image: redis:7-alpine
+    container_name: alphaforge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - alphaforge
+
+  # ── PostgreSQL (orders, positions, audit trail) ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: alphaforge-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-alphaforge}
+      POSTGRES_USER: ${POSTGRES_USER:-alphaforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alphaforge -d alphaforge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - alphaforge
+
+  # ── Prometheus (metrics collection) ──
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: alphaforge-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/observability/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - alphaforge
+
+  # ── Grafana (dashboards + visualization) ──
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: alphaforge-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-alphaforge}
+      GF_INSTALL_PLUGINS: grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - alphaforge
+
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  alphaforge:
+    driver: bridge

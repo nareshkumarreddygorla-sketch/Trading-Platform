@@ -1,0 +1,26 @@
+# Ruff linter configuration
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "S",     # flake8-bandit (security)
+    "B",     # flake8-bugbear
+    "UP",    # pyupgrade
+]
+ignore = [
+    "S101",  # assert used (OK in tests)
+    "S603",  # subprocess without shell=True (OK)
+    "S607",  # partial path to executable
+    "E501",  # line too long (handled by formatter)
+]
+
+[lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106"]  # Allow asserts and hardcoded passwords in tests
+
+[lint.isort]
+known-first-party = ["src"]

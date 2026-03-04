@@ -1,0 +1,46 @@
+# Phase 14: Institutional observability — drift, Sharpe drop, execution degradation, drawdown
+groups:
+  - name: institutional
+    rules:
+      - alert: DriftDetected
+        expr: trading_drift_psi > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prediction/distribution drift (PSI > 0.2) — consider retrain"
+      - alert: SharpeDrop
+        expr: trading_sharpe_rolling < 0.3
+        for: 1d
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rolling Sharpe dropped below 0.3 — review strategy / rollback"
+      - alert: ExecutionDegradation
+        expr: trading_slippage_ratio > 1.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Realized slippage > 1.5x expected — reduce size or check venue"
+      - alert: RejectionRateHigh
+        expr: trading_rejection_rate > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order rejection rate > 20%"
+      - alert: EquityDrawdown
+        expr: trading_drawdown_pct > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Portfolio drawdown > 5% — circuit / pause"
+      - alert: PortfolioHeatHigh
+        expr: trading_portfolio_heat > 1.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Portfolio heat > 1.2 (gross exposure)"

@@ -1,0 +1,9 @@
+{
+  "name": "trading-platform",
+  "private": true,
+  "scripts": {
+    "dev": "cd trading-ui && npm run dev:all",
+    "dev:ui": "cd trading-ui && npm run dev",
+    "dev:api": "cd trading-ui && npm run dev:api"
+  }
+}

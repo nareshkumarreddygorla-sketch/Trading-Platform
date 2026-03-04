@@ -1,0 +1,51 @@
+# API service — Production with auto-training
+FROM python:3.11-slim
+
+# System deps for cron + build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cron gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app
+
+# Install Python deps (cached layer)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY src ./src
+COPY scripts ./scripts
+COPY config ./config
+COPY deploy/docker/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
+# Create non-root user
+RUN groupadd -r trading && useradd -r -g trading -u 1000 -d /app trading && \
+    chown -R trading:trading /app
+
+# Models volume (persisted across deploys)
+VOLUME /app/models
+VOLUME /app/logs
+
+# Environment defaults
+ENV PORT=8000
+ENV WORKERS=1
+ENV LOG_LEVEL=info
+ENV TRADING_MODE=paper
+ENV TRAIN_SYMBOLS=all
+ENV TRAIN_PERIOD=60d
+ENV TRAIN_INTERVAL=5m
+ENV MODEL_DIR=/app/models
+ENV RETRAIN_CRON="0 2 * * 0"
+
+EXPOSE 8000
+
+# Run as non-root
+USER trading
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=120s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
+
+ENTRYPOINT ["./entrypoint.sh"]

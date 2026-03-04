@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs ls -la)",
+      "Bash(wc -l /Users/nishitareddy/Trading-Platform/tests/*.py)",
+      "Bash(du -sh /Users/nishitareddy/Trading-Platform/*)",
+      "Bash(grep -l \"WebSocket\\\\|websocket\" src/api/routers/*.py)",
+      "Bash(xargs basename -a)",
+      "Bash(grep -r \"def train\\\\|def retrain\\\\|def test\" /Users/nishitareddy/Trading-Platform/src/ai/self_learning/*.py)",
+      "Bash(grep -r \"model_id\" /Users/nishitareddy/Trading-Platform/src/ai/models/*.py)",
+      "Bash(grep -E \"model_id\\\\s*=\" /Users/nishitareddy/Trading-Platform/src/ai/models/*.py)",
+      "Bash(grep -r \"class.*Pipeline\\\\|class.*Orchestrator\\\\|class.*Engine\" /Users/nishitareddy/Trading-Platform/src/ai/*.py)",
+      "Bash(git init)",
+      "Bash(git add -A)"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+*.pem
+*.key
+*.crt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.Python
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Frontend (trading-ui)
+trading-ui/node_modules/
+trading-ui/.next/
+trading-ui/out/
+trading-ui/.env.local
+
+# Legacy frontend (deleted — trading-ui is the primary frontend)
+# frontend/ removed in Phase 0 cleanup
+
+# Root node_modules
+node_modules/
+
+# Logs
+*.log
+logs/
+
+# Database
+*.sqlite
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML Models (large binaries - optionally track with LFS)
+models/*.pkl
+models/*.joblib
+models/*.pt
+models/*.pth
+models/*.onnx
+models/*.h5
+!models/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Docker
+*.tar
+
+# Misc
+*.bak
+*.tmp

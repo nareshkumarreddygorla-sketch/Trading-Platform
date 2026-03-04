@@ -1,0 +1,29 @@
+{
+  "_comment": "Stock universe for AI training. Edit this file to add/remove stocks.",
+
+  "nifty_50": [
+    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
+    "HINDUNILVR", "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK",
+    "LT", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
+    "TITAN", "SUNPHARMA", "ULTRACEMCO", "WIPRO", "HCLTECH",
+    "NESTLEIND", "BAJAJFINSV", "ONGC", "NTPC", "POWERGRID",
+    "ADANIENT", "ADANIPORTS", "JSWSTEEL", "TATAMOTORS", "TATASTEEL",
+    "TECHM", "INDUSINDBK", "HINDALCO", "COALINDIA", "DRREDDY",
+    "DIVISLAB", "GRASIM", "CIPLA", "EICHERMOT", "APOLLOHOSP",
+    "HEROMOTOCO", "BPCL", "BRITANNIA", "TATACONSUM", "SBILIFE",
+    "HDFCLIFE", "M&M", "UPL", "BAJAJ-AUTO", "SHREECEM"
+  ],
+
+  "nifty_next_50": [
+    "BANKBARODA", "PNB", "IOC", "GAIL", "VEDL",
+    "HAVELLS", "PIDILITIND", "DABUR", "GODREJCP", "MARICO",
+    "BERGEPAINT", "ICICIPRULI", "COLPAL", "NAUKRI", "MUTHOOTFIN",
+    "CHOLAFIN", "TATAPOWER", "DLF", "SIEMENS", "ABB"
+  ],
+
+  "custom": [],
+
+  "indices": ["^NSEI", "^NSEBANK"],
+
+  "exclude": []
+}

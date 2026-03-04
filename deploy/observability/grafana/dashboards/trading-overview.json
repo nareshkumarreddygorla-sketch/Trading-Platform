@@ -1,0 +1,190 @@
+{
+  "dashboard": {
+    "title": "AlphaForge Trading Platform",
+    "uid": "alphaforge-overview",
+    "tags": ["trading", "alphaforge"],
+    "timezone": "Asia/Kolkata",
+    "refresh": "10s",
+    "schemaVersion": 38,
+    "version": 2,
+    "panels": [
+      {
+        "title": "API Health",
+        "type": "stat",
+        "targets": [{"expr": "up{job=\"trading-api\"}", "legendFormat": "Up"}],
+        "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+        "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}, "type": "value"}]}}
+      },
+      {
+        "title": "Circuit Breaker",
+        "type": "stat",
+        "targets": [{"expr": "trading_risk_circuit_open", "legendFormat": "Open=1"}],
+        "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+        "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"text": "CLOSED", "color": "green"}, "1": {"text": "OPEN", "color": "red"}}, "type": "value"}]}}
+      },
+      {
+        "title": "Orders Submitted",
+        "type": "stat",
+        "targets": [{"expr": "rate(orders_total[5m]) * 60", "legendFormat": "orders/min"}],
+        "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0}
+      },
+      {
+        "title": "Orders Rejected",
+        "type": "stat",
+        "targets": [{"expr": "rate(orders_rejected_total[5m]) * 60", "legendFormat": "rejected/min"}],
+        "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+        "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": 0}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}}}
+      },
+      {
+        "title": "Orders Filled",
+        "type": "stat",
+        "targets": [{"expr": "rate(orders_filled_total[5m]) * 60", "legendFormat": "fills/min"}],
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0}
+      },
+      {
+        "title": "Drift Events",
+        "type": "stat",
+        "targets": [{"expr": "trading_ai_drift_detected_total", "legendFormat": "Total"}],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0}
+      },
+
+      {
+        "title": "Cumulative P&L",
+        "type": "timeseries",
+        "targets": [{"expr": "trading_pnl_total", "legendFormat": "P&L"}],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+        "fieldConfig": {"defaults": {"color": {"mode": "continuous-GrYlRd"}, "unit": "currencyINR"}}
+      },
+      {
+        "title": "Order Submission Latency",
+        "type": "timeseries",
+        "targets": [
+          {"expr": "histogram_quantile(0.50, rate(order_submission_latency_seconds_bucket[5m]))", "legendFormat": "p50"},
+          {"expr": "histogram_quantile(0.95, rate(order_submission_latency_seconds_bucket[5m]))", "legendFormat": "p95"},
+          {"expr": "histogram_quantile(0.99, rate(order_submission_latency_seconds_bucket[5m]))", "legendFormat": "p99"}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      },
+
+      {
+        "title": "Risk Rejections by Reason",
+        "type": "timeseries",
+        "targets": [{"expr": "rate(risk_rejection_total[5m]) * 60", "legendFormat": "{{reason}}"}],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}
+      },
+      {
+        "title": "Broker Latency by Operation",
+        "type": "timeseries",
+        "targets": [
+          {"expr": "histogram_quantile(0.95, rate(broker_latency_seconds_bucket[5m]))", "legendFormat": "{{operation}} p95"}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      },
+
+      {
+        "title": "AI Model Confidence",
+        "type": "timeseries",
+        "targets": [{"expr": "trading_ai_model_confidence", "legendFormat": "{{model_id}}"}],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 20},
+        "fieldConfig": {"defaults": {"min": 0, "max": 1}}
+      },
+      {
+        "title": "Current Regime",
+        "type": "timeseries",
+        "targets": [{"expr": "trading_ai_regime", "legendFormat": "{{regime}}"}],
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 20}
+      },
+      {
+        "title": "Model Retrains",
+        "type": "timeseries",
+        "targets": [{"expr": "increase(trading_ai_retrain_total[1h])", "legendFormat": "{{model_id}} (replaced={{replaced}})"}],
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 20}
+      },
+
+      {
+        "title": "Fill Events",
+        "type": "timeseries",
+        "targets": [{"expr": "rate(fill_events_total[5m]) * 60", "legendFormat": "{{fill_type}}"}],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 28}
+      },
+      {
+        "title": "Fill Latency",
+        "type": "timeseries",
+        "targets": [
+          {"expr": "histogram_quantile(0.50, rate(fill_latency_seconds_bucket[5m]))", "legendFormat": "p50"},
+          {"expr": "histogram_quantile(0.95, rate(fill_latency_seconds_bucket[5m]))", "legendFormat": "p95"}
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 28},
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      },
+      {
+        "title": "Reconciliation Mismatches",
+        "type": "timeseries",
+        "targets": [
+          {"expr": "reconciliation_mismatches_total", "legendFormat": "Total Mismatches"},
+          {"expr": "fill_reconciliation_mismatch_total", "legendFormat": "Fill Mismatches"}
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 28}
+      },
+
+      {
+        "title": "Broker Errors",
+        "type": "timeseries",
+        "targets": [
+          {"expr": "rate(broker_error_total[5m]) * 60", "legendFormat": "{{type}}"},
+          {"expr": "rate(broker_failure_total[5m]) * 60", "legendFormat": "{{operation}}/{{reason}}"}
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 36}
+      },
+      {
+        "title": "Duplicate Prevention",
+        "type": "timeseries",
+        "targets": [
+          {"expr": "rate(duplicate_order_prevented_total[5m]) * 60", "legendFormat": "Duplicate Orders"},
+          {"expr": "rate(duplicate_fill_total[5m]) * 60", "legendFormat": "Duplicate Fills"}
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 36}
+      },
+      {
+        "title": "Persistence Failures",
+        "type": "timeseries",
+        "targets": [
+          {"expr": "orders_persist_failed_total", "legendFormat": "Order Persist Failures"},
+          {"expr": "orders_fill_persist_failed_total", "legendFormat": "Fill Persist Failures"}
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 36}
+      },
+
+      {
+        "title": "Startup Recovery",
+        "type": "stat",
+        "targets": [
+          {"expr": "histogram_quantile(0.95, startup_recovery_duration_seconds_bucket)", "legendFormat": "Recovery p95"}
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 44},
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      },
+      {
+        "title": "Session Expiry Events",
+        "type": "stat",
+        "targets": [{"expr": "broker_session_expired_total", "legendFormat": "Total"}],
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 44}
+      },
+      {
+        "title": "Exposure Reservations",
+        "type": "stat",
+        "targets": [{"expr": "rate(exposure_reserved_total[5m]) * 60", "legendFormat": "reservations/min"}],
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 44}
+      },
+      {
+        "title": "Fill Mismatch Total",
+        "type": "stat",
+        "targets": [{"expr": "fill_mismatch_total", "legendFormat": "Total"}],
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 44},
+        "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": 0}, {"color": "red", "value": 1}]}}}
+      }
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+# Copy to settings.yaml. Do not commit secrets.
+
+environment: development  # development | staging | production
+
+market_data:
+  redis_url: "redis://localhost:6379/0"
+  kafka_brokers: "localhost:9092"
+  kafka_ticks_topic: "market.ticks"
+  kafka_bars_topic: "market.bars"
+  timescale_url: "postgresql://localhost:5432/tsdb"
+
+risk:
+  max_position_pct: 5.0
+  max_daily_loss_pct: 2.0
+  max_open_positions: 10
+  var_confidence: 0.95
+  circuit_breaker_drawdown_pct: 5.0
+
+execution:
+  paper: true
+  # angel_one_api_key: ""
+  # angel_one_api_secret: ""
+  # angel_one_token: ""
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  log_level: "INFO"
+
+feature_flags:
+  enable_ml_strategies: false
+  enable_live_trading: false

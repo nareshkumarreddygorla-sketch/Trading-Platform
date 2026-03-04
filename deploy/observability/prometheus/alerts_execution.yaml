@@ -1,0 +1,37 @@
+# Alert thresholds for execution layer (see docs/EXECUTION_REDESIGN.md)
+groups:
+  - name: execution
+    rules:
+      - alert: OrderSubmissionLatencyHigh
+        expr: histogram_quantile(0.99, rate(order_submission_latency_seconds_bucket[5m])) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order submission p99 latency > 5s"
+      - alert: RiskRejectionRateHigh
+        expr: rate(risk_rejection_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Risk rejection rate > 6/min"
+      - alert: FillMismatch
+        expr: increase(fill_mismatch_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Reconciliation mismatch detected"
+      - alert: KillSwitchTriggered
+        expr: increase(kill_switch_triggered_total[1h]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kill switch was armed"
+      - alert: BrokerErrorRateHigh
+        expr: rate(broker_error_total[5m]) > 0.08
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Broker error rate > ~5/min"
