@@ -390,6 +390,14 @@ class AutonomousLoop:
         for signal, qty in allocated:
             if qty <= 0:
                 continue
+            # Hard safety cap: enforce max_position_pct at submission level
+            if signal.price and signal.price > 0 and equity > 0:
+                max_qty_cap = int(equity * (max_position_pct / 100.0) / signal.price)
+                if qty > max_qty_cap:
+                    logger.info("Position cap: %s qty %d→%d (%.1f%%→%.1f%%)", signal.symbol, qty, max_qty_cap, qty * signal.price / equity * 100, max_qty_cap * signal.price / equity * 100)
+                    qty = max_qty_cap
+                if qty <= 0:
+                    continue
             idem_key = stable_idempotency_key(bar_ts, signal.strategy_id, signal.symbol, signal.side.value)
             # 8.3: Attach prediction metadata to orders for outcome tracking
             order_metadata = dict(metadata) if metadata else {}
@@ -471,6 +479,14 @@ class AutonomousLoop:
                         sig, qty = item[0], item[1]
                     if qty <= 0 or sig.symbol in submitted_symbols:
                         continue
+                    # Hard safety cap: enforce max_position_pct at submission level
+                    if sig.price and sig.price > 0 and equity > 0:
+                        max_qty_cap = int(equity * (max_position_pct / 100.0) / sig.price)
+                        if qty > max_qty_cap:
+                            logger.info("Scanner position cap: %s qty %d→%d", sig.symbol, qty, max_qty_cap)
+                            qty = max_qty_cap
+                        if qty <= 0:
+                            continue
                     submitted_symbols.add(sig.symbol)
                     idem_key = stable_idempotency_key(bar_ts, sig.strategy_id, sig.symbol, sig.side.value)
                     req = OrderEntryRequest(

@@ -143,7 +143,9 @@ class ExecutionAgent(BaseAgent):
                 side = SignalSide.BUY if direction == "BUY" else SignalSide.SELL
 
                 # Calculate quantity from portfolio weight and price
-                portfolio_weight = min(0.08, confidence * 0.12)
+                # HARD CAP at 4.5% to stay well within risk manager's 5% limit
+                max_weight = 0.045
+                portfolio_weight = min(max_weight, confidence * 0.08)
                 if price > 0:
                     # Use equity from risk manager if available, else default
                     equity = 100_000.0
@@ -156,6 +158,9 @@ class ExecutionAgent(BaseAgent):
                         except Exception:
                             pass
                     quantity = max(1, int(equity * portfolio_weight / price))
+                    # Double-check: enforce hard max_position_pct cap
+                    max_qty = int(equity * max_weight / price)
+                    quantity = min(quantity, max(1, max_qty))
                 else:
                     quantity = 1  # Minimum order
 

@@ -1070,15 +1070,15 @@ async def lifespan(app: FastAPI):
             # Enhanced allocator: more concurrent signals, strategy-level caps
             allocator = PortfolioAllocator(AllocatorConfig(
                 max_active_signals=10,              # allow 10 concurrent positions
-                max_capital_pct_per_signal=8.0,     # 8% per position
+                max_capital_pct_per_signal=5.0,     # 5% per position (aligned with risk limit)
                 min_confidence=0.2,
                 strategy_cap_pct={
-                    "ai_alpha": 15.0,               # AI gets higher allocation
-                    "ema_crossover": 8.0,
-                    "macd": 8.0,
-                    "rsi": 8.0,
-                    "momentum_breakout": 10.0,
-                    "mean_reversion": 10.0,
+                    "ai_alpha": 5.0,                # Aligned with max_position_pct
+                    "ema_crossover": 5.0,
+                    "macd": 5.0,
+                    "rsi": 5.0,
+                    "momentum_breakout": 5.0,
+                    "mean_reversion": 5.0,
                 },
             ))
 

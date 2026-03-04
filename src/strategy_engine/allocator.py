@@ -66,6 +66,7 @@ class PortfolioAllocator:
 
             # Kelly criterion: f* = (bp - q) / b
             # b = win/loss ratio estimate, p = win probability (signal score), q = 1-p
+            # Kelly criterion: f* = (bp - q) / b  (half-Kelly for safety)
             kelly_pct = strategy_cap_pct
             if self.config.use_kelly and signal.score > 0.5:
                 p = signal.score  # Win probability from model confidence
@@ -73,17 +74,19 @@ class PortfolioAllocator:
                 b = 1.5  # Assumed reward/risk ratio (1.5:1)
                 kelly_full = ((b * p) - q) / b if b > 0 else 0.0
                 kelly_half = kelly_full * self.config.kelly_fraction
-                # Convert to % of equity, bounded by strategy cap
-                kelly_pct = min(strategy_cap_pct, max(1.0, kelly_half * 100.0))
+                # Convert to % of equity, bounded by strategy cap AND max_position_pct
+                kelly_pct = min(strategy_cap_pct, max_position_pct, max(1.0, kelly_half * 100.0))
 
-            notional_per_signal = equity * (kelly_pct / 100.0) * scale
+            # Enforce max_position_pct as hard cap on allocation %
+            effective_pct = min(kelly_pct, max_position_pct)
+            notional_per_signal = equity * (effective_pct / 100.0) * scale
             price = signal.price or 0.0
             if price <= 0:
                 continue
             raw_qty = int(notional_per_signal / price)
             if raw_qty <= 0:
                 continue
-            # Cap by max position size (% of equity)
+            # Double-cap by max position size (% of equity) as safety net
             max_notional = equity * (max_position_pct / 100.0)
             max_qty = int(max_notional / price) if price > 0 else 0
             qty = min(raw_qty, max_qty)
