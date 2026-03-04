@@ -73,6 +73,7 @@ export default function TradesPage() {
         <button
           onClick={() => refetch()}
           className="flex items-center gap-2 glass-card px-3 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:text-primary transition-colors"
+          aria-label="Refresh trade history"
         >
           <RefreshCw className="h-3.5 w-3.5" />
           Refresh
@@ -107,12 +108,14 @@ export default function TradesPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-2">
-        <Filter className="h-4 w-4 text-muted-foreground" />
+      <div className="flex items-center gap-2" role="group" aria-label="Filter orders by status">
+        <Filter className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
         {["", "FILLED", "PENDING", "CANCELLED"].map((status) => (
           <button
             key={status}
             onClick={() => setStatusFilter(status)}
+            aria-label={`Filter by ${status || "all"} orders`}
+            aria-pressed={statusFilter === status}
             className={cn(
               "rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all",
               statusFilter === status
@@ -158,7 +161,7 @@ export default function TradesPage() {
                 <thead>
                   <tr className="border-b border-border/20">
                     {["Time", "Symbol", "Side", "Type", "Qty", "Price", "Filled", "Status", "Strategy"].map((h) => (
-                      <th key={h} className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th key={h} scope="col" className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                         {h}
                       </th>
                     ))}
@@ -225,6 +228,7 @@ export default function TradesPage() {
               <button
                 onClick={() => setLimit((l) => l + 50)}
                 className="text-xs font-medium text-primary hover:text-primary/80 transition-colors"
+                aria-label="Load 50 more orders"
               >
                 Load more orders...
               </button>

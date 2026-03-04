@@ -69,7 +69,7 @@ def _position_to_dict(p, bar_cache=None) -> dict:
 
 
 @router.get("/snapshot")
-async def risk_snapshot(request: Request):
+async def risk_snapshot(request: Request, current_user: dict = Depends(get_current_user)):
     """Dashboard snapshot: equity, daily_pnl, positions (same shape as frontend expects)."""
     risk_manager = _get_risk_manager(request)
     if risk_manager is None:
@@ -89,7 +89,7 @@ async def risk_snapshot(request: Request):
 
 
 @router.get("/positions")
-async def risk_positions(request: Request):
+async def risk_positions(request: Request, current_user: dict = Depends(get_current_user)):
     """Open positions from risk manager (for dashboard/positions page)."""
     risk_manager = _get_risk_manager(request)
     if risk_manager is None:
@@ -100,7 +100,7 @@ async def risk_positions(request: Request):
 
 
 @router.get("/state")
-async def risk_state(request: Request):
+async def risk_state(request: Request, current_user: dict = Depends(get_current_user)):
     """Return current risk state from RiskManager (circuit, PnL, positions)."""
     risk_manager = _get_risk_manager(request)
     if risk_manager is None:
@@ -121,7 +121,7 @@ async def risk_state(request: Request):
 
 
 @router.get("/limits")
-async def get_limits(request: Request):
+async def get_limits(request: Request, current_user: dict = Depends(get_current_user)):
     """Return current risk limits from RiskManager."""
     risk_manager = _get_risk_manager(request)
     if risk_manager is None:
@@ -191,7 +191,7 @@ async def update_limits(
 
 
 @router.get("/var")
-async def risk_var(request: Request):
+async def risk_var(request: Request, current_user: dict = Depends(get_current_user)):
     """Real portfolio VaR (95% and 99%) with position breakdown."""
     var_result = getattr(request.app.state, "_last_var", None)
     if var_result is None:
@@ -206,7 +206,7 @@ async def risk_var(request: Request):
 
 
 @router.get("/sectors")
-async def risk_sectors(request: Request):
+async def risk_sectors(request: Request, current_user: dict = Depends(get_current_user)):
     """Sector concentration breakdown for current portfolio."""
     sc = getattr(request.app.state, "sector_classifier", None)
     rm = _get_risk_manager(request)
@@ -218,7 +218,7 @@ async def risk_sectors(request: Request):
 
 
 @router.get("/tail")
-async def risk_tail(request: Request):
+async def risk_tail(request: Request, current_user: dict = Depends(get_current_user)):
     """Tail risk status: VIX level, rapid drawdown, recovery phase."""
     trp = getattr(request.app.state, "tail_risk_protector", None)
     if trp is None:
@@ -235,7 +235,7 @@ async def risk_tail(request: Request):
 
 
 @router.get("/vol-targeting")
-async def risk_vol_targeting(request: Request):
+async def risk_vol_targeting(request: Request, current_user: dict = Depends(get_current_user)):
     """Volatility targeting state: target vs realized vol, scale factor."""
     vt = getattr(request.app.state, "vol_targeter", None)
     if vt is None:
@@ -244,7 +244,7 @@ async def risk_vol_targeting(request: Request):
 
 
 @router.get("/correlation")
-async def risk_correlation(request: Request):
+async def risk_correlation(request: Request, current_user: dict = Depends(get_current_user)):
     """Current correlation matrix status."""
     cg = getattr(request.app.state, "correlation_guard", None)
     if cg is None:
@@ -257,7 +257,7 @@ async def risk_correlation(request: Request):
 
 
 @router.get("/models/weights")
-async def model_weights(request: Request):
+async def model_weights(request: Request, current_user: dict = Depends(get_current_user)):
     """Current ensemble model weights (IC-weighted)."""
     ee = getattr(request.app.state, "ensemble_engine", None)
     if ee is None:
@@ -270,7 +270,7 @@ async def model_weights(request: Request):
 
 
 @router.get("/models/drift")
-async def model_drift(request: Request):
+async def model_drift(request: Request, current_user: dict = Depends(get_current_user)):
     """Current drift detection status per layer."""
     dd = getattr(request.app.state, "drift_detector", None)
     if dd is None:
@@ -285,7 +285,7 @@ async def model_drift(request: Request):
 
 
 @router.get("/alerts/history")
-async def alert_history(request: Request):
+async def alert_history(request: Request, current_user: dict = Depends(get_current_user)):
     """Recent alert history."""
     an = getattr(request.app.state, "alert_notifier", None)
     if an is None:

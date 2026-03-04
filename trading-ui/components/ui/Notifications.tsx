@@ -123,7 +123,7 @@ export function Notifications() {
   };
 
   return (
-    <div className="fixed top-4 right-4 z-[100] space-y-2 pointer-events-none" style={{ maxWidth: 360 }}>
+    <div className="fixed top-4 right-4 z-[100] space-y-2 pointer-events-none" style={{ maxWidth: 360 }} role="region" aria-label="System notifications" aria-live="polite">
       <AnimatePresence>
         {notifications.map((n) => {
           const Icon = iconMap[n.type];
@@ -147,6 +147,7 @@ export function Notifications() {
                 <button
                   onClick={() => dismiss(n.id)}
                   className="shrink-0 rounded-lg p-1 hover:bg-muted/50 transition-colors"
+                  aria-label="Dismiss notification"
                 >
                   <X className="h-3 w-3 text-muted-foreground" />
                 </button>

@@ -299,7 +299,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-6 pb-8" role="main" aria-label="Trading Dashboard">
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
@@ -311,8 +311,8 @@ export default function DashboardPage() {
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
               Trading Dashboard
             </h1>
-            <div className="status-badge-live">
-              <span className="h-1.5 w-1.5 rounded-full bg-profit animate-pulse" />
+            <div className="status-badge-live" role="status" aria-label="Trading status: Live">
+              <span className="h-1.5 w-1.5 rounded-full bg-profit animate-pulse" aria-hidden="true" />
               LIVE
             </div>
           </div>
@@ -329,7 +329,7 @@ export default function DashboardPage() {
       </motion.div>
 
       {/* KPI Cards */}
-      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" role="region" aria-label="Key performance indicators" aria-live="polite">
         <KpiCard
           icon={DollarSign}
           label="Total Equity"
@@ -377,7 +377,7 @@ export default function DashboardPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
         >
-          <div className="glass-card p-4 sm:p-6">
+          <div className="glass-card p-4 sm:p-6" role="region" aria-label="Equity curve chart">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-5">
               <div>
                 <div className="flex items-center gap-2.5">
@@ -391,11 +391,13 @@ export default function DashboardPage() {
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">Intraday portfolio value</p>
               </div>
-              <div className="flex items-center gap-1.5 bg-muted/30 rounded-xl p-1">
+              <div className="flex items-center gap-1.5 bg-muted/30 rounded-xl p-1" role="group" aria-label="Equity curve time period">
                 {["1D", "1W", "1M", "3M"].map((period) => (
                   <button
                     key={period}
                     onClick={() => setEquityPeriod(period)}
+                    aria-label={`Show ${period === "1D" ? "1 day" : period === "1W" ? "1 week" : period === "1M" ? "1 month" : "3 months"} equity curve`}
+                    aria-pressed={equityPeriod === period}
                     className={cn(
                       "rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200",
                       equityPeriod === period
@@ -483,7 +485,7 @@ export default function DashboardPage() {
           className="flex flex-col gap-5"
         >
           {/* Regime */}
-          <div className="glass-card p-5">
+          <div className="glass-card p-5" role="region" aria-label="Market regime indicator" aria-live="polite">
             <div className="flex items-center gap-2 mb-3">
               <Sparkles className="h-4 w-4 text-primary" />
               <h3 className="text-sm font-semibold">Market Regime</h3>
@@ -531,7 +533,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Quick Stats */}
-          <div className="glass-card p-5 flex-1">
+          <div className="glass-card p-5 flex-1" role="region" aria-label="Quick statistics" aria-live="polite">
             <div className="flex items-center gap-2 mb-4">
               <BarChart3 className="h-4 w-4 text-primary" />
               <h3 className="text-sm font-semibold">Quick Stats</h3>
@@ -566,7 +568,7 @@ export default function DashboardPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.32 }}
         >
-          <div className="glass-card p-4 sm:p-6">
+          <div className="glass-card p-4 sm:p-6" role="region" aria-label="Strategy performance">
             <div className="flex items-center justify-between mb-4 sm:mb-5">
               <div>
                 <h3 className="text-sm font-semibold">Strategy Performance</h3>
@@ -645,7 +647,7 @@ export default function DashboardPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.38 }}
         >
-          <div className="glass-card p-4 sm:p-6">
+          <div className="glass-card p-4 sm:p-6" role="region" aria-label="Recent trades" aria-live="polite">
             <div className="flex items-center justify-between mb-4 sm:mb-5">
               <div>
                 <div className="flex items-center gap-2">
@@ -717,7 +719,7 @@ export default function DashboardPage() {
                 </motion.div>
               ))}
             </div>
-            <Link href="/trades" className="mt-4 w-full rounded-xl border border-border/30 py-2.5 text-xs font-semibold text-muted-foreground transition-all duration-300 hover:border-primary/30 hover:text-primary hover:bg-primary/5 hover:shadow-[0_0_16px_hsl(217_91%_60%_/_0.06)] block text-center">
+            <Link href="/trades" aria-label="View all trades" className="mt-4 w-full rounded-xl border border-border/30 py-2.5 text-xs font-semibold text-muted-foreground transition-all duration-300 hover:border-primary/30 hover:text-primary hover:bg-primary/5 hover:shadow-[0_0_16px_hsl(217_91%_60%_/_0.06)] block text-center">
               View All Trades →
             </Link>
           </div>

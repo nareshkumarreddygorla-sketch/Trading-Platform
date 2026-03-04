@@ -121,6 +121,8 @@ export default function SettingsPage() {
                   if (Object.keys(body).length > 0) updateLimitsMutation.mutate(body);
                 }}
                 disabled={updateLimitsMutation.isPending || (maxDailyLoss === null && maxPositions === null && maxPositionPct === null)}
+                aria-label="Save risk configuration"
+                aria-busy={updateLimitsMutation.isPending}
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all",
                   (maxDailyLoss !== null || maxPositions !== null || maxPositionPct !== null)
@@ -233,7 +235,7 @@ export default function SettingsPage() {
             <div className="rounded-lg bg-muted/20 p-4 text-center">
               <Key className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
               <p className="text-xs text-muted-foreground">No API keys generated yet</p>
-              <button className="mt-3 rounded-lg bg-primary/10 border border-primary/30 px-4 py-2 text-xs font-medium text-primary hover:bg-primary/20 transition-colors">
+              <button className="mt-3 rounded-lg bg-primary/10 border border-primary/30 px-4 py-2 text-xs font-medium text-primary hover:bg-primary/20 transition-colors" aria-label="Generate a new API key">
                 Generate API Key
               </button>
             </div>
@@ -255,6 +257,7 @@ export default function SettingsPage() {
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 rounded-lg bg-loss/10 border border-loss/30 px-4 py-2.5 text-sm font-semibold text-loss hover:bg-loss/20 transition-colors"
+              aria-label="Sign out of your account"
             >
               <LogOut className="h-4 w-4" />
               Sign Out

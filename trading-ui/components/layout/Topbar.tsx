@@ -98,7 +98,7 @@ export function Topbar() {
       </AnimatePresence>
 
       {/* Main topbar */}
-      <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-border/40 bg-background/80 backdrop-blur-xl pl-16 pr-5 lg:pl-5"
+      <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-border/40 bg-background/80 backdrop-blur-xl pl-16 pr-5 lg:pl-5" aria-label="Trading platform top bar"
         style={{ background: "linear-gradient(180deg, hsl(222 47% 7% / 0.95), hsl(222 47% 5% / 0.9))" }}
       >
         {/* Left section: Mode badge + Autonomy toggle */}
@@ -212,7 +212,7 @@ export function Topbar() {
         {/* Right section: P&L + user */}
         <div className="flex items-center gap-5">
           {/* Equity */}
-          <div className="text-right hidden sm:block">
+          <div className="text-right hidden sm:block" aria-live="polite" aria-label="Portfolio equity">
             <div className="kpi-label">Portfolio</div>
             <div className="font-mono text-sm font-bold tracking-tight">
               {formatCurrency(equity)}
@@ -225,6 +225,8 @@ export function Topbar() {
           {/* Daily P&L */}
           <motion.div
             className="text-right"
+            aria-live="polite"
+            aria-label="Daily profit and loss"
             key={dailyPnl}
             initial={{ opacity: 0, y: -5 }}
             animate={{ opacity: 1, y: 0 }}
@@ -249,14 +251,14 @@ export function Topbar() {
           <div className="h-8 w-px bg-border/50" />
 
           {/* Notifications */}
-          <button className="relative rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+          <button className="relative rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Notifications">
             <Bell className="h-4 w-4" />
-            <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary animate-pulse" />
+            <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary animate-pulse" aria-hidden="true" />
           </button>
 
           {/* User avatar */}
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary/80 to-accent text-xs font-bold text-white shadow-lg">
-            <User className="h-4 w-4" />
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary/80 to-accent text-xs font-bold text-white shadow-lg" role="img" aria-label="User avatar">
+            <User className="h-4 w-4" aria-hidden="true" />
           </div>
         </div>
       </header>

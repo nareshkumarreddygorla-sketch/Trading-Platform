@@ -212,6 +212,8 @@ export default function BrokerPage() {
               <button
                 onClick={() => setShowCredForm(!showCredForm)}
                 className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-primary/30 py-2.5 text-xs font-medium text-primary transition-all hover:bg-primary/5"
+                aria-label={showCredForm ? "Cancel credential configuration" : "Configure broker credentials"}
+                aria-expanded={showCredForm}
               >
                 <Key className="h-3.5 w-3.5" />
                 {showCredForm ? "Cancel" : "Configure Credentials"}
@@ -220,6 +222,8 @@ export default function BrokerPage() {
                 <button
                   onClick={() => disconnectMutation.mutate()}
                   disabled={disconnectMutation.isPending}
+                  aria-label={disconnectMutation.isPending ? "Disconnecting from broker" : "Disconnect from broker"}
+                  aria-busy={disconnectMutation.isPending}
                   className={cn(
                     "flex-1 flex items-center justify-center gap-2 rounded-xl border border-loss/30 py-2.5 text-xs font-medium text-loss transition-all hover:bg-loss/5",
                     disconnectMutation.isPending && "opacity-50 cursor-not-allowed"
@@ -236,6 +240,8 @@ export default function BrokerPage() {
               <button
                 onClick={handleReconnect}
                 disabled={reconnecting}
+                aria-label={reconnecting ? "Reconnecting to broker" : "Reconnect to broker"}
+                aria-busy={reconnecting}
                 className={cn(
                   "flex-1 flex items-center justify-center gap-2 rounded-xl border border-border/50 py-2.5 text-xs font-medium transition-all",
                   reconnecting
@@ -299,6 +305,8 @@ export default function BrokerPage() {
               <button
                 onClick={() => autonomousMutation.mutate(!autonomousRunning)}
                 disabled={autonomousMutation.isPending || tradingModeData?.safe_mode}
+                aria-label={autonomousRunning ? "Stop autonomous trading" : "Start autonomous trading"}
+                aria-busy={autonomousMutation.isPending}
                 className={cn(
                   "w-full flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold transition-all",
                   autonomousRunning
@@ -343,49 +351,57 @@ export default function BrokerPage() {
               </div>
             </div>
 
-            <form onSubmit={handleConfigureSubmit} className="space-y-4">
+            <form onSubmit={handleConfigureSubmit} className="space-y-4" aria-label="Broker credentials configuration">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">API Key</label>
+                  <label htmlFor="broker-api-key" className="text-xs font-medium text-muted-foreground mb-1.5 block">API Key</label>
                   <input
+                    id="broker-api-key"
                     type={showPasswords ? "text" : "password"}
                     value={credForm.api_key}
                     onChange={(e) => setCredForm({ ...credForm, api_key: e.target.value })}
                     placeholder="Your Angel One API key"
                     required
+                    aria-required="true"
                     className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-sm font-mono focus:border-primary/50 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Client ID</label>
+                  <label htmlFor="broker-client-id" className="text-xs font-medium text-muted-foreground mb-1.5 block">Client ID</label>
                   <input
+                    id="broker-client-id"
                     type="text"
                     value={credForm.client_id}
                     onChange={(e) => setCredForm({ ...credForm, client_id: e.target.value })}
                     placeholder="e.g. A12345"
                     required
+                    aria-required="true"
                     className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-sm font-mono focus:border-primary/50 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Password</label>
+                  <label htmlFor="broker-password" className="text-xs font-medium text-muted-foreground mb-1.5 block">Password</label>
                   <input
+                    id="broker-password"
                     type={showPasswords ? "text" : "password"}
                     value={credForm.password}
                     onChange={(e) => setCredForm({ ...credForm, password: e.target.value })}
                     placeholder="Trading password"
                     required
+                    aria-required="true"
                     className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-sm font-mono focus:border-primary/50 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">TOTP Secret</label>
+                  <label htmlFor="broker-totp" className="text-xs font-medium text-muted-foreground mb-1.5 block">TOTP Secret</label>
                   <input
+                    id="broker-totp"
                     type={showPasswords ? "text" : "password"}
                     value={credForm.totp_secret}
                     onChange={(e) => setCredForm({ ...credForm, totp_secret: e.target.value })}
                     placeholder="Base32 TOTP secret"
                     required
+                    aria-required="true"
                     className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-sm font-mono focus:border-primary/50 focus:outline-none"
                   />
                 </div>
@@ -395,6 +411,8 @@ export default function BrokerPage() {
                 <button
                   type="button"
                   onClick={() => setShowPasswords(!showPasswords)}
+                  aria-label={showPasswords ? "Hide credentials" : "Show credentials"}
+                  aria-pressed={showPasswords}
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
                 >
                   {showPasswords ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
@@ -403,12 +421,12 @@ export default function BrokerPage() {
               </div>
 
               {credError && (
-                <div className="rounded-lg bg-loss/10 border border-loss/30 p-3">
+                <div className="rounded-lg bg-loss/10 border border-loss/30 p-3" role="alert">
                   <p className="text-xs text-loss font-medium">{credError}</p>
                 </div>
               )}
               {credSuccess && (
-                <div className="rounded-lg bg-profit/10 border border-profit/30 p-3">
+                <div className="rounded-lg bg-profit/10 border border-profit/30 p-3" role="status">
                   <p className="text-xs text-profit font-medium">{credSuccess}</p>
                 </div>
               )}
@@ -417,6 +435,8 @@ export default function BrokerPage() {
                 <button
                   type="submit"
                   disabled={configureMutation.isPending}
+                  aria-label={configureMutation.isPending ? "Connecting to broker" : "Connect and switch to live trading"}
+                  aria-busy={configureMutation.isPending}
                   className={cn(
                     "flex-1 flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90",
                     configureMutation.isPending && "opacity-50 cursor-not-allowed"

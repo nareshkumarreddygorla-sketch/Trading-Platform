@@ -870,8 +870,8 @@ class AutonomousLoop:
                 atr = self._calc_atr(bars, 14)
                 if atr is not None and atr > 0:
                     atr_estimate = atr
-            except Exception:
-                pass  # keep default estimate
+            except Exception as e:
+                logger.debug("ATR calculation failed for %s, using default estimate: %s", signal.symbol, e)
 
         if hasattr(signal, 'stop_loss') and signal.stop_loss and signal.stop_loss > 0:
             stop_loss = signal.stop_loss
@@ -965,8 +965,8 @@ class AutonomousLoop:
                     if self.performance_tracker:
                         try:
                             self.performance_tracker.record_fill(trade["strategy_id"], pnl)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Performance tracker record_fill failed: %s", e)
 
                     logger.info("%s hit for %s %s: entry=%.2f exit=%.2f PnL=%.2f daily_total=%.2f",
                                 reason, side, symbol, entry, current_price, pnl, self._daily_pnl)
@@ -1071,8 +1071,8 @@ class AutonomousLoop:
                     "take_profit": trade["take_profit"],
                     "strategy_id": trade["strategy_id"],
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Mark-to-market price fetch failed for %s: %s", trade_key, e)
 
         if open_positions:
             await self._broadcast({

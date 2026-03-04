@@ -236,13 +236,14 @@ function StepBroker({
       </div>
 
       <div className="glass-card p-6">
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" aria-label="Broker credentials form">
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+              <label htmlFor="onboard-api-key" className="text-xs font-medium text-muted-foreground mb-1.5 block">
                 API Key
               </label>
               <input
+                id="onboard-api-key"
                 type={showPasswords ? "text" : "password"}
                 value={credForm.api_key}
                 onChange={(e) =>
@@ -250,14 +251,18 @@ function StepBroker({
                 }
                 placeholder="Your Angel One API key"
                 required
+                aria-required="true"
+                aria-invalid={credError ? "true" : undefined}
+                aria-describedby={credError ? "onboard-cred-error" : undefined}
                 className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2.5 text-sm font-mono focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/20"
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+              <label htmlFor="onboard-client-id" className="text-xs font-medium text-muted-foreground mb-1.5 block">
                 Client ID
               </label>
               <input
+                id="onboard-client-id"
                 type="text"
                 value={credForm.client_id}
                 onChange={(e) =>
@@ -265,14 +270,18 @@ function StepBroker({
                 }
                 placeholder="e.g. A12345"
                 required
+                aria-required="true"
+                aria-invalid={credError ? "true" : undefined}
+                aria-describedby={credError ? "onboard-cred-error" : undefined}
                 className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2.5 text-sm font-mono focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/20"
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+              <label htmlFor="onboard-password" className="text-xs font-medium text-muted-foreground mb-1.5 block">
                 Password
               </label>
               <input
+                id="onboard-password"
                 type={showPasswords ? "text" : "password"}
                 value={credForm.password}
                 onChange={(e) =>
@@ -280,14 +289,18 @@ function StepBroker({
                 }
                 placeholder="Trading password"
                 required
+                aria-required="true"
+                aria-invalid={credError ? "true" : undefined}
+                aria-describedby={credError ? "onboard-cred-error" : undefined}
                 className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2.5 text-sm font-mono focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/20"
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+              <label htmlFor="onboard-totp" className="text-xs font-medium text-muted-foreground mb-1.5 block">
                 TOTP Secret
               </label>
               <input
+                id="onboard-totp"
                 type={showPasswords ? "text" : "password"}
                 value={credForm.totp_secret}
                 onChange={(e) =>
@@ -295,6 +308,9 @@ function StepBroker({
                 }
                 placeholder="Base32 TOTP secret"
                 required
+                aria-required="true"
+                aria-invalid={credError ? "true" : undefined}
+                aria-describedby={credError ? "onboard-cred-error" : undefined}
                 className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2.5 text-sm font-mono focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/20"
               />
             </div>
@@ -304,6 +320,8 @@ function StepBroker({
             type="button"
             onClick={() => setShowPasswords(!showPasswords)}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+            aria-label={showPasswords ? "Hide credentials" : "Show credentials"}
+            aria-pressed={showPasswords}
           >
             {showPasswords ? (
               <EyeOff className="h-3.5 w-3.5" />
@@ -314,14 +332,14 @@ function StepBroker({
           </button>
 
           {credError && (
-            <div className="rounded-lg bg-loss/10 border border-loss/30 p-3 flex items-center gap-2">
-              <XCircle className="h-4 w-4 text-loss shrink-0" />
+            <div className="rounded-lg bg-loss/10 border border-loss/30 p-3 flex items-center gap-2" role="alert" id="onboard-cred-error">
+              <XCircle className="h-4 w-4 text-loss shrink-0" aria-hidden="true" />
               <p className="text-xs text-loss font-medium">{credError}</p>
             </div>
           )}
           {credSuccess && (
-            <div className="rounded-lg bg-profit/10 border border-profit/30 p-3 flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-profit shrink-0" />
+            <div className="rounded-lg bg-profit/10 border border-profit/30 p-3 flex items-center gap-2" role="status">
+              <CheckCircle className="h-4 w-4 text-profit shrink-0" aria-hidden="true" />
               <p className="text-xs text-profit font-medium">{credSuccess}</p>
             </div>
           )}
@@ -329,6 +347,8 @@ function StepBroker({
           <button
             type="submit"
             disabled={configureMutation.isPending}
+            aria-label={configureMutation.isPending ? "Connecting to broker" : "Connect to broker"}
+            aria-busy={configureMutation.isPending}
             className={cn(
               "w-full flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90",
               configureMutation.isPending && "opacity-50 cursor-not-allowed"
@@ -352,8 +372,9 @@ function StepBroker({
       <button
         onClick={onSkip}
         className="mt-4 w-full text-center text-xs text-muted-foreground hover:text-primary transition-colors py-2"
+        aria-label="Skip broker setup and use paper trading mode"
       >
-        Skip (Paper Mode) <ArrowRight className="inline h-3 w-3 ml-1" />
+        Skip (Paper Mode) <ArrowRight className="inline h-3 w-3 ml-1" aria-hidden="true" />
       </button>
     </motion.div>
   );
@@ -496,6 +517,10 @@ function StepRisk({
                       [slider.key]: Number(e.target.value),
                     })
                   }
+                  aria-label={`${slider.label}: ${limits[slider.key]}${slider.suffix}`}
+                  aria-valuemin={slider.min}
+                  aria-valuemax={slider.max}
+                  aria-valuenow={limits[slider.key]}
                   className="flex-1 h-2 rounded-full appearance-none cursor-pointer accent-primary bg-muted"
                 />
                 <div className="w-16 text-right">
@@ -538,6 +563,7 @@ function StepRisk({
       <div className="flex gap-3 mt-6">
         <button
           onClick={onBack}
+          aria-label="Go back to broker setup"
           className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-border/50 py-3 text-sm font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -546,6 +572,8 @@ function StepRisk({
         <button
           onClick={handleSave}
           disabled={saveMutation.isPending}
+          aria-label={saveMutation.isPending ? "Saving risk limits" : "Save risk limits and continue"}
+          aria-busy={saveMutation.isPending}
           className={cn(
             "flex-[2] flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90",
             saveMutation.isPending && "opacity-50 cursor-not-allowed"
@@ -713,6 +741,8 @@ function StepStrategies({
                         title={
                           isActive ? "Disable strategy" : "Enable strategy"
                         }
+                        aria-label={isActive ? `Disable ${s.name || s.id} strategy` : `Enable ${s.name || s.id} strategy`}
+                        aria-pressed={isActive}
                       >
                         {isActive ? (
                           <ToggleRight className="h-6 w-6 text-profit" />
@@ -759,6 +789,7 @@ function StepStrategies({
       <div className="flex gap-3 mt-6">
         <button
           onClick={onBack}
+          aria-label="Go back to risk configuration"
           className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-border/50 py-3 text-sm font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -766,6 +797,7 @@ function StepStrategies({
         </button>
         <button
           onClick={onComplete}
+          aria-label="Continue to launch"
           className="flex-[2] flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90"
         >
           <ChevronRight className="h-4 w-4" />
@@ -936,6 +968,8 @@ function StepLaunch({
             <button
               onClick={handleLaunchLive}
               disabled={startMutation.isPending}
+              aria-label={startMutation.isPending ? "Starting autonomous trading" : "Start autonomous trading"}
+              aria-busy={startMutation.isPending}
               className={cn(
                 "w-full flex items-center justify-center gap-3 rounded-xl py-4 text-base font-bold transition-all",
                 "bg-gradient-to-r from-profit/20 to-profit/10 text-profit border border-profit/30 hover:from-profit/30 hover:to-profit/20",
@@ -955,6 +989,7 @@ function StepLaunch({
 
             <button
               onClick={handleLaunchPaper}
+              aria-label="Start in paper trading mode"
               className="w-full flex items-center justify-center gap-2 rounded-xl border border-border/50 py-3 text-sm font-medium text-muted-foreground hover:text-foreground hover:border-border transition-all"
             >
               <Play className="h-4 w-4" />

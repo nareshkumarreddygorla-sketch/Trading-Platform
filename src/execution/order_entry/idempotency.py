@@ -52,6 +52,12 @@ class IdempotencyStore:
         await self._get_redis()
         return True
 
+    @property
+    def redis_connected(self) -> bool:
+        """True only if Redis is the active backend (multi-pod safe dedup).
+        When False, idempotency falls back to in-memory which is volatile and per-process."""
+        return self._redis_available
+
     def _key(self, idempotency_key: str) -> str:
         return f"{IDEMPOTENCY_PREFIX}{idempotency_key}"
 

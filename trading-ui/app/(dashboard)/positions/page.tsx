@@ -71,6 +71,8 @@ export default function PositionsPage() {
         <button
           onClick={() => setShowOrderForm(!showOrderForm)}
           className="flex items-center gap-2 rounded-xl bg-primary/10 border border-primary/30 px-4 py-2 text-xs font-semibold text-primary transition-all hover:bg-primary/20"
+          aria-label={showOrderForm ? "Close order form" : "Open order form to place a new order"}
+          aria-expanded={showOrderForm}
         >
           <Plus className="h-3.5 w-3.5" />
           Place Order
@@ -89,7 +91,7 @@ export default function PositionsPage() {
             <div className="glass-card p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold">Manual Order Entry</h3>
-                <button onClick={() => setShowOrderForm(false)} className="text-muted-foreground hover:text-foreground">
+                <button onClick={() => setShowOrderForm(false)} className="text-muted-foreground hover:text-foreground" aria-label="Close order form">
                   <X className="h-4 w-4" />
                 </button>
               </div>
@@ -111,6 +113,8 @@ export default function PositionsPage() {
                       <button
                         key={side}
                         onClick={() => setOrderSide(side)}
+                        aria-label={`Order side: ${side}`}
+                        aria-pressed={orderSide === side}
                         className={cn(
                           "flex-1 h-9 rounded-lg text-xs font-bold transition-all",
                           orderSide === side
@@ -159,6 +163,8 @@ export default function PositionsPage() {
                       }
                     }}
                     disabled={!orderSymbol || !orderQty || !orderPrice || placeOrderMutation.isPending}
+                    aria-label={placeOrderMutation.isPending ? "Submitting order" : "Submit order"}
+                    aria-busy={placeOrderMutation.isPending}
                     className={cn(
                       "w-full h-9 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
                       orderSymbol && orderQty && orderPrice
@@ -292,7 +298,7 @@ export default function PositionsPage() {
                 <thead>
                   <tr className="border-b border-border/20">
                     {["Symbol", "Side", "Qty", "Entry", "Current", "Unrealized P&L", "%", "Strategy", ""].map((h) => (
-                      <th key={h} className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th key={h} scope="col" className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                         {h}
                       </th>
                     ))}
@@ -348,6 +354,7 @@ export default function PositionsPage() {
                             }}
                             className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-loss/10 hover:text-loss transition-all"
                             title="Close position"
+                            aria-label={`Close ${p.symbol} position`}
                           >
                             <X className="h-3.5 w-3.5" />
                           </button>

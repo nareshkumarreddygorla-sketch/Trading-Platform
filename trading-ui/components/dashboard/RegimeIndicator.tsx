@@ -37,7 +37,7 @@ export default function RegimeIndicator() {
   const confidence = regimeData?.confidence ?? 0;
 
   return (
-    <div className={`rounded-lg ${config.bg} border border-zinc-800 px-3 py-2 flex items-center gap-2`}>
+    <div className={`rounded-lg ${config.bg} border border-zinc-800 px-3 py-2 flex items-center gap-2`} role="status" aria-live="polite" aria-label={`Market regime: ${config.label}`}>
       <Gauge className={`w-4 h-4 ${config.color}`} />
       <div className="flex-1">
         <div className="text-xs text-zinc-500">Market Regime</div>

@@ -3,7 +3,9 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+
+from src.api.auth import get_current_user
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -56,6 +58,7 @@ async def get_audit_logs(
     request: Request,
     limit: int = 500,
     event_type: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
 ):
     """
     List recent audit events (newest first). Uses DB if configured, otherwise demo data.

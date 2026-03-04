@@ -31,10 +31,53 @@ MIN_PASSWORD_LENGTH = 12  # Production-grade minimum
 # In-memory fallback (dev only) - passwords are hashed, never stored plaintext
 _users: dict[str, dict] = {}
 
+# Account lockout: 5 failures in 15 minutes
+from collections import defaultdict
+import time as _time
+
+_failed_attempts: dict = defaultdict(list)
+_MAX_FAILED_ATTEMPTS = 5
+_LOCKOUT_DURATION_SECONDS = 900  # 15 minutes
+
+def _check_lockout(username: str) -> bool:
+    """Return True if account is locked out."""
+    now = _time.time()
+    cutoff = now - _LOCKOUT_DURATION_SECONDS
+    _failed_attempts[username] = [t for t in _failed_attempts[username] if t > cutoff]
+    return len(_failed_attempts[username]) >= _MAX_FAILED_ATTEMPTS
+
+def _record_failed_attempt(username: str) -> None:
+    _failed_attempts[username].append(_time.time())
+
+def _clear_failed_attempts(username: str) -> None:
+    _failed_attempts.pop(username, None)
+
 
 def _hash_inmemory(password: str) -> str:
-    """Hash password for in-memory store (dev only). Not for production."""
-    return hashlib.sha256(f"trading-inmem-{password}".encode()).hexdigest()
+    """Hash password for in-memory store using bcrypt (salted, secure)."""
+    try:
+        from passlib.hash import bcrypt as _bcrypt
+        return _bcrypt.hash(password)
+    except ImportError:
+        # Fallback if passlib not installed; use PBKDF2 from stdlib
+        import hashlib as _hl
+        import os
+        salt = os.urandom(16).hex()
+        return f"pbkdf2:{salt}:{_hl.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000).hex()}"
+
+def _verify_inmemory(password: str, hashed: str) -> bool:
+    """Verify password against bcrypt or PBKDF2 hash."""
+    if hashed.startswith("pbkdf2:"):
+        _, salt, expected = hashed.split(":", 2)
+        import hashlib as _hl
+        actual = _hl.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000).hex()
+        import hmac
+        return hmac.compare_digest(actual, expected)
+    try:
+        from passlib.hash import bcrypt as _bcrypt
+        return _bcrypt.verify(password, hashed)
+    except Exception:
+        return False
 
 
 def _get_secret() -> str:
@@ -96,12 +139,19 @@ class RefreshRequest(BaseModel):
 @router.post("/login")
 def login(request: Request, body: LoginRequest):
     """Login with username and password. Returns access_token (30m) and refresh_token (7d)."""
+    # Account lockout check
+    if _check_lockout(body.username):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Account locked for {_LOCKOUT_DURATION_SECONDS // 60} minutes due to repeated failed attempts",
+        )
     # Env-based single user (optional)
     env_user = os.environ.get("AUTH_USERNAME")
     env_pass = os.environ.get("AUTH_PASSWORD")
     # Use constant-time comparison to prevent timing attacks on password
     if env_user and env_pass and hmac.compare_digest(body.username, env_user) and hmac.compare_digest(body.password, env_pass):
         roles = ["user", "admin"] if os.environ.get("AUTH_ADMIN") == "1" else ["user"]
+        _clear_failed_attempts(body.username)
         return {
             "access_token": _issue_token(body.username, roles, "access"),
             "refresh_token": _issue_token(body.username, roles, "refresh"),
@@ -113,6 +163,7 @@ def login(request: Request, body: LoginRequest):
     if user_repo is not None:
         verified = user_repo.verify_password(body.username, body.password)
         if verified:
+            _clear_failed_attempts(body.username)
             return {
                 "access_token": _issue_token(verified["username"], verified["roles"], "access"),
                 "refresh_token": _issue_token(verified["username"], verified["roles"], "refresh"),
@@ -120,14 +171,16 @@ def login(request: Request, body: LoginRequest):
                 "expires_in": ACCESS_TOKEN_EXPIRY_SECONDS,
             }
     # In-memory fallback (dev only, hashed)
-    if body.username in _users and _users[body.username].get("password_hash") == _hash_inmemory(body.password):
+    if body.username in _users and _verify_inmemory(body.password, _users[body.username].get("password_hash", "")):
         roles = _users[body.username].get("roles", ["user"])
+        _clear_failed_attempts(body.username)
         return {
             "access_token": _issue_token(body.username, roles, "access"),
             "refresh_token": _issue_token(body.username, roles, "refresh"),
             "token_type": "bearer",
             "expires_in": ACCESS_TOKEN_EXPIRY_SECONDS,
         }
+    _record_failed_attempt(body.username)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid username or password",

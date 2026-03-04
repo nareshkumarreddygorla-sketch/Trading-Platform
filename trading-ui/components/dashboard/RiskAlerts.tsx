@@ -15,9 +15,9 @@ export default function RiskAlerts() {
   if (alerts.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4" role="region" aria-label="Risk alerts" aria-live="assertive">
       <h3 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
-        <AlertTriangle className="w-4 h-4" /> Risk Alerts
+        <AlertTriangle className="w-4 h-4" aria-hidden="true" /> Risk Alerts
         <span className="ml-auto text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
           {alerts.length}
         </span>

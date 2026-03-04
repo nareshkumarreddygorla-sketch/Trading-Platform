@@ -32,9 +32,9 @@ export default function SignalFeed() {
   }, [ordersData, signals.length]);
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4" role="region" aria-label="Live signal feed" aria-live="polite">
       <h3 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
-        <Radio className="w-4 h-4" />
+        <Radio className="w-4 h-4" aria-hidden="true" />
         Live Signal Feed
         {signals.length > 0 && (
           <span className="ml-auto text-[10px] text-zinc-600 font-mono">{signals.length} signals</span>

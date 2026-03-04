@@ -158,7 +158,7 @@ async def list_orders(
 
 
 @router.get("/orders/{order_id}", response_model=OrderResponse)
-async def get_order(request: Request, order_id: str):
+async def get_order(request: Request, order_id: str, current_user: dict = Depends(get_current_user)):
     persistence = getattr(request.app.state, "persistence_service", None)
     if persistence is not None:
         loop = asyncio.get_running_loop()
@@ -219,7 +219,7 @@ async def cancel_order(
 
 
 @router.get("/positions", response_model=PositionsResponse)
-async def list_positions(request: Request):
+async def list_positions(request: Request, current_user: dict = Depends(get_current_user)):
     persistence = getattr(request.app.state, "persistence_service", None)
     if persistence is not None:
         loop = asyncio.get_running_loop()

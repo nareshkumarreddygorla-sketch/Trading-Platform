@@ -113,7 +113,7 @@ export function Sidebar() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4" aria-label="Main navigation">
           <div className="mb-3 px-3">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
               Main Menu
@@ -127,6 +127,8 @@ export function Sidebar() {
                 key={item.href}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
+                aria-label={item.label}
+                aria-current={isActive ? "page" : undefined}
               >
                 <motion.div
                   className={cn(
@@ -170,6 +172,8 @@ export function Sidebar() {
                 key={item.href}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
+                aria-label={item.label}
+                aria-current={isActive ? "page" : undefined}
               >
                 <motion.div
                   className={cn(
@@ -187,7 +191,7 @@ export function Sidebar() {
         </nav>
 
         {/* Bottom status card */}
-        <div className="border-t border-border/30 p-3">
+        <div className="border-t border-border/30 p-3" role="status" aria-label="System status">
           <div className="glass-card rounded-xl p-3">
             <div className="flex items-center gap-2.5">
               <div className="relative">
@@ -216,7 +220,8 @@ export function Sidebar() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden"
             onClick={() => setMobileOpen(false)}
-            aria-hidden
+            aria-hidden="true"
+            aria-label="Close navigation overlay"
           />
         )}
       </AnimatePresence>

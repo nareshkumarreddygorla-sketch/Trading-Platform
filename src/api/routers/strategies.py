@@ -1,7 +1,9 @@
 """Strategies API: list, toggle, update capital, and performance data."""
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from src.api.auth import get_current_user, require_roles
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -147,7 +149,7 @@ def _strategy_to_dict(strategy_id: str, is_enabled: bool, perf_tracker=None) -> 
 #  Endpoints
 # ──────────────────────────────────────────
 @router.get("")
-async def list_strategies(request: Request):
+async def list_strategies(request: Request, current_user: dict = Depends(get_current_user)):
     reg = get_registry()
     perf = _get_perf_tracker(request)
     all_ids = reg.list_all()        # Returns List[str] of strategy IDs
@@ -157,7 +159,7 @@ async def list_strategies(request: Request):
 
 
 @router.post("/{strategy_id}/enable")
-async def enable_strategy(strategy_id: str):
+async def enable_strategy(strategy_id: str, current_user: dict = Depends(require_roles(["admin"]))):
     reg = get_registry()
     if reg.get(strategy_id) is None:
         raise HTTPException(404, "Strategy not found")
@@ -166,7 +168,7 @@ async def enable_strategy(strategy_id: str):
 
 
 @router.post("/{strategy_id}/disable")
-async def disable_strategy(strategy_id: str):
+async def disable_strategy(strategy_id: str, current_user: dict = Depends(require_roles(["admin"]))):
     reg = get_registry()
     if reg.get(strategy_id) is None:
         raise HTTPException(404, "Strategy not found")
@@ -179,7 +181,7 @@ class ToggleBody(BaseModel):
 
 
 @router.put("/{strategy_id}/toggle")
-async def toggle_strategy(strategy_id: str, body: ToggleBody):
+async def toggle_strategy(strategy_id: str, body: ToggleBody, current_user: dict = Depends(require_roles(["admin"]))):
     reg = get_registry()
     if reg.get(strategy_id) is None:
         raise HTTPException(404, "Strategy not found")
@@ -195,7 +197,7 @@ class CapitalBody(BaseModel):
 
 
 @router.put("/{strategy_id}/capital")
-async def update_capital(strategy_id: str, body: CapitalBody):
+async def update_capital(strategy_id: str, body: CapitalBody, current_user: dict = Depends(require_roles(["admin"]))):
     if body.capital < 0:
         raise HTTPException(400, "Capital must be >= 0")
     _capital_store[strategy_id] = body.capital
@@ -203,12 +205,12 @@ async def update_capital(strategy_id: str, body: CapitalBody):
 
 
 @router.get("/signals")
-async def get_signals(limit: int = 50):
+async def get_signals(limit: int = 50, current_user: dict = Depends(get_current_user)):
     return {"signals": []}
 
 
 @router.get("/performance")
-async def strategies_performance(request: Request):
+async def strategies_performance(request: Request, current_user: dict = Depends(get_current_user)):
     """Aggregated performance for all strategies."""
     reg = get_registry()
     perf = _get_perf_tracker(request)

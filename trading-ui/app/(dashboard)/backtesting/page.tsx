@@ -135,11 +135,13 @@ export default function BacktestingPage() {
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
                         {/* Strategy */}
                         <div>
-                            <label className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground block mb-2">Strategy</label>
+                            <label htmlFor="bt-strategy" className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground block mb-2">Strategy</label>
                             <div className="relative">
                                 <select
+                                    id="bt-strategy"
                                     value={strategyId}
                                     onChange={(e) => setStrategyId(e.target.value)}
+                                    aria-label="Select backtest strategy"
                                     className="w-full rounded-xl border border-border/40 bg-muted/20 px-3.5 py-2.5 text-sm appearance-none cursor-pointer transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 focus:bg-muted/30 hover:border-border/60"
                                 >
                                     {STRATEGIES.map((s) => (
@@ -152,11 +154,13 @@ export default function BacktestingPage() {
 
                         {/* Symbol */}
                         <div>
-                            <label className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground block mb-2">Symbol</label>
+                            <label htmlFor="bt-symbol" className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground block mb-2">Symbol</label>
                             <div className="relative">
                                 <select
+                                    id="bt-symbol"
                                     value={symbol}
                                     onChange={(e) => setSymbol(e.target.value)}
+                                    aria-label="Select backtest symbol"
                                     className="w-full rounded-xl border border-border/40 bg-muted/20 px-3.5 py-2.5 text-sm appearance-none cursor-pointer transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 focus:bg-muted/30 hover:border-border/60"
                                 >
                                     {SYMBOLS.map((s) => (
@@ -169,12 +173,14 @@ export default function BacktestingPage() {
 
                         {/* Start date */}
                         <div>
-                            <label className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground block mb-2">Start Date</label>
+                            <label htmlFor="bt-start-date" className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground block mb-2">Start Date</label>
                             <div className="relative">
                                 <input
+                                    id="bt-start-date"
                                     type="date"
                                     value={startDate}
                                     onChange={(e) => setStartDate(e.target.value)}
+                                    aria-label="Backtest start date"
                                     className="w-full rounded-xl border border-border/40 bg-muted/20 px-3.5 py-2.5 text-sm transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 focus:bg-muted/30 hover:border-border/60"
                                 />
                             </div>
@@ -182,12 +188,14 @@ export default function BacktestingPage() {
 
                         {/* End date */}
                         <div>
-                            <label className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground block mb-2">End Date</label>
+                            <label htmlFor="bt-end-date" className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground block mb-2">End Date</label>
                             <div className="relative">
                                 <input
+                                    id="bt-end-date"
                                     type="date"
                                     value={endDate}
                                     onChange={(e) => setEndDate(e.target.value)}
+                                    aria-label="Backtest end date"
                                     className="w-full rounded-xl border border-border/40 bg-muted/20 px-3.5 py-2.5 text-sm transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 focus:bg-muted/30 hover:border-border/60"
                                 />
                             </div>
@@ -198,6 +206,8 @@ export default function BacktestingPage() {
                             <button
                                 onClick={() => runMutation.mutate()}
                                 disabled={isRunning}
+                                aria-label={isRunning ? "Backtest is running" : "Run backtest"}
+                                aria-busy={isRunning}
                                 className={cn(
                                     "w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-300 overflow-hidden relative group",
                                     isRunning
@@ -310,11 +320,11 @@ export default function BacktestingPage() {
                                         <table className="w-full text-xs">
                                             <thead>
                                                 <tr className="border-b border-border/30 text-muted-foreground">
-                                                    <th className="py-2 px-3 text-left font-medium">Date</th>
-                                                    <th className="py-2 px-3 text-left font-medium">Side</th>
-                                                    <th className="py-2 px-3 text-right font-medium">Price</th>
-                                                    <th className="py-2 px-3 text-right font-medium">Qty</th>
-                                                    <th className="py-2 px-3 text-right font-medium">P&L</th>
+                                                    <th scope="col" className="py-2 px-3 text-left font-medium">Date</th>
+                                                    <th scope="col" className="py-2 px-3 text-left font-medium">Side</th>
+                                                    <th scope="col" className="py-2 px-3 text-right font-medium">Price</th>
+                                                    <th scope="col" className="py-2 px-3 text-right font-medium">Qty</th>
+                                                    <th scope="col" className="py-2 px-3 text-right font-medium">P&L</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -388,6 +398,8 @@ export default function BacktestingPage() {
                                 <button
                                     key={job.job_id}
                                     onClick={() => { setActiveJobId(job.job_id); setPolling(false); }}
+                                    aria-label={`View backtest job ${job.job_id.substring(0, 8)} - ${job.strategy_id ?? "unknown strategy"} ${job.symbol ?? ""} - ${job.status}`}
+                                    aria-pressed={activeJobId === job.job_id}
                                     className={cn(
                                         "w-full flex items-center justify-between rounded-lg px-3 py-2 text-xs transition-all hover:bg-muted/30",
                                         activeJobId === job.job_id ? "bg-muted/30 border border-primary/30" : "bg-muted/10"

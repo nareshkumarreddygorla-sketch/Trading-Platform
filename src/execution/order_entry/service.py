@@ -110,8 +110,8 @@ class OrderEntryService:
         try:
             from src.monitoring.metrics import track_orders_persist_failed_total
             track_orders_persist_failed_total()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Metrics track_orders_persist_failed_total unavailable: %s", e)
         raise last_error
 
     async def submit_order(self, request: OrderEntryRequest) -> OrderEntryResult:
@@ -136,8 +136,8 @@ class OrderEntryService:
             try:
                 from src.monitoring.metrics import track_orders_rejected_total
                 track_orders_rejected_total()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
             return OrderEntryResult(False, reject_reason=RejectReason.VALIDATION, reject_detail=err, latency_ms=(time.perf_counter() - start) * 1000)
 
         signal = request.signal
@@ -147,8 +147,8 @@ class OrderEntryService:
             try:
                 from src.monitoring.metrics import track_orders_rejected_total
                 track_orders_rejected_total()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
             return OrderEntryResult(False, reject_reason=RejectReason.VALIDATION, reject_detail="price required and positive", latency_ms=(time.perf_counter() - start) * 1000)
 
         # 1b. Rate limiter: reject if order flood detected (skip for force_reduce)
@@ -156,8 +156,8 @@ class OrderEntryService:
             try:
                 from src.monitoring.metrics import track_orders_rejected_total
                 track_orders_rejected_total()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
             return OrderEntryResult(False, reject_reason=RejectReason.VALIDATION, reject_detail="rate_limit_exceeded", latency_ms=(time.perf_counter() - start) * 1000)
 
         # 1c. Minimum order value check (₹1,000)
@@ -167,8 +167,8 @@ class OrderEntryService:
                 try:
                     from src.monitoring.metrics import track_orders_rejected_total
                     track_orders_rejected_total()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                 return OrderEntryResult(False, reject_reason=RejectReason.VALIDATION, reject_detail=f"order_value_below_minimum: {order_value:.0f} < 1000", latency_ms=(time.perf_counter() - start) * 1000)
 
         idem_key = request.idempotency_key or IdempotencyStore.derive_key(
@@ -180,8 +180,8 @@ class OrderEntryService:
             try:
                 from src.monitoring.metrics import track_orders_rejected_total
                 track_orders_rejected_total()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
             return OrderEntryResult(
                 False,
                 reject_reason=RejectReason.IDEMPOTENCY_UNAVAILABLE,
@@ -211,8 +211,8 @@ class OrderEntryService:
             try:
                 from src.monitoring.metrics import track_orders_rejected_total
                 track_orders_rejected_total()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
             return OrderEntryResult(
                 False,
                 reject_reason=RejectReason.IDEMPOTENCY_UNAVAILABLE,
@@ -230,8 +230,8 @@ class OrderEntryService:
                 try:
                     from src.monitoring.metrics import track_orders_rejected_total
                     track_orders_rejected_total()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                 return OrderEntryResult(False, reject_reason=RejectReason.KILL_SWITCH, reject_detail=state.detail or (state.reason.value if state.reason else ""), latency_ms=(time.perf_counter() - start) * 1000)
 
         # 4. Circuit breaker
@@ -239,8 +239,8 @@ class OrderEntryService:
             try:
                 from src.monitoring.metrics import track_orders_rejected_total
                 track_orders_rejected_total()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
             return OrderEntryResult(False, reject_reason=RejectReason.CIRCUIT_BREAKER, reject_detail="circuit_breaker_open", latency_ms=(time.perf_counter() - start) * 1000)
 
         # 4b. Distributed lock (cluster-wide single-writer for critical section)
@@ -254,8 +254,8 @@ class OrderEntryService:
                 try:
                     from src.monitoring.metrics import track_orders_rejected_total
                     track_orders_rejected_total()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                 return OrderEntryResult(
                     False,
                     reject_reason=RejectReason.RESERVATION_FAILED,
@@ -278,8 +278,8 @@ class OrderEntryService:
                     try:
                         from src.monitoring.metrics import track_orders_rejected_total
                         track_orders_rejected_total()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                     if self.on_risk_rejected:
                         try:
                             self.on_risk_rejected()
@@ -296,8 +296,8 @@ class OrderEntryService:
                         try:
                             from src.monitoring.metrics import track_orders_rejected_total
                             track_orders_rejected_total()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                         return OrderEntryResult(
                             False,
                             reject_reason=RejectReason.RESERVATION_FAILED,
@@ -324,8 +324,8 @@ class OrderEntryService:
                     try:
                         from src.monitoring.metrics import track_orders_rejected_total
                         track_orders_rejected_total()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                     if reserved:
                         await self.idempotency.update(idem_key, order_id_placeholder, None, "REJECTED")
                     return OrderEntryResult(False, reject_reason=RejectReason.RESERVATION_FAILED, reject_detail=res_reason, latency_ms=(time.perf_counter() - start) * 1000)
@@ -357,8 +357,8 @@ class OrderEntryService:
                     try:
                         from src.monitoring.metrics import track_orders_rejected_total
                         track_orders_rejected_total()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                     return OrderEntryResult(
                         False,
                         reject_reason=RejectReason.BROKER_ERROR,
@@ -404,8 +404,8 @@ class OrderEntryService:
                 try:
                     from src.monitoring.metrics import track_orders_rejected_total
                     track_orders_rejected_total()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                 if self.reject_order_submitting:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(None, lambda: self.reject_order_submitting(order_id_placeholder))
@@ -424,8 +424,8 @@ class OrderEntryService:
                 try:
                     from src.monitoring.metrics import track_orders_rejected_total
                     track_orders_rejected_total()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                 if self.reject_order_submitting:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(None, lambda: self.reject_order_submitting(order_id_placeholder))
@@ -509,8 +509,8 @@ class OrderEntryService:
             try:
                 from src.monitoring.metrics import track_orders_total
                 track_orders_total()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Metrics track_orders_total unavailable: %s", e)
             return OrderEntryResult(
                 True,
                 order_id=real_order_id,

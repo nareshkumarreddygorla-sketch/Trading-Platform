@@ -50,7 +50,7 @@ export function ConnectionStatus() {
   const state = config[wsStatus] || config.disconnected;
 
   return (
-    <div className="flex items-center gap-1.5" title={`WebSocket: ${state.label}`}>
+    <div className="flex items-center gap-1.5" title={`WebSocket: ${state.label}`} role="status" aria-live="polite" aria-label={`WebSocket connection: ${state.label}`}>
       <span className="relative flex h-2 w-2">
         {state.pulse && (
           <motion.span

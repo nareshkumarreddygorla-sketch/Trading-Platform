@@ -15,11 +15,18 @@ RESERVATION_IDS_KEY = "trading:cluster:reservation_ids"
 class RedisClusterReservation:
     """
     Shared reservation state in Redis. Call reserve() before local reserve; release() on broker fail/timeout.
+
+    Parameters
+    ----------
+    fail_open : bool
+        If True (default), allow reservation when Redis is unavailable (safe for single-pod).
+        Set to False in multi-pod/cluster deployments to prevent position limit bypass.
     """
 
-    def __init__(self, redis_url: str = "redis://localhost:6379/0"):
+    def __init__(self, redis_url: str = "redis://localhost:6379/0", fail_open: bool = True):
         self.redis_url = redis_url
         self._redis = None
+        self._fail_open = fail_open
 
     async def _get_redis(self):
         if self._redis is None:
@@ -39,7 +46,11 @@ class RedisClusterReservation:
             return False
         client = await self._get_redis()
         if not client:
-            return True  # allow when Redis down so single-pod still works
+            if self._fail_open:
+                logger.warning("Redis unavailable; allowing reservation (single-pod mode, fail_open=True)")
+                return True
+            logger.error("Redis unavailable; BLOCKING reservation (multi-pod safety, fail_open=False)")
+            return False
         try:
             script = """
             local count = tonumber(redis.call('GET', KEYS[1]) or 0)
@@ -54,7 +65,9 @@ class RedisClusterReservation:
             return result == 1
         except Exception as e:
             logger.warning("Redis cluster reserve failed: %s", e)
-            return True
+            if self._fail_open:
+                return True
+            return False
 
     async def release(self, order_id: str) -> None:
         """Release reservation (SREM + DECR if was present)."""

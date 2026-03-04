@@ -15,7 +15,7 @@ services:
       - PYTHONPATH=/app
       - PAPER_MODE=${PAPER_MODE:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - DATABASE_URL=postgresql://${POSTGRES_USER:-alphaforge}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-alphaforge}
       - ANGEL_ONE_API_KEY=${ANGEL_ONE_API_KEY:-}
       - ANGEL_ONE_API_SECRET=${ANGEL_ONE_API_SECRET:-}
@@ -56,12 +56,12 @@ services:
     image: redis:7-alpine
     container_name: alphaforge-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -74,7 +74,7 @@ services:
     image: postgres:16-alpine
     container_name: alphaforge-postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-alphaforge}
       POSTGRES_USER: ${POSTGRES_USER:-alphaforge}
@@ -95,7 +95,7 @@ services:
     image: prom/prometheus:v2.51.0
     container_name: alphaforge-prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./deploy/observability/prometheus:/etc/prometheus
       - prometheus_data:/prometheus
@@ -117,7 +117,7 @@ services:
     image: grafana/grafana:10.4.0
     container_name: alphaforge-grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?Set GRAFANA_PASSWORD in .env}

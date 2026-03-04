@@ -76,7 +76,7 @@ export default function RegisterPage() {
 
         {/* Register card */}
         <div className="glass-card p-8">
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-5" aria-label="Create a new AlphaForge account">
             <div className="space-y-2">
               <Label htmlFor="username" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Username
@@ -89,6 +89,7 @@ export default function RegisterPage() {
                 placeholder="Choose a username"
                 className="h-11 rounded-xl border-border/50 bg-muted/30 px-4 text-sm transition-all focus:border-primary/50 focus:ring-2 focus:ring-primary/20 focus:bg-muted/50"
                 required
+                aria-required="true"
               />
             </div>
             <div className="space-y-2">
@@ -117,10 +118,13 @@ export default function RegisterPage() {
                   placeholder="Create a strong password"
                   className="h-11 rounded-xl border-border/50 bg-muted/30 px-4 pr-10 text-sm transition-all focus:border-primary/50 focus:ring-2 focus:ring-primary/20 focus:bg-muted/50"
                   required
+                  aria-required="true"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -133,6 +137,7 @@ export default function RegisterPage() {
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="flex items-center gap-2 rounded-xl bg-profit/10 border border-profit/20 p-3"
+                role="status"
               >
                 <CheckCircle className="h-4 w-4 text-profit shrink-0" />
                 <p className="text-xs text-profit">Account created! Redirecting to login…</p>
@@ -143,6 +148,7 @@ export default function RegisterPage() {
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="rounded-xl bg-loss/10 border border-loss/20 p-3"
+                role="alert"
               >
                 <p className="text-xs text-loss">{error}</p>
               </motion.div>
@@ -151,6 +157,8 @@ export default function RegisterPage() {
             <Button
               type="submit"
               disabled={loading || success}
+              aria-label={loading ? "Creating account" : "Create account"}
+              aria-busy={loading}
               className="relative w-full h-11 rounded-xl bg-gradient-to-r from-[hsl(258,90%,66%)] to-primary font-semibold text-white shadow-lg transition-all hover:shadow-xl hover:shadow-primary/20 hover:brightness-110 disabled:opacity-50"
             >
               {loading ? (
@@ -176,7 +184,7 @@ export default function RegisterPage() {
             <div className="flex-1 h-px bg-border/50" />
           </div>
 
-          <Link href="/login" className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-border/50 py-2.5 text-sm font-medium text-muted-foreground transition-all hover:border-primary/40 hover:text-primary hover:bg-primary/5">
+          <Link href="/login" aria-label="Sign in to existing account" className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-border/50 py-2.5 text-sm font-medium text-muted-foreground transition-all hover:border-primary/40 hover:text-primary hover:bg-primary/5">
             Sign In Instead
           </Link>
         </div>

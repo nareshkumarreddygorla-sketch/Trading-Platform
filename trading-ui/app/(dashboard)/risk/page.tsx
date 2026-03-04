@@ -245,6 +245,8 @@ export default function RiskPage() {
                 if (Object.keys(body).length > 0) updateMutation.mutate(body);
               }}
               disabled={updateMutation.isPending || (maxDailyLoss === null && maxPositions === null)}
+              aria-label="Save risk limits"
+              aria-busy={updateMutation.isPending}
               className={cn(
                 "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all",
                 (maxDailyLoss !== null || maxPositions !== null)
@@ -269,6 +271,7 @@ export default function RiskPage() {
                 step="0.5"
                 value={dailyLossDisplay}
                 onChange={(e) => setMaxDailyLoss(Number(e.target.value))}
+                aria-label={`Max daily loss: ${dailyLossDisplay.toFixed(1)}%`}
                 className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary bg-muted"
               />
               <div className="flex justify-between mt-1">
@@ -288,6 +291,7 @@ export default function RiskPage() {
                 step="1"
                 value={maxPosDisplay}
                 onChange={(e) => setMaxPositions(Number(e.target.value))}
+                aria-label={`Max open positions: ${maxPosDisplay}`}
                 className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary bg-muted"
               />
               <div className="flex justify-between mt-1">

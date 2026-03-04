@@ -51,12 +51,13 @@ export default function AuditPage() {
         className="flex flex-wrap items-center gap-3"
       >
         <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search events..."
+            aria-label="Search audit events"
             className="h-9 w-full rounded-xl border border-border/50 bg-muted/30 pl-9 pr-4 text-sm transition-all focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/20"
           />
         </div>
@@ -64,6 +65,8 @@ export default function AuditPage() {
           <button
             key={f}
             onClick={() => setFilter(f)}
+            aria-label={`Filter by ${f === "" ? "all events" : f.replace(/_/g, " ")}`}
+            aria-pressed={filter === f}
             className={cn(
               "rounded-lg px-3 py-1.5 text-[11px] font-medium transition-all",
               filter === f

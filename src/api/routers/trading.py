@@ -121,7 +121,7 @@ async def trading_ready(request: Request):
 
 
 @router.put("/trading/exposure_multiplier")
-async def set_exposure_multiplier(request: Request, body: dict = None):
+async def set_exposure_multiplier(request: Request, body: dict = None, current_user: dict = Depends(require_roles(["admin"]))):
     """
     Set risk exposure multiplier from LLM advisory (0.5--1.5).
     Applied to effective equity for position sizing; caps at [0.5, 1.5].
@@ -145,7 +145,7 @@ async def set_exposure_multiplier(request: Request, body: dict = None):
 
 
 @router.get("/trading/mode")
-async def trading_mode(request: Request):
+async def trading_mode(request: Request, current_user: dict = Depends(get_current_user)):
     """
     Returns current system trading mode and status:
     - mode: paper | live
@@ -193,7 +193,7 @@ async def trading_mode(request: Request):
 
 
 @router.put("/trading/autonomous")
-async def set_autonomous_mode(request: Request, body: dict = None):
+async def set_autonomous_mode(request: Request, body: dict = None, current_user: dict = Depends(require_roles(["admin"]))):
     """
     Toggle the autonomous loop on/off.
     Body: {"enabled": true/false}

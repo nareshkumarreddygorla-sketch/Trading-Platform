@@ -7,6 +7,7 @@ import base64
 import hashlib
 import logging
 import os
+import secrets
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -104,6 +105,16 @@ class BrokerCredentialResponse(BaseModel):
     mode: Optional[str] = None
     connected: bool = False
     auto_started: bool = False
+    confirm_token: Optional[str] = None
+
+
+class LiveModeConfirmRequest(BaseModel):
+    confirm_token: str = Field(..., min_length=1, description="Confirmation token from configure step")
+
+
+# Paper-to-live confirmation tokens (token -> {creds, ts, user_id})
+_pending_live_switch: dict = {}
+_CONFIRM_TOKEN_TTL_SECONDS = 300  # 5 minutes
 
 
 def _mask_client_id(client_id: Optional[str]) -> Optional[str]:
@@ -149,8 +160,9 @@ async def configure_broker(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Configure Angel One broker credentials and switch from paper to live mode.
-    Validates credentials by attempting authentication, then reconfigures the gateway.
+    Step 1 of paper-to-live transition: validate credentials and return a confirmation token.
+    The user must call POST /broker/confirm-live with the token to actually switch to live mode.
+    This two-step flow prevents accidental live trading activation.
     """
     gateway = getattr(request.app.state, "gateway", None)
     if gateway is None:
@@ -181,6 +193,73 @@ async def configure_broker(
                 "connected": False,
             },
         )
+
+    # Credentials validated — issue a confirmation token (valid for 5 minutes)
+    token = secrets.token_urlsafe(32)
+    _pending_live_switch[token] = {
+        "creds": creds,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "ts": time.time(),
+        "user_id": current_user.get("user_id", "unknown"),
+    }
+
+    # Cleanup expired tokens
+    now = time.time()
+    expired = [k for k, v in _pending_live_switch.items() if now - v["ts"] > _CONFIRM_TOKEN_TTL_SECONDS]
+    for k in expired:
+        del _pending_live_switch[k]
+
+    logger.info(
+        "Broker credentials validated -- confirmation token issued (client=%s, actor=%s)",
+        creds.client_id,
+        current_user.get("user_id", "unknown"),
+    )
+
+    return {
+        "status": "confirm_required",
+        "message": f"Credentials validated for client {creds.client_id}. "
+                   f"Call POST /broker/confirm-live with the confirm_token to switch to LIVE mode. "
+                   f"Token expires in {_CONFIRM_TOKEN_TTL_SECONDS // 60} minutes.",
+        "mode": "paper",
+        "connected": False,
+        "auto_started": False,
+        "confirm_token": token,
+    }
+
+
+@router.post("/broker/confirm-live", response_model=BrokerCredentialResponse)
+async def confirm_live_mode(
+    request: Request,
+    body: LiveModeConfirmRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Step 2 of paper-to-live transition: confirm the switch to live trading.
+    Requires a valid confirm_token from the /broker/configure step.
+    """
+    gateway = getattr(request.app.state, "gateway", None)
+    if gateway is None:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "message": "Gateway not initialized", "connected": False},
+        )
+
+    pending = _pending_live_switch.pop(body.confirm_token, None)
+    if not pending:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Invalid or expired confirmation token", "connected": False},
+        )
+    if time.time() - pending["ts"] > _CONFIRM_TOKEN_TTL_SECONDS:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Confirmation token expired (5 min TTL)", "connected": False},
+        )
+
+    creds = pending["creds"]
+    access_token = pending["access_token"]
+    refresh_token = pending["refresh_token"]
 
     # Reconfigure the live gateway with validated credentials
     try:
@@ -222,7 +301,7 @@ async def configure_broker(
         request.app.state.broker_last_connected = datetime.now(timezone.utc).isoformat()
 
         logger.info(
-            "Broker credentials configured -- switched to LIVE mode (client=%s, actor=%s)",
+            "Broker credentials CONFIRMED -- switched to LIVE mode (client=%s, actor=%s)",
             creds.client_id,
             current_user.get("user_id", "unknown"),
         )
@@ -276,7 +355,7 @@ async def configure_broker(
 
 
 @router.get("/broker/status")
-async def broker_status(request: Request):
+async def broker_status(request: Request, current_user: dict = Depends(get_current_user)):
     """Return current broker connection status, mode, and health."""
     gateway = getattr(request.app.state, "gateway", None)
     if gateway is None:
@@ -402,7 +481,7 @@ async def disconnect_broker(
 
 
 @router.post("/broker/validate")
-async def validate_broker_credentials(creds: BrokerCredentials):
+async def validate_broker_credentials(creds: BrokerCredentials, current_user: dict = Depends(get_current_user)):
     """Test Angel One credentials without saving. Returns success/failure."""
     try:
         import asyncio

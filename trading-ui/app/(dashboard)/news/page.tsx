@@ -62,6 +62,7 @@ export default function NewsPage() {
         <button
           onClick={() => refetch()}
           className="flex items-center gap-2 glass-card px-3 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:text-primary transition-colors"
+          aria-label="Refresh market news"
         >
           <RefreshCw className="h-3.5 w-3.5" />
           Refresh

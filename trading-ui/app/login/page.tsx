@@ -226,7 +226,7 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-5" aria-label="Sign in to AlphaForge">
             <motion.div
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
@@ -246,6 +246,7 @@ export default function LoginPage() {
                   placeholder="Enter your username"
                   className="h-12 rounded-xl border-border/40 bg-muted/20 pl-10 pr-4 text-sm transition-all duration-300 focus:border-primary/40 focus:ring-2 focus:ring-primary/15 focus:bg-muted/30 focus:shadow-[0_0_20px_hsl(217_91%_60%_/_0.08)] placeholder:text-muted-foreground/30"
                   required
+                  aria-required="true"
                 />
               </div>
             </motion.div>
@@ -269,10 +270,13 @@ export default function LoginPage() {
                   placeholder="Enter your password"
                   className="h-12 rounded-xl border-border/40 bg-muted/20 pl-10 pr-12 text-sm transition-all duration-300 focus:border-primary/40 focus:ring-2 focus:ring-primary/15 focus:bg-muted/30 focus:shadow-[0_0_20px_hsl(217_91%_60%_/_0.08)] placeholder:text-muted-foreground/30"
                   required
+                  aria-required="true"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
                   className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground transition-colors duration-200"
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -287,6 +291,7 @@ export default function LoginPage() {
                   animate={{ opacity: 1, y: 0, height: "auto" }}
                   exit={{ opacity: 0, y: -8, height: 0 }}
                   className="rounded-xl bg-loss/8 border border-loss/15 p-3.5"
+                  role="alert"
                 >
                   <p className="text-xs text-loss font-medium">{error}</p>
                 </motion.div>
@@ -301,6 +306,8 @@ export default function LoginPage() {
               <Button
                 type="submit"
                 disabled={loading}
+                aria-label={loading ? "Signing in" : "Sign in"}
+                aria-busy={loading}
                 className="relative w-full h-12 rounded-xl bg-gradient-to-r from-primary via-[hsl(240,80%,58%)] to-[hsl(258,90%,66%)] font-semibold text-white shadow-lg transition-all duration-300 hover:shadow-2xl hover:shadow-primary/25 hover:brightness-110 disabled:opacity-50 overflow-hidden group"
               >
                 {/* Shine effect */}
@@ -334,6 +341,7 @@ export default function LoginPage() {
 
           <Link
             href="/register"
+            aria-label="Create a new account"
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-border/30 py-3 text-sm font-medium text-muted-foreground transition-all duration-300 hover:border-primary/30 hover:text-primary hover:bg-primary/5 hover:shadow-[0_0_20px_hsl(217_91%_60%_/_0.06)]"
           >
             Create an Account

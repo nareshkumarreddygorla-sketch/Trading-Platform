@@ -75,9 +75,9 @@ export default function AgentStatus() {
   const agentList = Object.values(agents);
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4" role="region" aria-label="AI Agents status" aria-live="polite">
       <h3 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
-        <Activity className="w-4 h-4" /> AI Agents
+        <Activity className="w-4 h-4" aria-hidden="true" /> AI Agents
         <span className="ml-auto text-xs text-zinc-500">
           {agentList.filter((a) => a.running).length}/{agentList.length} active
         </span>

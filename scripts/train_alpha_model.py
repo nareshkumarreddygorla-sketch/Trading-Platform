@@ -349,6 +349,48 @@ def train_model(
     if lgb_model is not None:
         lgb_model.fit(X, y, sample_weight=sample_weights)
 
+    # ── Post-training calibration (Platt scaling) ──
+    # Fixes SELL-only bias by recalibrating probabilities to match true class frequency
+    try:
+        from sklearn.calibration import CalibratedClassifierCV
+        logger.info("Applying Platt scaling calibration to XGBoost...")
+        xgb_calibrated = CalibratedClassifierCV(xgb_model, method="sigmoid", cv=3)
+        xgb_calibrated.fit(X, y, sample_weight=sample_weights)
+        xgb_model = xgb_calibrated
+
+        if lgb_model is not None:
+            logger.info("Applying Platt scaling calibration to LightGBM...")
+            lgb_calibrated = CalibratedClassifierCV(lgb_model, method="sigmoid", cv=3)
+            lgb_calibrated.fit(X, y, sample_weight=sample_weights)
+            lgb_model = lgb_calibrated
+
+        logger.info("Post-training calibration complete")
+    except Exception as e:
+        logger.warning("Calibration failed (non-fatal, using uncalibrated model): %s", e)
+
+    # ── Bias validation gate ──
+    # Reject model if it's severely biased toward BUY or SELL
+    probs = xgb_model.predict_proba(X)[:, 1]
+    buy_pct = (probs > 0.5).mean()
+    logger.info("Bias check: %.1f%% BUY signals (mean prob=%.4f, std=%.4f)",
+                buy_pct * 100, probs.mean(), probs.std())
+    if buy_pct < 0.05:
+        logger.error(
+            "MODEL BIAS DETECTED: only %.1f%% BUY signals (threshold: >5%%). "
+            "The model is stuck predicting SELL for nearly all inputs. "
+            "Check training data class balance and MIN_RETURN_PCT threshold.",
+            buy_pct * 100,
+        )
+        # Don't exit — save the model but warn loudly
+    elif buy_pct > 0.95:
+        logger.error(
+            "MODEL BIAS DETECTED: %.1f%% BUY signals (threshold: <95%%). "
+            "The model is stuck predicting BUY for nearly all inputs.",
+            buy_pct * 100,
+        )
+    else:
+        logger.info("Bias check PASSED: %.1f%% BUY (within 5-95%% range)", buy_pct * 100)
+
     # Create ensemble wrapper
     ensemble = EnsembleClassifier(xgb_model, lgb_model)
 
@@ -440,6 +482,12 @@ def main():
     joblib.dump(model, out_path)
     logger.info("Model saved to %s  (%.1f KB)", out_path, out_path.stat().st_size / 1024)
 
+    # Final validation: check ensemble output distribution
+    ensemble_probs = model.predict_proba(X)[:, 1]
+    ensemble_buy_pct = (ensemble_probs > 0.5).mean()
+    logger.info("Ensemble output: %.1f%% BUY, mean=%.4f, std=%.4f",
+                ensemble_buy_pct * 100, ensemble_probs.mean(), ensemble_probs.std())
+
     # Save feature names alongside model for inference consistency
     meta_path = MODEL_DIR / "alpha_xgb_meta.json"
     with open(meta_path, "w") as f:
@@ -453,6 +501,10 @@ def main():
             "n_symbols": len(dataframes),
             "positive_rate": float(y.mean()),
             "ensemble": True,
+            "calibrated": True,
+            "ensemble_buy_pct": float(ensemble_buy_pct),
+            "ensemble_mean_prob": float(ensemble_probs.mean()),
+            "ensemble_std_prob": float(ensemble_probs.std()),
         }, f, indent=2)
     logger.info("Feature metadata saved to %s (%d features)", meta_path, len(feature_names))
 

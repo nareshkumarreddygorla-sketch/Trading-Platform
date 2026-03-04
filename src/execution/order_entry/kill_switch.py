@@ -24,6 +24,16 @@ class KillReason(str, Enum):
     MARKET_FEED_FAILURE = "market_feed_failure"
 
 
+# Reasons that NEVER auto-disarm (require human intervention).
+# Module-level constant so both KillSwitchState and KillSwitch can reference it.
+_MANUAL_DISARM_ONLY = frozenset({
+    KillReason.MANUAL,
+    KillReason.MAX_DAILY_LOSS,
+    KillReason.FILL_MISMATCH,
+    KillReason.MAX_DRAWDOWN,
+})
+
+
 @dataclass
 class KillSwitchState:
     armed: bool
@@ -31,10 +41,6 @@ class KillSwitchState:
     detail: str = ""
     ts: Optional[datetime] = None
     allow_reduce_only: bool = True  # if True, only orders that reduce position are allowed
-
-
-    # Reasons that NEVER auto-disarm (require human intervention)
-    _MANUAL_DISARM_ONLY = {KillReason.MANUAL, KillReason.MAX_DAILY_LOSS, KillReason.FILL_MISMATCH, KillReason.MAX_DRAWDOWN}
 
 
 class KillSwitch:
@@ -59,6 +65,16 @@ class KillSwitch:
 
     async def arm(self, reason: KillReason, detail: str = "") -> None:
         async with self._lock:
+            # Never downgrade from a manual-only reason to an auto-disarmable one.
+            # E.g. MAX_DRAWDOWN must never be overwritten by MARKET_FEED_FAILURE.
+            if self._state.armed and self._state.reason in _MANUAL_DISARM_ONLY:
+                if reason not in _MANUAL_DISARM_ONLY:
+                    logger.warning(
+                        "Kill switch arm REJECTED: current reason=%s (manual-only) "
+                        "cannot be downgraded to %s (auto-disarmable)",
+                        self._state.reason.value, reason.value,
+                    )
+                    return
             self._state = KillSwitchState(
                 armed=True,
                 reason=reason,

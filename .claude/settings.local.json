@@ -11,7 +11,10 @@
       "Bash(grep -E \"model_id\\\\s*=\" /Users/nishitareddy/Trading-Platform/src/ai/models/*.py)",
       "Bash(grep -r \"class.*Pipeline\\\\|class.*Orchestrator\\\\|class.*Engine\" /Users/nishitareddy/Trading-Platform/src/ai/*.py)",
       "Bash(git init)",
-      "Bash(git add -A)"
+      "Bash(git add -A)",
+      "Bash(git commit:*)",
+      "Bash(git add src/api/routers/broker.py src/api/app.py src/execution/autonomous_loop.py src/strategy_engine/runner.py trading-ui/app/\\\\\\(dashboard\\\\\\)/broker/page.tsx trading-ui/lib/api/client.ts)",
+      "Bash(python -c \"from src.execution.order_entry.kill_switch import KillSwitch, KillReason, _MANUAL_DISARM_ONLY; print\\(''KillSwitch import OK''\\); print\\(''_MANUAL_DISARM_ONLY:'', _MANUAL_DISARM_ONLY\\)\")"
     ]
   }
 }

@@ -1,5 +1,7 @@
 """Reconciliation: broker vs DB positions. Log discrepancies; no auto-correct."""
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+
+from src.api.auth import require_roles
 from pydantic import BaseModel
 from typing import List
 
@@ -16,7 +18,7 @@ class ReconciliationResponse(BaseModel):
 
 
 @router.post("/reconcile/positions", response_model=ReconciliationResponse)
-async def run_reconcile_positions(request: Request):
+async def run_reconcile_positions(request: Request, current_user: dict = Depends(require_roles(["admin"]))):
     """
     Compare broker positions vs internal DB. Logs discrepancies and increments
     reconciliation_mismatches_total. Does NOT auto-correct.

@@ -128,7 +128,7 @@ export default function TrainAIPanel() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.4 }}
     >
-      <div className="glass-card p-5">
+      <div className="glass-card p-5" role="region" aria-label="AI Model Training">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -189,6 +189,7 @@ export default function TrainAIPanel() {
               <button
                 onClick={handleStop}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-loss/10 text-loss hover:bg-loss/20 transition-colors"
+                aria-label="Stop training"
               >
                 <XCircle className="h-3 w-3" />
                 Stop
@@ -203,6 +204,8 @@ export default function TrainAIPanel() {
                 <button
                   key={mode.value}
                   onClick={() => setSelectedMode(mode.value)}
+                  aria-label={`${mode.label} training mode: ${mode.desc}`}
+                  aria-pressed={selectedMode === mode.value}
                   className={cn(
                     "flex-1 flex flex-col items-center gap-0.5 p-2 rounded-lg text-[10px] transition-all duration-200",
                     selectedMode === mode.value
@@ -221,6 +224,8 @@ export default function TrainAIPanel() {
             <button
               onClick={handleTrain}
               disabled={starting}
+              aria-label={starting ? "Training in progress" : "Train AI models"}
+              aria-busy={starting}
               className={cn(
                 "w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all duration-300",
                 starting
@@ -244,6 +249,8 @@ export default function TrainAIPanel() {
             <button
               onClick={() => setShowLogs(!showLogs)}
               className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              aria-expanded={showLogs}
+              aria-label={showLogs ? "Hide training logs" : "Show training logs"}
             >
               <ChevronDown
                 className={cn(

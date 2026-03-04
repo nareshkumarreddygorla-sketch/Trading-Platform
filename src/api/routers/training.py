@@ -7,7 +7,9 @@ import sys
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from src.api.auth import get_current_user, require_roles
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,7 @@ class TrainRequest(BaseModel):
 
 
 @router.get("/status")
-async def get_training_status():
+async def get_training_status(current_user: dict = Depends(get_current_user)):
     """Get current training status and last training metadata."""
     meta = None
     if os.path.exists(META_PATH):
@@ -99,7 +101,7 @@ async def get_training_status():
 
 
 @router.post("/start")
-async def start_training(req: TrainRequest):
+async def start_training(req: TrainRequest, current_user: dict = Depends(require_roles(["admin"]))):
     """Trigger AI model training as a background process."""
     if _training_state["running"]:
         raise HTTPException(status_code=409, detail="Training already in progress")
@@ -152,7 +154,7 @@ async def start_training(req: TrainRequest):
 
 
 @router.post("/stop")
-async def stop_training():
+async def stop_training(current_user: dict = Depends(require_roles(["admin"]))):
     """Stop a running training process."""
     proc = _training_state.get("process")
     if not proc or not _training_state["running"]:
@@ -175,7 +177,7 @@ async def stop_training():
 
 
 @router.get("/logs")
-async def get_training_logs(lines: int = 50):
+async def get_training_logs(lines: int = 50, current_user: dict = Depends(get_current_user)):
     """Get recent training output logs."""
     # If process is running, try to read available output without blocking
     proc = _training_state.get("process")

@@ -148,6 +148,8 @@ export default function StrategiesPage() {
                       disabled={toggleMutation.isPending}
                       className="transition-all"
                       title={isActive ? "Disable strategy" : "Enable strategy"}
+                      aria-label={isActive ? `Disable ${s.name || s.id} strategy` : `Enable ${s.name || s.id} strategy`}
+                      aria-pressed={isActive}
                     >
                       {isActive ? (
                         <ToggleRight className="h-6 w-6 text-profit" />
@@ -228,12 +230,14 @@ export default function StrategiesPage() {
                         <button
                           onClick={() => capitalMutation.mutate({ id: s.id, capital: Number(capital) })}
                           className="flex h-8 w-8 items-center justify-center rounded-lg bg-profit/10 text-profit hover:bg-profit/20 transition-colors"
+                          aria-label="Save capital allocation"
                         >
                           <Save className="h-3.5 w-3.5" />
                         </button>
                         <button
                           onClick={() => setEditId(null)}
                           className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground hover:bg-muted transition-colors"
+                          aria-label="Cancel editing capital"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
@@ -252,6 +256,7 @@ export default function StrategiesPage() {
                             setCapital(String(s.capital_allocated ?? 0));
                           }}
                           className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-all"
+                          aria-label={`Edit capital allocation for ${s.name || s.id}`}
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </button>

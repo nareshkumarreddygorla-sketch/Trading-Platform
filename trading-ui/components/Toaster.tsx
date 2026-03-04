@@ -93,6 +93,9 @@ export function Toaster() {
     <div
       className="fixed top-20 right-4 z-[110] flex flex-col gap-2 pointer-events-none"
       style={{ maxWidth: 380 }}
+      role="region"
+      aria-label="Toast notifications"
+      aria-live="polite"
     >
       <AnimatePresence mode="popLayout">
         {toasts.map((toast) => {
@@ -133,6 +136,7 @@ export function Toaster() {
                 <button
                   onClick={() => dismiss(toast.id)}
                   className="shrink-0 rounded-lg p-1 hover:bg-muted/50 transition-colors"
+                  aria-label="Dismiss notification"
                 >
                   <X className="h-3 w-3 text-muted-foreground" />
                 </button>

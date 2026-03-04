@@ -1,11 +1,13 @@
 """Agent management API: status, start/stop agents."""
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException
+
+from src.api.auth import get_current_user, require_roles
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 
 @router.get("/status")
-async def get_all_agent_status(request: Request):
+async def get_all_agent_status(request: Request, current_user: dict = Depends(get_current_user)):
     """Get status of all running agents."""
     orchestrator = getattr(request.app.state, "agent_orchestrator", None)
     if orchestrator is None:
@@ -14,7 +16,7 @@ async def get_all_agent_status(request: Request):
 
 
 @router.get("/{agent_name}/status")
-async def get_agent_status(agent_name: str, request: Request):
+async def get_agent_status(agent_name: str, request: Request, current_user: dict = Depends(get_current_user)):
     """Get status of a specific agent."""
     orchestrator = getattr(request.app.state, "agent_orchestrator", None)
     if orchestrator is None:
@@ -26,7 +28,7 @@ async def get_agent_status(agent_name: str, request: Request):
 
 
 @router.post("/{agent_name}/stop")
-async def stop_agent(agent_name: str, request: Request):
+async def stop_agent(agent_name: str, request: Request, current_user: dict = Depends(require_roles(["admin"]))):
     """Stop a specific agent."""
     orchestrator = getattr(request.app.state, "agent_orchestrator", None)
     if orchestrator is None:
@@ -39,7 +41,7 @@ async def stop_agent(agent_name: str, request: Request):
 
 
 @router.post("/{agent_name}/start")
-async def start_agent(agent_name: str, request: Request):
+async def start_agent(agent_name: str, request: Request, current_user: dict = Depends(require_roles(["admin"]))):
     """Start a specific agent."""
     orchestrator = getattr(request.app.state, "agent_orchestrator", None)
     if orchestrator is None:

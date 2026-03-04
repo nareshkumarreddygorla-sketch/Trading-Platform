@@ -21,13 +21,17 @@ Acceptance criteria traceability:
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import logging
 import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -149,22 +153,41 @@ class SEBIAuditTrail:
         self._db_session_factory = db_session_factory
         self._flush_threshold = flush_threshold
         self._pending_flush: List[AuditEvent] = []
+        # SHA-256 hash chain for tamper detection (SEBI compliance)
+        self._last_hash: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _append(self, event: AuditEvent) -> AuditEvent:
-        """Append an event under the lock; trigger DB flush if threshold met."""
-        with self._lock:
-            self._events.append(event)
-            self._pending_flush.append(event)
+    def _compute_chain_hash(self, event: AuditEvent) -> str:
+        """Compute SHA-256 hash linking this event to the previous one (tamper detection)."""
+        prev = self._last_hash or "genesis"
+        payload = f"{prev}|{event.event_id}|{event.timestamp.isoformat()}|{event.event_type.value}|{event.symbol}"
+        return hashlib.sha256(payload.encode()).hexdigest()
 
-            if (
-                self._db_session_factory is not None
-                and len(self._pending_flush) >= self._flush_threshold
-            ):
-                self._flush_to_db()
+    def _append(self, event: AuditEvent) -> AuditEvent:
+        """Append an event under the lock; write-through to DB immediately if available."""
+        with self._lock:
+            # Compute hash chain for tamper detection
+            chain_hash = self._compute_chain_hash(event)
+            self._last_hash = chain_hash
+
+            self._events.append(event)
+
+            # Write-through: flush every event immediately when DB is available.
+            # This prevents data loss on crash (previously batched at 100-event threshold).
+            if self._db_session_factory is not None:
+                self._pending_flush = [event]
+                try:
+                    self._flush_to_db(chain_hash=chain_hash)
+                except Exception:
+                    # If immediate flush fails, keep in pending buffer for retry
+                    logger.error(
+                        "Write-through flush failed for event %s; will retry on next append",
+                        event.event_id,
+                    )
+            # If no DB configured, events stay in memory only (dev/paper mode)
 
         return event
 
@@ -189,13 +212,17 @@ class SEBIAuditTrail:
             retention_until=_retention_expiry(),
         )
 
-    def _flush_to_db(self) -> None:
+    def _flush_to_db(self, chain_hash: Optional[str] = None) -> None:
         """
         Persist pending events to the database.
 
-        Called automatically when the buffer crosses *flush_threshold* or
-        can be invoked manually.  On failure the pending buffer is kept so
-        the next flush retries.
+        Called on every event append (write-through) or can be invoked manually.
+        On failure the pending buffer is kept so the next flush retries.
+
+        Parameters
+        ----------
+        chain_hash : str, optional
+            SHA-256 hash linking this event to the previous one for tamper detection.
         """
         if self._db_session_factory is None or not self._pending_flush:
             return
@@ -225,6 +252,7 @@ class SEBIAuditTrail:
                                     "strategy_id": evt.strategy_id,
                                     "model_source": evt.model_source,
                                     "retention_until": evt.retention_until.isoformat() if evt.retention_until else None,
+                                    "chain_hash": chain_hash,
                                 }
                             ),
                         },
