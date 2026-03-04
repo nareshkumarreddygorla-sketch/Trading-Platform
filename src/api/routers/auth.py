@@ -1,21 +1,27 @@
 """
-Auth: login, register, token refresh. Issues JWT for get_current_user.
+Auth: login, register, token refresh, logout. Issues JWT for get_current_user.
 When DATABASE_URL is set, users are persisted (UserRepository). Else hashed in-memory fallback.
 Access tokens: 30 minutes. Refresh tokens: 7 days.
+Logout blacklists the token. Refresh rotation blacklists old refresh tokens.
 """
 import os
 import hashlib
 import hmac
 import logging
 import re
+import time
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+
+from ..token_blacklist import blacklist_token, is_blacklisted
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 # Access token: short-lived (30 min). Refresh token: long-lived (7 days).
 ACCESS_TOKEN_EXPIRY_SECONDS = 30 * 60  # 30 minutes
@@ -130,7 +136,13 @@ def login(request: Request, body: LoginRequest):
 
 @router.post("/refresh")
 def refresh_token(body: RefreshRequest):
-    """Exchange a valid refresh_token for a new access_token."""
+    """
+    Exchange a valid refresh_token for a new access_token AND a new refresh_token.
+    The old refresh token is blacklisted immediately (rotation) to prevent replay attacks.
+    """
+    # Check blacklist BEFORE decoding
+    if is_blacklisted(body.refresh_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
     secret = _get_secret()
     try:
         import jwt
@@ -143,8 +155,17 @@ def refresh_token(body: RefreshRequest):
     roles = payload.get("roles", ["user"])
     if not username:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+
+    # Blacklist the OLD refresh token (rotation — prevents replay)
+    old_exp = payload.get("exp", time.time() + REFRESH_TOKEN_EXPIRY_SECONDS)
+    blacklist_token(body.refresh_token, float(old_exp))
+
+    # Issue both new access AND new refresh tokens
+    new_access = _issue_token(username, roles, "access")
+    new_refresh = _issue_token(username, roles, "refresh")
     return {
-        "access_token": _issue_token(username, roles, "access"),
+        "access_token": new_access,
+        "refresh_token": new_refresh,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRY_SECONDS,
     }
@@ -176,3 +197,34 @@ def register(request: Request, body: RegisterRequest):
     _users[body.username] = {"password_hash": _hash_inmemory(body.password), "email": body.email, "roles": ["user"]}
     logger.info("Registered user (in-memory): %s", body.username)
     return {"message": "Registered. Use /auth/login to get a token."}
+
+
+@router.post("/logout")
+def logout(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+):
+    """
+    Logout: blacklist the current access token so it cannot be reused.
+    The token is added to an in-memory (or Redis-backed) blacklist with a TTL
+    matching the token's remaining lifetime.
+    """
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authorization token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = credentials.credentials
+    # Decode to get expiry (but don't fail if token is already expired — still blacklist it)
+    secret = _get_secret()
+    try:
+        import jwt
+        payload = jwt.decode(token, secret, algorithms=["HS256"], options={"verify_exp": False})
+        expires_at = float(payload.get("exp", time.time() + ACCESS_TOKEN_EXPIRY_SECONDS))
+    except Exception:
+        # Even if we can't decode, blacklist the raw token with a default TTL
+        expires_at = time.time() + ACCESS_TOKEN_EXPIRY_SECONDS
+
+    blacklist_token(token, expires_at)
+    logger.info("Token blacklisted via /auth/logout")
+    return {"message": "Logged out successfully"}

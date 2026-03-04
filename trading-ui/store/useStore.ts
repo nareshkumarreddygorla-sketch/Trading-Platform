@@ -33,6 +33,9 @@ interface AppState {
   currentRegime: string;
   /** Research opportunities */
   topOpportunities: Array<{ symbol: string; confidence: number; direction: string }>;
+  /** WebSocket connection status */
+  wsStatus: "connecting" | "connected" | "disconnected" | "reconnecting";
+  setWsStatus: (status: "connecting" | "connected" | "disconnected" | "reconnecting") => void;
   /** Apply a WebSocket event. */
   applyWsEvent: (msg: Record<string, unknown>) => void;
 }
@@ -64,6 +67,8 @@ export const useStore = create<AppState>((set) => ({
   riskAlerts: [],
   currentRegime: "unknown",
   topOpportunities: [],
+  wsStatus: "disconnected",
+  setWsStatus: (wsStatus) => set({ wsStatus }),
   applyWsEvent: (msg) => {
     const type = msg.type as string;
     if (type === WsEventType.POSITION_UPDATED && Array.isArray(msg.positions)) {

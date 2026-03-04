@@ -304,11 +304,11 @@ export default function DashboardPage() {
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex items-center justify-between"
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"
       >
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
               Trading Dashboard
             </h1>
             <div className="status-badge-live">
@@ -316,11 +316,11 @@ export default function DashboardPage() {
               LIVE
             </div>
           </div>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
             Real-time portfolio monitoring & AI strategy performance
           </p>
         </div>
-        <div className="flex items-center gap-2.5 glass-card px-3.5 py-2 rounded-xl">
+        <div className="flex items-center gap-2.5 glass-card px-3.5 py-2 rounded-xl self-start sm:self-auto">
           <Clock className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="text-xs text-muted-foreground font-mono tracking-wide" suppressHydrationWarning>
             {currentTime || "--:--:--"} IST
@@ -329,7 +329,7 @@ export default function DashboardPage() {
       </motion.div>
 
       {/* KPI Cards */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           icon={DollarSign}
           label="Total Equity"
@@ -369,16 +369,16 @@ export default function DashboardPage() {
       </div>
 
       {/* Charts Row */}
-      <div className="grid gap-6 xl:grid-cols-3">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-3">
         {/* Equity Curve */}
         <motion.div
-          className="xl:col-span-2"
+          className="lg:col-span-2"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
         >
-          <div className="glass-card p-6">
-            <div className="flex items-center justify-between mb-5">
+          <div className="glass-card p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-5">
               <div>
                 <div className="flex items-center gap-2.5">
                   <h3 className="text-sm font-semibold">Equity Curve</h3>
@@ -408,7 +408,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             </div>
-            <div className="h-72">
+            <div className="h-48 sm:h-64 lg:h-72">
               {equityData.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
                   Equity curve will appear after first trades
@@ -559,15 +559,15 @@ export default function DashboardPage() {
       </div>
 
       {/* Strategy Performance + Recent Trades */}
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2">
         {/* Strategy Performance */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.32 }}
         >
-          <div className="glass-card p-6">
-            <div className="flex items-center justify-between mb-5">
+          <div className="glass-card p-4 sm:p-6">
+            <div className="flex items-center justify-between mb-4 sm:mb-5">
               <div>
                 <h3 className="text-sm font-semibold">Strategy Performance</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">{strategyPerf.length} strategies ranked by P&L</p>
@@ -645,8 +645,8 @@ export default function DashboardPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.38 }}
         >
-          <div className="glass-card p-6">
-            <div className="flex items-center justify-between mb-5">
+          <div className="glass-card p-4 sm:p-6">
+            <div className="flex items-center justify-between mb-4 sm:mb-5">
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-semibold">Recent Trades</h3>
@@ -725,14 +725,14 @@ export default function DashboardPage() {
       </div>
 
       {/* AI Agent & Training Section */}
-      <div className="grid gap-6 xl:grid-cols-3">
-        <div className="xl:col-span-1">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+        <div>
           <TrainAIPanel />
         </div>
-        <div className="xl:col-span-1">
+        <div>
           <AgentStatus />
         </div>
-        <div className="xl:col-span-1 flex flex-col gap-5">
+        <div className="md:col-span-2 xl:col-span-1 flex flex-col gap-4 sm:gap-5">
           <SignalFeed />
           <RiskAlerts />
           <RegimeIndicator />

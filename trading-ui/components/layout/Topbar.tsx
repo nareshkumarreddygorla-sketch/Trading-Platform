@@ -17,6 +17,7 @@ import {
   User,
   FileQuestion,
 } from "lucide-react";
+import { ConnectionStatus } from "@/components/ConnectionStatus";
 
 export function Topbar() {
   const autonomyOn = useStore((s) => s.autonomyOn);
@@ -202,6 +203,9 @@ export function Topbar() {
                 {isPaper ? "PAPER" : "LIVE"}
               </span>
             )}
+
+            {/* WebSocket connection status indicator */}
+            <ConnectionStatus />
           </div>
         </div>
 

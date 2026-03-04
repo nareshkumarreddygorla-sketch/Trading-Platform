@@ -24,6 +24,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "font-src 'self' data:; "
+            "connect-src 'self' ws: wss:; "
+            "frame-ancestors 'none'"
+        )
         # HSTS only in production
         if os.environ.get("ENV", "").lower() == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -168,5 +177,54 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response.headers["X-RateLimit-Limit"] = str(limit)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
         response.headers["X-RateLimit-Reset"] = str(reset_time)
+
+        return response
+
+
+# Paths to skip in request logging (too noisy / health-check traffic)
+_LOG_SKIP_PATHS = frozenset({"/health", "/api/v1/health", "/metrics"})
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log every HTTP request with method, path, status, duration, and client IP.
+
+    - Skips /health and /metrics to reduce noise.
+    - Uses INFO for 2xx/3xx, WARNING for 4xx, ERROR for 5xx.
+    """
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        path = request.url.path
+        if path in _LOG_SKIP_PATHS:
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+        method = request.method
+        start = time.time()
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = round((time.time() - start) * 1000, 1)
+            logger.error(
+                "%s %s 500 %.1fms ip=%s (unhandled exception)",
+                method, path, duration_ms, client_ip,
+            )
+            raise
+
+        duration_ms = round((time.time() - start) * 1000, 1)
+        status = response.status_code
+
+        if status >= 500:
+            logger.error(
+                "%s %s %d %.1fms ip=%s", method, path, status, duration_ms, client_ip,
+            )
+        elif status >= 400:
+            logger.warning(
+                "%s %s %d %.1fms ip=%s", method, path, status, duration_ms, client_ip,
+            )
+        else:
+            logger.info(
+                "%s %s %d %.1fms ip=%s", method, path, status, duration_ms, client_ip,
+            )
 
         return response

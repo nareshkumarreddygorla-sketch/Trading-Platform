@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import { useStore } from "@/store/useStore";
+import { dispatchToast } from "@/components/Toaster";
 
 type WsStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
 
@@ -29,11 +30,17 @@ function getWsUrl(): string {
  */
 export function useWebSocket() {
     const applyWsEvent = useStore((s) => s.applyWsEvent);
+    const setWsStatus = useStore((s) => s.setWsStatus);
     const wsRef = useRef<WebSocket | null>(null);
     const statusRef = useRef<WsStatus>("disconnected");
     const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const heartbeatTimer = useRef<ReturnType<typeof setInterval> | null>(null);
     const retryCount = useRef(0);
+
+    const updateStatus = useCallback((status: WsStatus) => {
+        statusRef.current = status;
+        setWsStatus(status);
+    }, [setWsStatus]);
 
     const stopHeartbeat = useCallback(() => {
         if (heartbeatTimer.current) {
@@ -67,10 +74,10 @@ export function useWebSocket() {
             const protocols = token ? [`access_token.${token}`] : undefined;
             const ws = new WebSocket(url, protocols);
             wsRef.current = ws;
-            statusRef.current = "connecting";
+            updateStatus("connecting");
 
             ws.onopen = () => {
-                statusRef.current = "connected";
+                updateStatus("connected");
                 retryCount.current = 0;
                 startHeartbeat(ws);
             };
@@ -90,6 +97,38 @@ export function useWebSocket() {
                         applyWsEvent(data);
                         // Dispatch custom event for Notifications component
                         window.dispatchEvent(new CustomEvent("ws-event", { detail: data }));
+
+                        // Dispatch toast notifications for key trading events
+                        if (data.type === "order_filled") {
+                            dispatchToast(
+                                "success",
+                                "Order Filled",
+                                `${data.side || "BUY"} ${data.symbol || "?"} x ${data.filled_qty ?? data.quantity ?? 0}`
+                            );
+                        }
+                        if (data.type === "circuit_open") {
+                            dispatchToast(
+                                "warning",
+                                "Circuit Breaker Triggered",
+                                "Trading halted — daily loss limit reached"
+                            );
+                        }
+                        if (data.type === "kill_switch_armed") {
+                            dispatchToast(
+                                "error",
+                                "Kill Switch Armed",
+                                (data.reason as string) || "Trading halted — reduce-only mode active"
+                            );
+                        }
+                        if (data.type === "trade_closed") {
+                            const pnl = typeof data.pnl === "number" ? data.pnl : null;
+                            const pnlStr = pnl !== null ? `P&L: ${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}` : "";
+                            dispatchToast(
+                                "info",
+                                "Trade Closed",
+                                `${data.symbol || "?"} ${pnlStr}`
+                            );
+                        }
                     }
                 } catch {
                     // ignore non-JSON messages
@@ -97,7 +136,7 @@ export function useWebSocket() {
             };
 
             ws.onclose = (event) => {
-                statusRef.current = "disconnected";
+                updateStatus("disconnected");
                 wsRef.current = null;
                 stopHeartbeat();
                 // Don't reconnect if server rejected auth (code 4001)
@@ -118,17 +157,17 @@ export function useWebSocket() {
         } catch {
             scheduleReconnect();
         }
-    }, [applyWsEvent, startHeartbeat, stopHeartbeat]);
+    }, [applyWsEvent, startHeartbeat, stopHeartbeat, updateStatus]);
 
     const scheduleReconnect = useCallback(() => {
         if (retryCount.current >= MAX_RETRIES) return;
         retryCount.current += 1;
         const delay = Math.min(1000 * Math.pow(2, retryCount.current - 1), 30000);
-        statusRef.current = "reconnecting";
+        updateStatus("reconnecting");
         reconnectTimer.current = setTimeout(() => {
             connect();
         }, delay);
-    }, [connect]);
+    }, [connect, updateStatus]);
 
     useEffect(() => {
         connect();

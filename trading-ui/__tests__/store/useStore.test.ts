@@ -19,23 +19,24 @@ import { WsEventType } from "@/types";
 // using a merge (not replace) so the action functions remain intact.
 // ---------------------------------------------------------------------------
 
-const dataOnlyReset = {
+const dataOnlyReset: Record<string, unknown> = {
   user: null,
   equity: 0,
   dailyPnl: 0,
   autonomyOn: false,
   safeMode: false,
-  tradingMode: "paper" as const,
-  broker: { connected: false, status: "disconnected" as const },
+  tradingMode: "paper",
+  broker: { connected: false, status: "disconnected" },
   circuitOpen: false,
   killSwitchArmed: false,
-  positions: [] as unknown[],
+  positions: [],
   marketFeed: { connected: false, healthy: false, last_tick_ts: null },
   agents: {},
-  recentSignals: [] as unknown[],
-  riskAlerts: [] as unknown[],
+  recentSignals: [],
+  riskAlerts: [],
   currentRegime: "unknown",
-  topOpportunities: [] as unknown[],
+  topOpportunities: [],
+  wsStatus: "disconnected",
 };
 
 beforeEach(() => {

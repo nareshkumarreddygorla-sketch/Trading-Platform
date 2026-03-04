@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alphaforge-trading
+  labels:
+    app: alphaforge
+    component: trading-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Single instance for trading (no duplicate orders)
+  selector:
+    matchLabels:
+      app: alphaforge
+  template:
+    metadata:
+      labels:
+        app: alphaforge
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+      - name: backend
+        image: alphaforge/trading:latest
+        ports:
+        - containerPort: 8000
+          name: http
+        envFrom:
+        - secretRef:
+            name: alphaforge-secrets
+        env:
+        - name: ENV
+          value: "production"
+        - name: PAPER_MODE
+          value: "false"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 30  # Allow up to 2.5 min for model loading
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        volumeMounts:
+        - name: models
+          mountPath: /app/models
+        - name: data
+          mountPath: /app/data
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: alphaforge-models
+      - name: data
+        persistentVolumeClaim:
+          claimName: alphaforge-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alphaforge-trading
+spec:
+  selector:
+    app: alphaforge
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  type: ClusterIP

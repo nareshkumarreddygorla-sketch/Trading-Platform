@@ -1,6 +1,9 @@
 """
 FastAPI application: health, market, strategies, risk, orders, backtest, metrics.
 """
+import os
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")  # Prevent OMP abort on macOS
+
 from contextlib import asynccontextmanager
 import logging
 import time
@@ -91,6 +94,10 @@ async def lifespan(app: FastAPI):
     import asyncio
     import os
     import sys
+
+    # ── Error tracking & observability ──
+    from .sentry_setup import init_sentry
+    init_sentry()
 
     _snapshot_task = None
     _heartbeat_task = None
@@ -1897,6 +1904,35 @@ async def lifespan(app: FastAPI):
             await _al.stop()
         except Exception as ex:
             logger.warning("Autonomous loop stop: %s", ex)
+
+    # ── Snapshot open trades to TradeStore before exit ──
+    if hasattr(app.state, 'trade_store') and hasattr(app.state, 'autonomous_loop'):
+        _loop_ref = app.state.autonomous_loop
+        for trade_key, trade in _loop_ref._open_trades.items():
+            try:
+                app.state.trade_store.upsert_trade(
+                    trade_key=trade_key,
+                    symbol=trade.get('symbol', ''),
+                    exchange=trade.get('exchange', 'NSE'),
+                    side=trade.get('side', ''),
+                    quantity=trade.get('quantity', 0),
+                    entry_price=trade.get('entry_price', 0),
+                    stop_loss=trade.get('stop_loss'),
+                    take_profit=trade.get('take_profit'),
+                )
+            except Exception as e:
+                logger.warning("Failed to snapshot trade %s: %s", trade_key, e)
+        logger.info("Persisted %d open trades to TradeStore on shutdown", len(_loop_ref._open_trades))
+
+    # ── Disconnect broker gateway ──
+    try:
+        _gw = getattr(app.state, 'gateway', None)
+        if _gw and hasattr(_gw, 'disconnect'):
+            await _gw.disconnect()
+            logger.info("Broker gateway disconnected")
+    except Exception as e:
+        logger.warning("Broker disconnect failed: %s", e)
+
     if _snapshot_task is not None:
         _snapshot_task.cancel()
         try:
@@ -1946,7 +1982,85 @@ async def lifespan(app: FastAPI):
             await _mds.stop()
         except Exception as ex:
             logger.warning("MarketDataService stop: %s", ex)
-    logger.info("API shutdown")
+
+    # ── Close Redis connection (app.state.redis) ──
+    try:
+        _redis = getattr(app.state, 'redis', None)
+        if _redis:
+            await _redis.close()
+            logger.info("Redis connection closed")
+    except Exception as e:
+        logger.debug("Redis close: %s", e)
+
+    # ------------------------------------------------------------------
+    # Production shutdown cleanup
+    # ------------------------------------------------------------------
+
+    # 1. Broker gateway disconnect
+    _gw = getattr(app.state, "gateway", None)
+    if _gw is not None:
+        try:
+            await _gw.disconnect()
+            logger.info("Broker gateway disconnected")
+        except Exception as ex:
+            logger.warning("Broker gateway disconnect: %s", ex)
+
+    # 2. Redis connection close
+    try:
+        _redis_url = os.environ.get("REDIS_URL") or os.environ.get("RATE_LIMIT_REDIS_URL")
+        if _redis_url:
+            _rpool = getattr(app.state, "_redis_pool", None)
+            if _rpool is not None:
+                _rpool.close()
+                logger.info("Redis connection pool closed")
+    except Exception as ex:
+        logger.warning("Redis pool close: %s", ex)
+
+    # 3. TradeStore flush
+    _ts = getattr(app.state, "trade_store", None)
+    if _ts is not None:
+        try:
+            _flush = getattr(_ts, "flush", None)
+            if _flush is not None:
+                _flush()
+                logger.info("TradeStore flushed")
+        except Exception as ex:
+            logger.warning("TradeStore flush: %s", ex)
+
+    # 4. Position snapshot — persist all open positions before shutdown
+    _rm = getattr(app.state, "risk_manager", None)
+    if _rm is not None:
+        try:
+            positions = getattr(_rm, "positions", {})
+            if positions:
+                import json
+                snapshot = {
+                    "timestamp": time.time(),
+                    "positions": {
+                        sym: {
+                            "qty": getattr(pos, "qty", getattr(pos, "quantity", 0)),
+                            "avg_price": getattr(pos, "avg_price", getattr(pos, "entry_price", 0)),
+                            "side": getattr(pos, "side", "unknown"),
+                        }
+                        for sym, pos in positions.items()
+                    },
+                }
+                snapshot_path = os.path.join(os.environ.get("DATA_DIR", "data"), "position_snapshot.json")
+                os.makedirs(os.path.dirname(snapshot_path), exist_ok=True)
+                with open(snapshot_path, "w") as f:
+                    json.dump(snapshot, f, indent=2)
+                logger.info("Position snapshot saved: %d positions -> %s", len(positions), snapshot_path)
+        except Exception as ex:
+            logger.warning("Position snapshot: %s", ex)
+
+    # 5. Stop token blacklist cleanup thread
+    try:
+        from .token_blacklist import stop_cleanup_thread
+        stop_cleanup_thread()
+    except Exception:
+        pass
+
+    logger.info("API shutdown complete")
 
 
 def _get_allowed_origins() -> list[str]:
@@ -1985,44 +2099,9 @@ def _get_allowed_origins() -> list[str]:
     ]
 
 
-def _setup_structured_logging():
-    """Configure structured JSON logging (Sprint 9.2)."""
-    import json as _json
-    import os
-
-    class JSONFormatter(logging.Formatter):
-        def format(self, record):
-            log_entry = {
-                "ts": self.formatTime(record),
-                "level": record.levelname,
-                "module": record.module,
-                "message": record.getMessage(),
-            }
-            if record.exc_info:
-                log_entry["exception"] = self.formatException(record.exc_info)
-            return _json.dumps(log_entry)
-
-    log_level = os.environ.get("LOG_LEVEL", "INFO")
-    if os.environ.get("LOG_FORMAT", "").lower() == "json":
-        handler = logging.StreamHandler()
-        handler.setFormatter(JSONFormatter())
-        logging.basicConfig(level=log_level, handlers=[handler], force=True)
-
-        # Add file handler with rotation
-        try:
-            from logging.handlers import RotatingFileHandler
-            os.makedirs("logs", exist_ok=True)
-            fh = RotatingFileHandler("logs/trading.log", maxBytes=10 * 1024 * 1024, backupCount=5)
-            fh.setFormatter(JSONFormatter())
-            logging.getLogger().addHandler(fh)
-        except Exception:
-            pass
-    else:
-        logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-
-
-# Initialize structured logging before app creation
-_setup_structured_logging()
+# Initialize structured logging before app creation (replaces inline _setup_structured_logging)
+from .logging_config import configure_logging
+configure_logging()
 
 
 def create_app() -> FastAPI:
@@ -2033,9 +2112,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Security middleware (order matters: outermost first)
-    from .middleware import SecurityHeadersMiddleware, RateLimitMiddleware
+    # Security & observability middleware (order matters: outermost first)
+    from .middleware import SecurityHeadersMiddleware, RateLimitMiddleware, RequestLoggingMiddleware
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(RateLimitMiddleware, requests_per_minute=120, auth_requests_per_minute=20)
     app.add_middleware(
         CORSMiddleware,

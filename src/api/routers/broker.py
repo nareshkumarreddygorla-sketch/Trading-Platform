@@ -1,7 +1,10 @@
 """
 Broker credential management: configure, validate, disconnect, and check Angel One connection.
 Enables zero-intervention flow: user enters creds -> system validates -> auto-switches to live.
+Credentials are encrypted at rest using Fernet (AES-128-CBC) derived from JWT_SECRET via PBKDF2.
 """
+import base64
+import hashlib
 import logging
 import os
 import time
@@ -14,8 +17,78 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 
-router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Credential encryption helpers
+# ---------------------------------------------------------------------------
+_fernet_instance = None
+_encryption_available = False
+
+
+def _derive_fernet_key() -> Optional[bytes]:
+    """Derive a Fernet-compatible key from JWT_SECRET using PBKDF2."""
+    secret = os.environ.get("JWT_SECRET") or os.environ.get("AUTH_SECRET")
+    if not secret:
+        return None
+    dk = hashlib.pbkdf2_hmac(
+        "sha256",
+        secret.encode("utf-8"),
+        b"trading-platform-broker-cred-salt",
+        iterations=100_000,
+        dklen=32,
+    )
+    # Fernet needs a url-safe base64 encoded 32-byte key
+    return base64.urlsafe_b64encode(dk)
+
+
+def _get_fernet():
+    """Lazily initialize Fernet cipher. Returns None if unavailable."""
+    global _fernet_instance, _encryption_available
+    if _fernet_instance is not None:
+        return _fernet_instance
+    try:
+        from cryptography.fernet import Fernet
+        key = _derive_fernet_key()
+        if key is None:
+            logger.warning("Broker cred encryption: no JWT_SECRET set, falling back to base64 encoding")
+            _encryption_available = False
+            return None
+        _fernet_instance = Fernet(key)
+        _encryption_available = True
+        return _fernet_instance
+    except ImportError:
+        logger.warning(
+            "Broker cred encryption: 'cryptography' package not installed. "
+            "Falling back to base64 encoding. Install with: pip install cryptography"
+        )
+        _encryption_available = False
+        return None
+
+
+def encrypt_credential(value: str) -> str:
+    """Encrypt a credential string. Returns Fernet ciphertext or base64-encoded fallback."""
+    f = _get_fernet()
+    if f is not None:
+        return f.encrypt(value.encode("utf-8")).decode("utf-8")
+    # Fallback: base64 encode (obfuscation only, NOT secure)
+    return "b64:" + base64.b64encode(value.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_credential(value: str) -> str:
+    """Decrypt a credential string. Handles Fernet ciphertext or base64 fallback."""
+    if value.startswith("b64:"):
+        return base64.b64decode(value[4:]).decode("utf-8")
+    f = _get_fernet()
+    if f is not None:
+        try:
+            return f.decrypt(value.encode("utf-8")).decode("utf-8")
+        except Exception:
+            # Value may be stored unencrypted (legacy) — return as-is
+            return value
+    return value
+
+router = APIRouter()
 
 
 class BrokerCredentials(BaseModel):
@@ -30,6 +103,7 @@ class BrokerCredentialResponse(BaseModel):
     message: str
     mode: Optional[str] = None
     connected: bool = False
+    auto_started: bool = False
 
 
 def _mask_client_id(client_id: Optional[str]) -> Optional[str]:
@@ -133,12 +207,12 @@ async def configure_broker(
         gateway._refresh_failures = 0
         gateway._auth_failed = False
 
-        # Store in environment for restart persistence
-        os.environ["ANGEL_ONE_API_KEY"] = creds.api_key
-        os.environ["ANGEL_ONE_CLIENT_ID"] = creds.client_id
-        os.environ["ANGEL_ONE_PASSWORD"] = creds.password
-        os.environ["ANGEL_ONE_TOTP_SECRET"] = creds.totp_secret
-        os.environ["ANGEL_ONE_TOKEN"] = access_token
+        # Store in environment for restart persistence (encrypted at rest)
+        os.environ["ANGEL_ONE_API_KEY"] = encrypt_credential(creds.api_key)
+        os.environ["ANGEL_ONE_CLIENT_ID"] = encrypt_credential(creds.client_id)
+        os.environ["ANGEL_ONE_PASSWORD"] = encrypt_credential(creds.password)
+        os.environ["ANGEL_ONE_TOTP_SECRET"] = encrypt_credential(creds.totp_secret)
+        os.environ["ANGEL_ONE_TOKEN"] = encrypt_credential(access_token)
         os.environ["EXEC_PAPER"] = "false"
 
         # Clear safe mode since broker is now reachable
@@ -165,11 +239,28 @@ async def configure_broker(
             except Exception:
                 pass
 
+        # Auto-start autonomous loop if it exists and is not already running
+        auto_started = False
+        autonomous_loop = getattr(request.app.state, "autonomous_loop", None)
+        if autonomous_loop is not None:
+            is_running = getattr(autonomous_loop, "_running", False)
+            if not is_running:
+                try:
+                    await autonomous_loop.start()
+                    auto_started = True
+                    logger.info(
+                        "Autonomous loop auto-started after broker connection (client=%s)",
+                        creds.client_id,
+                    )
+                except Exception as loop_err:
+                    logger.warning("Failed to auto-start autonomous loop: %s", loop_err)
+
         return {
             "status": "ok",
             "message": f"Broker configured -- LIVE mode active (client: {creds.client_id})",
             "mode": "live",
             "connected": True,
+            "auto_started": auto_started,
         }
 
     except Exception as e:

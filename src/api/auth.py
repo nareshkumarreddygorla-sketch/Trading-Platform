@@ -37,6 +37,12 @@ def _get_secret() -> str:
 
 
 def _decode_token(token: str) -> Optional[dict]:
+    # Check blacklist BEFORE spending CPU on JWT validation
+    from .token_blacklist import is_blacklisted
+    if is_blacklisted(token):
+        logger.debug("JWT rejected: token is blacklisted")
+        return None
+
     secret = _get_secret()
     try:
         import jwt
