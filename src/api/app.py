@@ -1380,8 +1380,15 @@ async def lifespan(app: FastAPI):
             try:
                 from src.ai.llm.client import LLMClient, LLMConfig
                 from src.ai.llm.sentiment import NewsSentimentService
-                _llm_config = LLMConfig()  # reads OPENAI_API_KEY / ANTHROPIC_API_KEY from env
-                if _llm_config.api_key:
+                _openai_key = os.environ.get("OPENAI_API_KEY", "")
+                _anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                if _openai_key:
+                    _llm_config = LLMConfig(provider="openai", api_key=_openai_key, model="gpt-4o-mini")
+                elif _anthropic_key:
+                    _llm_config = LLMConfig(provider="anthropic", api_key=_anthropic_key, model="claude-3-haiku-20240307")
+                else:
+                    _llm_config = None
+                if _llm_config:
                     _llm_client = LLMClient(_llm_config)
                     _sentiment_service = NewsSentimentService(_llm_client)
                     _autonomous_loop.set_sentiment_service(_sentiment_service)

@@ -48,6 +48,34 @@ class AlphaModel:
                 logger.warning("AlphaModel load: path not found %s", path)
                 return False
             import joblib
+            # Patch __main__ so pickle can find EnsembleClassifier saved by training script
+            import sys
+            import types
+            _main = sys.modules.get("__main__")
+            _needs_patch = _main is not None and not hasattr(_main, "EnsembleClassifier")
+            if _needs_patch:
+                try:
+                    from scripts.train_alpha_model import EnsembleClassifier
+                    _main.EnsembleClassifier = EnsembleClassifier
+                except ImportError:
+                    # Define a minimal compatible class as fallback
+                    class EnsembleClassifier:
+                        """Minimal unpickle stub for soft-voting ensemble."""
+                        def __init__(self, xgb_model=None, lgb_model=None, xgb_weight=0.6, lgb_weight=0.4):
+                            self.xgb_model = xgb_model
+                            self.lgb_model = lgb_model
+                            self.xgb_weight = xgb_weight if lgb_model else 1.0
+                            self.lgb_weight = lgb_weight if lgb_model else 0.0
+                        def predict_proba(self, X):
+                            xgb_proba = self.xgb_model.predict_proba(X)
+                            if self.lgb_model is not None:
+                                lgb_proba = self.lgb_model.predict_proba(X)
+                                return self.xgb_weight * xgb_proba + self.lgb_weight * lgb_proba
+                            return xgb_proba
+                        def predict(self, X):
+                            proba = self.predict_proba(X)
+                            return (proba[:, 1] >= 0.5).astype(int)
+                    _main.EnsembleClassifier = EnsembleClassifier
             self._model = joblib.load(path)
             self.model_path = path
 
