@@ -5,7 +5,9 @@ Access tokens: 30 minutes. Refresh tokens: 7 days.
 """
 import os
 import hashlib
+import hmac
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -18,7 +20,7 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 # Access token: short-lived (30 min). Refresh token: long-lived (7 days).
 ACCESS_TOKEN_EXPIRY_SECONDS = 30 * 60  # 30 minutes
 REFRESH_TOKEN_EXPIRY_SECONDS = 7 * 24 * 3600  # 7 days
-MIN_PASSWORD_LENGTH = 8
+MIN_PASSWORD_LENGTH = 12  # Production-grade minimum
 
 # In-memory fallback (dev only) - passwords are hashed, never stored plaintext
 _users: dict[str, dict] = {}
@@ -29,19 +31,34 @@ def _hash_inmemory(password: str) -> str:
     return hashlib.sha256(f"trading-inmem-{password}".encode()).hexdigest()
 
 
-def _get_secret() -> Optional[str]:
-    return os.environ.get("JWT_SECRET") or os.environ.get("AUTH_SECRET")
+def _get_secret() -> str:
+    """Return JWT secret via the centralized auth module (never None)."""
+    from ..auth import _get_secret as _central_get_secret
+    return _central_get_secret()
+
+
+def _validate_password_strength(password: str) -> Optional[str]:
+    """
+    Validate password meets production security requirements.
+    Returns an error message if invalid, None if valid.
+    """
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"Password must be at least {MIN_PASSWORD_LENGTH} characters"
+    if not re.search(r"[A-Z]", password):
+        return "Password must contain at least one uppercase letter"
+    if not re.search(r"[a-z]", password):
+        return "Password must contain at least one lowercase letter"
+    if not re.search(r"[0-9]", password):
+        return "Password must contain at least one digit"
+    if not re.search(r"[^A-Za-z0-9]", password):
+        return "Password must contain at least one special character"
+    return None
 
 
 def _issue_token(username: str, roles: list[str], token_type: str = "access") -> str:
     import jwt
     import time
     secret = _get_secret()
-    if not secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Auth not configured (set JWT_SECRET)",
-        )
     expiry = ACCESS_TOKEN_EXPIRY_SECONDS if token_type == "access" else REFRESH_TOKEN_EXPIRY_SECONDS
     payload = {
         "sub": username,
@@ -62,7 +79,8 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=128)
     email: Optional[str] = Field(None, max_length=256)
-    password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=256)
+    password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=256,
+                          description="Min 12 chars, must include upper, lower, digit, and special char")
 
 
 class RefreshRequest(BaseModel):
@@ -72,16 +90,11 @@ class RefreshRequest(BaseModel):
 @router.post("/login")
 def login(request: Request, body: LoginRequest):
     """Login with username and password. Returns access_token (30m) and refresh_token (7d)."""
-    secret = _get_secret()
-    if not secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Auth not configured (set JWT_SECRET)",
-        )
     # Env-based single user (optional)
     env_user = os.environ.get("AUTH_USERNAME")
     env_pass = os.environ.get("AUTH_PASSWORD")
-    if env_user and env_pass and body.username == env_user and body.password == env_pass:
+    # Use constant-time comparison to prevent timing attacks on password
+    if env_user and env_pass and hmac.compare_digest(body.username, env_user) and hmac.compare_digest(body.password, env_pass):
         roles = ["user", "admin"] if os.environ.get("AUTH_ADMIN") == "1" else ["user"]
         return {
             "access_token": _issue_token(body.username, roles, "access"),
@@ -119,8 +132,6 @@ def login(request: Request, body: LoginRequest):
 def refresh_token(body: RefreshRequest):
     """Exchange a valid refresh_token for a new access_token."""
     secret = _get_secret()
-    if not secret:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Auth not configured")
     try:
         import jwt
         payload = jwt.decode(body.refresh_token, secret, algorithms=["HS256"])
@@ -144,8 +155,9 @@ def register(request: Request, body: RegisterRequest):
     """Register a new user (persisted when DATABASE_URL set). Then use /auth/login."""
     if not body.username.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username required")
-    if len(body.password) < MIN_PASSWORD_LENGTH:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+    password_error = _validate_password_strength(body.password)
+    if password_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=password_error)
     user_repo = getattr(request.app.state, "user_repo", None)
     if user_repo is not None:
         created = user_repo.create(

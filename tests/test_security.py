@@ -497,16 +497,16 @@ class TestPasswordSecurity:
                 f"{API_PREFIX}/auth/register",
                 json={
                     "username": "shortpwduser",
-                    "password": "abc",  # 3 chars, below minimum of 8
+                    "password": "abc",  # 3 chars, below minimum of 12
                     "email": "short@example.com",
                 },
             )
-        # Pydantic enforces min_length=8 on RegisterRequest.password -> 422
+        # Pydantic enforces min_length=12 on RegisterRequest.password -> 422
         assert resp.status_code in (400, 422)
 
     @pytest.mark.asyncio
     async def test_exactly_min_length_password_accepted(self, app):
-        """A password with exactly MIN_PASSWORD_LENGTH chars should pass validation."""
+        """A password with exactly MIN_PASSWORD_LENGTH chars and complexity should pass validation."""
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -514,7 +514,7 @@ class TestPasswordSecurity:
                 f"{API_PREFIX}/auth/register",
                 json={
                     "username": "minpwduser",
-                    "password": "a" * 8,  # exactly 8 chars
+                    "password": "Abcdefgh1@zz",  # exactly 12 chars with upper, lower, digit, special
                     "email": "min@example.com",
                 },
             )

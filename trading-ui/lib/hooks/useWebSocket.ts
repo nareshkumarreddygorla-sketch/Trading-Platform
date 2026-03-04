@@ -54,11 +54,16 @@ export function useWebSocket() {
     const connect = useCallback(() => {
         if (typeof window === "undefined") return;
 
-        const url = getWsUrl();
         const token = localStorage.getItem("token");
 
+        // Build URL with query param fallback for token (some proxies strip subprotocols)
+        let url = getWsUrl();
+        if (token) {
+            url += `${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+        }
+
         try {
-            // Send JWT via subprotocol header instead of URL query param
+            // Send JWT via both subprotocol header (preferred) and query param (fallback)
             const protocols = token ? [`access_token.${token}`] : undefined;
             const ws = new WebSocket(url, protocols);
             wsRef.current = ws;
@@ -74,6 +79,13 @@ export function useWebSocket() {
                 try {
                     const data = JSON.parse(event.data);
                     if (data && typeof data === "object" && data.type) {
+                        // Respond to server heartbeat pings
+                        if (data.type === "ping") {
+                            if (ws.readyState === WebSocket.OPEN) {
+                                ws.send("pong");
+                            }
+                            return;
+                        }
                         if (data.type === "pong") return;
                         applyWsEvent(data);
                         // Dispatch custom event for Notifications component
@@ -84,10 +96,19 @@ export function useWebSocket() {
                 }
             };
 
-            ws.onclose = () => {
+            ws.onclose = (event) => {
                 statusRef.current = "disconnected";
                 wsRef.current = null;
                 stopHeartbeat();
+                // Don't reconnect if server rejected auth (code 4001)
+                if (event.code === 4001) {
+                    // Clear stale token and redirect to login
+                    localStorage.removeItem("token");
+                    if (!window.location.pathname.includes("/login")) {
+                        window.location.href = "/login";
+                    }
+                    return;
+                }
                 scheduleReconnect();
             };
 

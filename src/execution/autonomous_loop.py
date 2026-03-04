@@ -154,38 +154,101 @@ class AutonomousLoop:
 
         # ── Sentiment integration (Phase 1: news-aware trading) ──
         self._sentiment_service = None  # set via set_sentiment_service()
+        self._sentiment_predictor = None  # FinBERT fallback (no API key needed)
         self._last_sentiment_score: float = 0.5  # neutral default
         self._last_sentiment_ts: Optional[float] = None
         self._sentiment_cache_ttl: float = 300.0  # refresh sentiment every 5 min
+        self._last_sentiment_detail: Optional[Dict[str, float]] = None  # {positive, negative, neutral}
+
+        # ── Dynamic universe fallback (when BarCache is empty) ──
+        self._dynamic_universe_cache: List[Tuple[str, Exchange]] = []
+        self._dynamic_universe_ts: Optional[float] = None
+        self._dynamic_universe_ttl: float = 1800.0  # refresh every 30 min
 
     def set_sentiment_service(self, service) -> None:
         """Wire news sentiment service for exposure adjustment."""
         self._sentiment_service = service
         logger.info("Sentiment service wired to autonomous loop")
 
+    def set_sentiment_predictor(self, predictor) -> None:
+        """Wire FinBERT sentiment predictor as fallback (no API key needed)."""
+        self._sentiment_predictor = predictor
+        logger.info("FinBERT sentiment predictor wired to autonomous loop (fallback)")
+
     async def _fetch_sentiment(self) -> float:
-        """Fetch latest market sentiment; returns multiplier 0.5-1.2."""
+        """Fetch latest market sentiment; returns multiplier 0.5-1.2.
+
+        Two-tier approach:
+        1. LLM-based NewsSentimentService (if API key configured)
+        2. FinBERT SentimentPredictor fallback (no API key needed)
+        """
         import time as _time
-        if self._sentiment_service is None:
-            return 1.0
-        # Cache: only refresh every 5 minutes
         now = _time.time()
+
+        # Cache: only refresh every 5 minutes
         if self._last_sentiment_ts and (now - self._last_sentiment_ts) < self._sentiment_cache_ttl:
             return self._sentiment_to_multiplier(self._last_sentiment_score)
-        try:
-            result = await self._sentiment_service.analyze(
-                "Indian stock market overall outlook today", source="autonomous_loop"
-            )
-            if result:
-                self._last_sentiment_score = result.score
-                self._last_sentiment_ts = now
-                mult = self._sentiment_to_multiplier(result.score)
-                logger.info("Sentiment update: %s (score=%.2f, multiplier=%.2f, suggestion=%s)",
-                           result.sentiment, result.score, mult, result.risk_reduction_suggestion)
-                return mult
-        except Exception as e:
-            logger.debug("Sentiment fetch failed: %s", e)
+
+        # Tier 1: LLM-based sentiment (OpenAI / Anthropic)
+        if self._sentiment_service is not None:
+            try:
+                result = await self._sentiment_service.analyze(
+                    "Indian stock market overall outlook today", source="autonomous_loop"
+                )
+                if result:
+                    self._last_sentiment_score = result.score
+                    self._last_sentiment_ts = now
+                    self._last_sentiment_detail = {
+                        "positive": result.score,
+                        "negative": 1.0 - result.score,
+                        "neutral": 0.0,
+                        "source": "llm",
+                    }
+                    mult = self._sentiment_to_multiplier(result.score)
+                    logger.info("Sentiment update (LLM): %s (score=%.2f, multiplier=%.2f, suggestion=%s)",
+                               result.sentiment, result.score, mult, result.risk_reduction_suggestion)
+                    return mult
+            except Exception as e:
+                logger.debug("LLM sentiment fetch failed: %s — falling back to FinBERT", e)
+
+        # Tier 2: FinBERT-based sentiment (local, no API key)
+        if self._sentiment_predictor is not None:
+            try:
+                import asyncio as _aio
+                _loop = _aio.get_event_loop()
+                prediction = await _loop.run_in_executor(
+                    None, lambda: self._sentiment_predictor.predict({}, {"symbol": None})
+                )
+                if prediction and prediction.confidence > 0.05:
+                    # prob_up maps to sentiment score: >0.5 = positive, <0.5 = negative
+                    self._last_sentiment_score = prediction.prob_up
+                    self._last_sentiment_ts = now
+                    meta = prediction.metadata or {}
+                    sentiment_breakdown = meta.get("sentiment", {})
+                    self._last_sentiment_detail = {
+                        "positive": sentiment_breakdown.get("positive", 0.33),
+                        "negative": sentiment_breakdown.get("negative", 0.33),
+                        "neutral": sentiment_breakdown.get("neutral", 0.34),
+                        "source": "finbert",
+                        "headlines_count": meta.get("headlines_count", 0),
+                    }
+                    mult = self._sentiment_to_multiplier(prediction.prob_up)
+                    logger.info("Sentiment update (FinBERT): score=%.2f, multiplier=%.2f, headlines=%d, breakdown=%s",
+                               prediction.prob_up, mult,
+                               meta.get("headlines_count", 0), sentiment_breakdown)
+                    return mult
+            except Exception as e:
+                logger.debug("FinBERT sentiment fetch failed: %s", e)
+
         return 1.0
+
+    def _sentiment_blocks_buy(self) -> bool:
+        """Check if current sentiment is strongly negative enough to block BUY signals."""
+        if self._last_sentiment_detail is None:
+            return False
+        neg = self._last_sentiment_detail.get("negative", 0.33)
+        # Block BUY signals when negative sentiment > 60%
+        return neg > 0.60
 
     @staticmethod
     def _sentiment_to_multiplier(score: float) -> float:
@@ -201,6 +264,49 @@ class AutonomousLoop:
             return 1.1  # Bullish: slight increase
         else:
             return 1.2  # Very bullish: max increase
+
+    def _get_dynamic_universe_fallback(self) -> List[Tuple[str, Exchange]]:
+        """Fallback: build trading universe from DynamicUniverse or YFinance feeder symbols
+        when BarCache has no symbols yet."""
+        import time as _time
+        now = _time.time()
+
+        # Return cached universe if fresh
+        if (self._dynamic_universe_cache
+                and self._dynamic_universe_ts
+                and (now - self._dynamic_universe_ts) < self._dynamic_universe_ttl):
+            return self._dynamic_universe_cache
+
+        universe: List[Tuple[str, Exchange]] = []
+
+        # Strategy 1: DynamicUniverse (scans full NSE market)
+        try:
+            from src.scanner.dynamic_universe import get_dynamic_universe
+            du = get_dynamic_universe()
+            symbols = du.get_trading_stocks(count=50)
+            if symbols:
+                universe = [(s, Exchange.NSE) for s in symbols]
+                logger.info("Dynamic universe fallback: %d symbols from full NSE scan", len(universe))
+        except Exception as e:
+            logger.debug("DynamicUniverse fallback failed: %s", e)
+
+        # Strategy 2: YFinance feeder default symbols (lightweight fallback)
+        if not universe:
+            try:
+                from src.market_data.yfinance_fallback_feeder import DEFAULT_NSE_SYMBOLS
+                universe = [
+                    (s.replace(".NS", "").replace(".BO", ""), Exchange.NSE)
+                    for s in DEFAULT_NSE_SYMBOLS
+                ]
+                logger.info("YFinance feeder fallback: %d default symbols", len(universe))
+            except Exception as e:
+                logger.debug("YFinance feeder fallback failed: %s", e)
+
+        if universe:
+            self._dynamic_universe_cache = universe
+            self._dynamic_universe_ts = now
+
+        return universe
 
     def _bar_ts(self) -> str:
         return self.get_bar_ts()
@@ -307,9 +413,22 @@ class AutonomousLoop:
         from src.strategy_engine.base import MarketState
 
         symbols_exchanges = self.get_symbols() or []
+        used_fallback_universe = False
         if not symbols_exchanges:
-            logger.info("Tick %d: empty universe, skipping", self._tick_count)
-            return
+            # Fallback: use dynamic universe or YFinance feeder symbols
+            symbols_exchanges = self._get_dynamic_universe_fallback()
+            if symbols_exchanges:
+                used_fallback_universe = True
+                logger.info("Tick %d: BarCache empty, using fallback universe (%d symbols)",
+                           self._tick_count, len(symbols_exchanges))
+            else:
+                # Last resort: jump straight to market scanner if available
+                if self.market_scanner is not None:
+                    logger.info("Tick %d: no universe available, running market scanner only", self._tick_count)
+                    symbols_exchanges = []  # will skip bar-based loop, scanner runs below
+                else:
+                    logger.info("Tick %d: empty universe and no fallback available, skipping", self._tick_count)
+                    return
         all_signals: List[Signal] = []
         regime_scale_from_classifier: Optional[float] = None
         for symbol, exchange in symbols_exchanges:
@@ -366,6 +485,18 @@ class AutonomousLoop:
         # Apply news sentiment to exposure multiplier
         sentiment_mult = await self._fetch_sentiment()
         exposure_mult = round(max(0.5, min(1.5, exposure_mult * sentiment_mult)), 2)
+
+        # ── Sentiment-based signal filtering ──
+        # Strongly negative sentiment → skip BUY signals entirely
+        if self._sentiment_blocks_buy() and all_signals:
+            pre_filter = len(all_signals)
+            all_signals = [s for s in all_signals if s.side != SignalSide.BUY]
+            filtered_out = pre_filter - len(all_signals)
+            if filtered_out > 0:
+                logger.info("Sentiment filter: blocked %d BUY signals (negative sentiment %.0f%%)",
+                           filtered_out,
+                           (self._last_sentiment_detail or {}).get("negative", 0) * 100)
+
         max_position_pct = risk_state.get("max_position_pct") or 5.0
         drawdown_scale = risk_state.get("drawdown_scale")
         regime_scale = risk_state.get("regime_scale") or regime_scale_from_classifier
@@ -451,13 +582,30 @@ class AutonomousLoop:
         await self._check_stop_loss_take_profit(bar_ts)
 
         # Additionally, run full-market scanner if available
+        # When using fallback universe with no bar-based signals, scanner is the primary signal source
         if self.market_scanner is not None:
             try:
                 import asyncio as _aio
                 _loop = _aio.get_event_loop()
+
+                # If fallback universe, scan those specific symbols; otherwise scan default universe
+                _scanner_universe = None
+                if used_fallback_universe and symbols_exchanges:
+                    _scanner_universe = [f"{s}.NS" for s, _ex in symbols_exchanges]
+
                 scanner_signals = await _loop.run_in_executor(
-                    None, lambda: self.market_scanner.scan_to_signals(bar_cache=None)
+                    None, lambda: self.market_scanner.scan_to_signals(
+                        universe=_scanner_universe, bar_cache=None
+                    )
                 )
+
+                # Apply sentiment filter to scanner signals too
+                if self._sentiment_blocks_buy() and scanner_signals:
+                    _pre = len(scanner_signals)
+                    scanner_signals = [s for s in scanner_signals if s.side != SignalSide.BUY]
+                    if len(scanner_signals) < _pre:
+                        logger.info("Sentiment filter: blocked %d scanner BUY signals", _pre - len(scanner_signals))
+
                 existing_symbols = {signal.symbol for signal, qty in allocated}
                 submitted_symbols = set()
                 for signal, qty in allocated:

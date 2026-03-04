@@ -5,6 +5,7 @@ Shares data pipeline with LSTM training.
 Usage:
     PYTHONPATH=. python scripts/train_transformer.py
     PYTHONPATH=. python scripts/train_transformer.py --epochs 30
+    PYTHONPATH=. python scripts/train_transformer.py --epochs 10 --symbols RELIANCE.NS,TCS.NS
 """
 import argparse
 import logging
@@ -21,6 +22,11 @@ sys.path.insert(0, PROJECT_ROOT)
 
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
+# Quick mode tickers (same as LSTM training)
+QUICK_TICKERS = [
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
+]
+
 
 def train(epochs=30, batch_size=64, lr=0.0005, symbols=None):
     try:
@@ -31,14 +37,21 @@ def train(epochs=30, batch_size=64, lr=0.0005, symbols=None):
         logger.error("PyTorch not installed. Run: pip install torch")
         return
 
-    from scripts.train_lstm import aggregate_data
+    from scripts.train_lstm import aggregate_data, fetch_yahoo_data
     from src.ai.models.transformer_predictor import TransformerModel
     from src.ai.models.lstm_predictor import NUM_FEATURES
 
-    logger.info("Loading data...")
-    X, y, _used_symbols = aggregate_data(symbols=symbols)
+    # If no symbols provided, use a quick set
+    if symbols is None:
+        symbols = QUICK_TICKERS
+
+    logger.info("Fetching data for %d symbols...", len(symbols))
+    symbol_data = fetch_yahoo_data(symbols, period="2y")
+
+    logger.info("Building features and sequences...")
+    X, y, _used_symbols = aggregate_data(symbol_data)
     if len(X) == 0:
-        logger.error("No training data. Run: PYTHONPATH=. python scripts/download_nse_data.py")
+        logger.error("No training data. Check that symbols have enough history.")
         return
 
     logger.info("Dataset: %d sequences", len(X))

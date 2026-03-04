@@ -1,4 +1,4 @@
-"""Persistence layer: orders, order events, positions, risk snapshot, users (Postgres)."""
+"""Persistence layer: orders, order events, positions, risk snapshot, users (Postgres + SQLite fallback)."""
 from .models import Base, OrderModel, OrderEventModel, PositionModel, RiskSnapshotModel, UserModel
 from .database import get_engine, get_session_factory, session_scope
 from .order_repo import OrderRepository
@@ -8,6 +8,7 @@ from .audit_repo import AuditRepository
 from .user_repo import UserRepository
 from .service import PersistenceService
 from .reconciliation import reconcile_positions
+from .trade_store import TradeStore
 
 __all__ = [
     "Base",
@@ -26,4 +27,5 @@ __all__ = [
     "UserRepository",
     "PersistenceService",
     "reconcile_positions",
+    "TradeStore",
 ]

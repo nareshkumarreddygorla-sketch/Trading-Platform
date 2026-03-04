@@ -1,9 +1,11 @@
 """
 JWT authentication and RBAC. All critical actions traceable to actor.
-When JWT_SECRET is set, protected endpoints require valid Bearer token.
+JWT_SECRET is REQUIRED. If not set, a random secret is generated at startup
+and a warning is logged. Auth is NEVER bypassed.
 """
 import os
 import logging
+import secrets
 from typing import List, Optional
 
 from fastapi import Depends, HTTPException, Request, status
@@ -13,15 +15,29 @@ logger = logging.getLogger(__name__)
 
 HTTP_BEARER = HTTPBearer(auto_error=False)
 
+# Generate a fallback secret at module load if JWT_SECRET is not configured.
+# This ensures auth is NEVER bypassed, but tokens won't survive restarts.
+_FALLBACK_SECRET: Optional[str] = None
 
-def _get_secret() -> Optional[str]:
-    return os.environ.get("JWT_SECRET") or os.environ.get("AUTH_SECRET")
+
+def _get_secret() -> str:
+    """Return JWT secret. Always returns a value - never None."""
+    global _FALLBACK_SECRET
+    secret = os.environ.get("JWT_SECRET") or os.environ.get("AUTH_SECRET")
+    if secret:
+        return secret
+    # No env var set: generate a random secret so auth is still enforced.
+    if _FALLBACK_SECRET is None:
+        _FALLBACK_SECRET = secrets.token_hex(32)
+        logger.warning(
+            "JWT_SECRET is not set! A random secret has been generated. "
+            "Tokens will NOT survive restarts. Set JWT_SECRET for production use."
+        )
+    return _FALLBACK_SECRET
 
 
 def _decode_token(token: str) -> Optional[dict]:
     secret = _get_secret()
-    if not secret:
-        return None
     try:
         import jwt
         payload = jwt.decode(token, secret, algorithms=["HS256"])
@@ -36,14 +52,9 @@ async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTP_BEARER),
 ) -> dict:
     """
-    Resolve current user from JWT or allow anonymous when JWT_SECRET not set.
+    Resolve current user from JWT. Auth is ALWAYS enforced.
     Returns {"user_id": str, "roles": list, "tenant_id": str|None}.
     """
-    secret = _get_secret()
-    if not secret:
-        logger.warning("JWT_SECRET not set — authentication disabled. Set JWT_SECRET for production use.")
-        return {"user_id": "system", "roles": ["admin"], "tenant_id": None}
-
     if not credentials or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

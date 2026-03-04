@@ -43,8 +43,8 @@ class ConnectionManager:
         self._lock = asyncio.Lock()
         self._heartbeat_task: Optional[asyncio.Task] = None
 
-    async def connect(self, websocket: WebSocket, user_id: Optional[str] = None) -> None:
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, user_id: Optional[str] = None, subprotocol: Optional[str] = None) -> None:
+        await websocket.accept(subprotocol=subprotocol)
         state = _ClientState(user_id or "anonymous")
         async with self._lock:
             self._connections[websocket] = state

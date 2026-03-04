@@ -1346,14 +1346,30 @@ async def lifespan(app: FastAPI):
                 paper_mode=getattr(gateway, "paper", True),
             )
             # Wire open trade persistence (write-ahead for SL/TP tracking)
-            try:
-                from src.persistence.open_trade_repo import OpenTradeRepository
-                _open_trade_repo = OpenTradeRepository()
-                _autonomous_loop.set_open_trade_repo(_open_trade_repo)
-                recovered = _autonomous_loop.load_open_trades_from_db()
-                logger.info("Open trade persistence wired (recovered %d trades from DB)", recovered)
-            except Exception as e:
-                logger.warning("Open trade persistence not available: %s", e)
+            # Try PostgreSQL first (if DATABASE_URL set), fall back to SQLite TradeStore
+            _trade_repo_wired = False
+            if os.environ.get("DATABASE_URL"):
+                try:
+                    from src.persistence.open_trade_repo import OpenTradeRepository
+                    _open_trade_repo = OpenTradeRepository()
+                    _autonomous_loop.set_open_trade_repo(_open_trade_repo)
+                    recovered = _autonomous_loop.load_open_trades_from_db()
+                    logger.info("Open trade persistence wired via PostgreSQL (recovered %d trades from DB)", recovered)
+                    _trade_repo_wired = True
+                except Exception as e:
+                    logger.warning("PostgreSQL open trade persistence not available: %s", e)
+
+            if not _trade_repo_wired:
+                try:
+                    from src.persistence.trade_store import TradeStore
+                    _db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "trades.db")
+                    _trade_store = TradeStore(db_path=_db_path)
+                    _autonomous_loop.set_open_trade_repo(_trade_store)
+                    recovered = _autonomous_loop.load_open_trades_from_db()
+                    app.state.trade_store = _trade_store
+                    logger.info("Open trade persistence wired via SQLite (recovered %d trades from DB)", recovered)
+                except Exception as e:
+                    logger.warning("SQLite trade persistence not available: %s", e)
 
             _autonomous_loop.start()
             app.state.autonomous_loop = _autonomous_loop
@@ -1377,6 +1393,8 @@ async def lifespan(app: FastAPI):
             _autonomous_loop._ensemble_engine = getattr(app.state, "ensemble_engine", None)
 
             # ── Wire news sentiment into autonomous loop (Phase 1: news-aware trading) ──
+            # Two-tier: LLM-based (if API key) + FinBERT fallback (always, no API key needed)
+            _llm_sentiment_wired = False
             try:
                 from src.ai.llm.client import LLMClient, LLMConfig
                 from src.ai.llm.sentiment import NewsSentimentService
@@ -1392,11 +1410,24 @@ async def lifespan(app: FastAPI):
                     _llm_client = LLMClient(_llm_config)
                     _sentiment_service = NewsSentimentService(_llm_client)
                     _autonomous_loop.set_sentiment_service(_sentiment_service)
+                    _llm_sentiment_wired = True
                     logger.info("News sentiment wired to autonomous loop (provider=%s)", _llm_config.provider)
                 else:
-                    logger.info("No LLM API key set — sentiment integration skipped (set OPENAI_API_KEY or ANTHROPIC_API_KEY)")
+                    logger.info("No LLM API key set -- LLM sentiment skipped, FinBERT fallback will be used")
             except Exception as e:
-                logger.warning("Sentiment service not wired: %s", e)
+                logger.warning("LLM sentiment service not wired: %s", e)
+
+            # Always wire FinBERT sentiment predictor as fallback (works without API keys)
+            try:
+                from src.ai.models.sentiment_predictor import SentimentPredictor
+                _finbert_predictor = SentimentPredictor()
+                _autonomous_loop.set_sentiment_predictor(_finbert_predictor)
+                if _llm_sentiment_wired:
+                    logger.info("FinBERT sentiment predictor wired as fallback (LLM is primary)")
+                else:
+                    logger.info("FinBERT sentiment predictor wired as primary sentiment source (no LLM API key)")
+            except Exception as e:
+                logger.debug("FinBERT sentiment predictor not wired: %s", e)
 
 # ── Multi-Agent Orchestrator ──
             try:
@@ -1923,14 +1954,27 @@ def _get_allowed_origins() -> list[str]:
     import os
     custom = os.environ.get("CORS_ORIGINS")
     if custom:
-        return [o.strip() for o in custom.split(",") if o.strip()]
+        origins = [o.strip() for o in custom.split(",") if o.strip()]
+        # Reject wildcard "*" when credentials are enabled (browsers block it anyway)
+        if "*" in origins:
+            logger.error(
+                "CORS_ORIGINS contains '*' which is incompatible with allow_credentials=True. "
+                "Falling back to no origins. Set explicit origins."
+            )
+            return []
+        return origins
     env = os.environ.get("ENV", "development").lower()
     if env == "production":
-        # In production, set CORS_ORIGINS explicitly
-        return [
-            os.environ.get("FRONTEND_URL", "https://trading.example.com"),
-        ]
-    # Development: allow local origins
+        frontend_url = os.environ.get("FRONTEND_URL")
+        if not frontend_url:
+            logger.error(
+                "PRODUCTION: Neither CORS_ORIGINS nor FRONTEND_URL is set. "
+                "CORS will reject all cross-origin requests. "
+                "Set CORS_ORIGINS or FRONTEND_URL to your frontend domain."
+            )
+            return []
+        return [frontend_url]
+    # Development: allow local origins only
     return [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
@@ -2070,6 +2114,7 @@ def create_app() -> FastAPI:
         from urllib.parse import parse_qs
 
         user_id = "anonymous"
+        selected_subprotocol = None
 
         # Try auth via subprotocol header first (preferred - avoids token in URL)
         subprotocols = websocket.headers.get("sec-websocket-protocol", "")
@@ -2079,6 +2124,7 @@ def create_app() -> FastAPI:
                 proto = proto.strip()
                 if proto.startswith("access_token."):
                     token = proto[len("access_token."):]
+                    selected_subprotocol = proto
                     break
 
         # Fallback: query param (legacy)
@@ -2088,19 +2134,22 @@ def create_app() -> FastAPI:
 
         if os.environ.get("JWT_SECRET") or os.environ.get("AUTH_SECRET"):
             if not token:
-                await websocket.close(code=4001)
+                # Must accept before closing with custom code; raw close sends 403
+                await websocket.accept(subprotocol=selected_subprotocol)
+                await websocket.close(code=4001, reason="missing_token")
                 return
             payload = _decode_token(token)
             if not payload:
-                await websocket.close(code=4001)
+                await websocket.accept(subprotocol=selected_subprotocol)
+                await websocket.close(code=4001, reason="invalid_token")
                 return
             user_id = payload.get("sub") or payload.get("user_id") or "unknown"
 
         mgr = get_ws_manager()
         if mgr:
-            await mgr.connect(websocket, user_id=user_id)
+            await mgr.connect(websocket, user_id=user_id, subprotocol=selected_subprotocol)
         else:
-            await websocket.accept()
+            await websocket.accept(subprotocol=selected_subprotocol)
         try:
             await websocket.send_json({"type": "connected", "message": "Live", "user_id": user_id})
             while True:
@@ -2109,6 +2158,20 @@ def create_app() -> FastAPI:
                     # Handle ping/pong heartbeat from client
                     if data == "ping":
                         await websocket.send_json({"type": "pong"})
+                    elif data == "pong":
+                        # Client responding to server-initiated heartbeat ping
+                        if mgr:
+                            mgr.record_pong(websocket)
+                    else:
+                        # Try parsing JSON messages (e.g. {"type": "pong"})
+                        try:
+                            import json as _json
+                            msg = _json.loads(data)
+                            if isinstance(msg, dict) and msg.get("type") == "pong":
+                                if mgr:
+                                    mgr.record_pong(websocket)
+                        except (ValueError, TypeError):
+                            pass
                 except Exception:
                     break
         except Exception:

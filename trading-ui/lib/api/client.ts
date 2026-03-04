@@ -240,10 +240,13 @@ export const endpoints = {
   brokerStatus: () =>
     api.get<{
       connected: boolean; mode: "paper" | "live"; healthy: boolean; safe_mode: boolean;
-      has_credentials: boolean; autonomous_running: boolean; tick_count: number; open_trades: number;
+      has_credentials: boolean; client_id: string | null; last_connected: string | null;
+      autonomous_running: boolean; tick_count: number; open_trades: number;
     }>("/api/v1/broker/status"),
   brokerConfigure: (body: { api_key: string; client_id: string; password: string; totp_secret: string }) =>
     api.post<{ status: string; message: string; mode?: string; connected: boolean }>("/api/v1/broker/configure", body),
+  brokerDisconnect: () =>
+    api.post<{ status: string; message: string; mode: string; connected: boolean }>("/api/v1/broker/disconnect"),
   brokerValidate: (body: { api_key: string; client_id: string; password: string; totp_secret: string }) =>
     api.post<{ valid: boolean; message: string }>("/api/v1/broker/validate", body),
 

@@ -120,7 +120,7 @@ services:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-alphaforge}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?Set GRAFANA_PASSWORD in .env}
       GF_INSTALL_PLUGINS: grafana-clock-panel
     volumes:
       - grafana_data:/var/lib/grafana

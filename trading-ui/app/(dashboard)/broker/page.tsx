@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { useStore } from "@/store/useStore";
 import { endpoints } from "@/lib/api/client";
 import {
-  Plug, CheckCircle, XCircle, Radio, Wifi,
+  Plug, Unplug, CheckCircle, XCircle, Radio, Wifi,
   WifiOff, RefreshCw, Clock, Key, Shield,
   ArrowUpRight, ArrowDownRight, Activity,
   Play, Square, Zap, Eye, EyeOff,
@@ -86,6 +86,26 @@ export default function BrokerPage() {
     onError: (err: Error) => {
       setCredError(err.message);
       setCredSuccess("");
+    },
+  });
+
+  // Disconnect broker
+  const disconnectMutation = useMutation({
+    mutationFn: () => endpoints.brokerDisconnect(),
+    onSuccess: (data) => {
+      setCredSuccess(data.message);
+      setCredError("");
+      setShowCredForm(false);
+      setCredForm({ api_key: "", client_id: "", password: "", totp_secret: "" });
+      queryClient.invalidateQueries({ queryKey: ["broker-status"] });
+      queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
+      useStore.setState({
+        broker: { connected: false, status: "disconnected" },
+        tradingMode: "paper",
+      });
+    },
+    onError: (err: Error) => {
+      setCredError(err.message);
     },
   });
 
@@ -176,6 +196,8 @@ export default function BrokerPage() {
               {[
                 { label: "Mode", value: isLive ? "LIVE TRADING" : "PAPER MODE" },
                 { label: "Status", value: brokerStatus?.healthy ? "HEALTHY" : brokerStatus?.safe_mode ? "SAFE MODE" : "OFFLINE" },
+                { label: "Client ID", value: brokerStatus?.client_id ?? "---" },
+                { label: "Last Connected", value: brokerStatus?.last_connected ? new Date(brokerStatus.last_connected).toLocaleString("en-IN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "---" },
                 { label: "Open Positions", value: String(openPositions) },
                 { label: "Daily P&L", value: `${(risk?.daily_pnl ?? 0).toFixed(2)}%` },
               ].map((item) => (
@@ -194,6 +216,23 @@ export default function BrokerPage() {
                 <Key className="h-3.5 w-3.5" />
                 {showCredForm ? "Cancel" : "Configure Credentials"}
               </button>
+              {isConnected && (
+                <button
+                  onClick={() => disconnectMutation.mutate()}
+                  disabled={disconnectMutation.isPending}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 rounded-xl border border-loss/30 py-2.5 text-xs font-medium text-loss transition-all hover:bg-loss/5",
+                    disconnectMutation.isPending && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  {disconnectMutation.isPending ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Unplug className="h-3.5 w-3.5" />
+                  )}
+                  {disconnectMutation.isPending ? "Disconnecting..." : "Disconnect"}
+                </button>
+              )}
               <button
                 onClick={handleReconnect}
                 disabled={reconnecting}
