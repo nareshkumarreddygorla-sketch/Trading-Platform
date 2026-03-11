@@ -8,7 +8,7 @@ pytest-timeout>=2.2.0
 httpx>=0.27.2
 
 # Linting & formatting
-ruff>=0.6.9
+ruff==0.15.5
 
 # Security scanning
 pip-audit>=2.7.3
