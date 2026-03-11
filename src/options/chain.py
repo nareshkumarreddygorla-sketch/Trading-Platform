@@ -1,8 +1,8 @@
 """Options chain data management with Greeks."""
+
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from datetime import UTC, datetime
 
 from .greeks import GreeksResult, black_scholes
 
@@ -22,7 +22,7 @@ class OptionContract:
     volume: int = 0
     open_interest: int = 0
     iv: float = 0.0
-    greeks: Optional[GreeksResult] = None
+    greeks: GreeksResult | None = None
     lot_size: int = 1
     exchange: str = "NSE"
 
@@ -32,9 +32,9 @@ class OptionsChain:
     underlying: str
     spot_price: float
     expiry: str
-    calls: List[OptionContract] = field(default_factory=list)
-    puts: List[OptionContract] = field(default_factory=list)
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    calls: list[OptionContract] = field(default_factory=list)
+    puts: list[OptionContract] = field(default_factory=list)
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class OptionsChainManager:
@@ -42,16 +42,21 @@ class OptionsChainManager:
 
     def __init__(self, risk_free_rate: float = 0.065):
         self._risk_free_rate = risk_free_rate
-        self._chains: Dict[str, OptionsChain] = {}
+        self._chains: dict[str, OptionsChain] = {}
 
     def build_chain(
-        self, underlying: str, spot_price: float, expiry: str,
-        strikes: List[float], lot_size: int = 1,
-        volatility: float = 0.25, days_to_expiry: int = 30,
+        self,
+        underlying: str,
+        spot_price: float,
+        expiry: str,
+        strikes: list[float],
+        lot_size: int = 1,
+        volatility: float = 0.25,
+        days_to_expiry: int = 30,
     ) -> OptionsChain:
         t = max(days_to_expiry, 1) / 365.0
-        calls: List[OptionContract] = []
-        puts: List[OptionContract] = []
+        calls: list[OptionContract] = []
+        puts: list[OptionContract] = []
 
         for strike in sorted(strikes):
             # Volatility smile: OTM options have higher IV
@@ -60,29 +65,43 @@ class OptionsChainManager:
             vol = volatility + smile_adj
 
             cg = black_scholes(spot_price, strike, t, self._risk_free_rate, vol, "call")
-            calls.append(OptionContract(
-                symbol=f"{underlying}{expiry}C{strike:.0f}",
-                underlying=underlying, strike=strike, expiry=expiry,
-                option_type="call", last_price=round(cg.price, 2),
-                bid=round(max(0, cg.price * 0.98), 2),
-                ask=round(cg.price * 1.02, 2),
-                iv=round(vol * 100, 1), greeks=cg, lot_size=lot_size,
-            ))
+            calls.append(
+                OptionContract(
+                    symbol=f"{underlying}{expiry}C{strike:.0f}",
+                    underlying=underlying,
+                    strike=strike,
+                    expiry=expiry,
+                    option_type="call",
+                    last_price=round(cg.price, 2),
+                    bid=round(max(0, cg.price * 0.98), 2),
+                    ask=round(cg.price * 1.02, 2),
+                    iv=round(vol * 100, 1),
+                    greeks=cg,
+                    lot_size=lot_size,
+                )
+            )
             pg = black_scholes(spot_price, strike, t, self._risk_free_rate, vol, "put")
-            puts.append(OptionContract(
-                symbol=f"{underlying}{expiry}P{strike:.0f}",
-                underlying=underlying, strike=strike, expiry=expiry,
-                option_type="put", last_price=round(pg.price, 2),
-                bid=round(max(0, pg.price * 0.98), 2),
-                ask=round(pg.price * 1.02, 2),
-                iv=round(vol * 100, 1), greeks=pg, lot_size=lot_size,
-            ))
+            puts.append(
+                OptionContract(
+                    symbol=f"{underlying}{expiry}P{strike:.0f}",
+                    underlying=underlying,
+                    strike=strike,
+                    expiry=expiry,
+                    option_type="put",
+                    last_price=round(pg.price, 2),
+                    bid=round(max(0, pg.price * 0.98), 2),
+                    ask=round(pg.price * 1.02, 2),
+                    iv=round(vol * 100, 1),
+                    greeks=pg,
+                    lot_size=lot_size,
+                )
+            )
 
         chain = OptionsChain(underlying=underlying, spot_price=spot_price, expiry=expiry, calls=calls, puts=puts)
         self._chains[f"{underlying}:{expiry}"] = chain
         return chain
 
-    def generate_strikes(self, spot_price: float, num_strikes: int = 11, interval_pct: float = 2.5) -> List[float]:
+    def generate_strikes(self, spot_price: float, num_strikes: int = 11, interval_pct: float = 2.5) -> list[float]:
         """Generate evenly-spaced strikes centred on ATM."""
         if spot_price < 500:
             step = max(5, int(spot_price * interval_pct / 100 / 5) * 5)
@@ -96,7 +115,7 @@ class OptionsChainManager:
         half = num_strikes // 2
         return [atm + (i - half) * step for i in range(num_strikes)]
 
-    def get_chain(self, underlying: str, expiry: str) -> Optional[OptionsChain]:
+    def get_chain(self, underlying: str, expiry: str) -> OptionsChain | None:
         return self._chains.get(f"{underlying}:{expiry}")
 
     def max_pain(self, chain: OptionsChain) -> float:
@@ -117,7 +136,7 @@ class OptionsChainManager:
                 min_pain, best_strike = pain, st
         return best_strike
 
-    def pcr(self, chain: OptionsChain) -> Dict[str, float]:
+    def pcr(self, chain: OptionsChain) -> dict[str, float]:
         """Put-Call ratio by volume and open interest."""
         cv = sum(c.volume for c in chain.calls) or 1
         pv = sum(p.volume for p in chain.puts) or 1

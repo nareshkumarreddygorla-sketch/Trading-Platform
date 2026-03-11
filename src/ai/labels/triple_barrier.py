@@ -3,8 +3,8 @@ Triple-barrier labeling: profit target, stop loss, time limit.
 Volatility-adjusted barriers; cost-aware variant.
 No lookahead: only information at t and future prices for barrier touch (no future in features).
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -14,13 +14,14 @@ from .cost_aware import cost_aware_barriers
 @dataclass
 class TripleBarrierConfig:
     """Parameters for triple-barrier label generation."""
-    profit_target_pct: float = 0.01      # b_u: upper barrier as fraction of price
-    stop_loss_pct: float = 0.01          # b_d: lower barrier
-    max_holding_bars: int = 30            # H: time limit
-    round_trip_cost_pct: float = 0.001   # c: slippage + commission both sides
-    use_volatility_adjust: bool = True   # scale barriers by ATR/vol
-    vol_scale: float = 1.0              # k_u, k_d = vol_scale * sigma
-    neutral_threshold: float = 1e-6      # |r_H| < this => label 0
+
+    profit_target_pct: float = 0.01  # b_u: upper barrier as fraction of price
+    stop_loss_pct: float = 0.01  # b_d: lower barrier
+    max_holding_bars: int = 30  # H: time limit
+    round_trip_cost_pct: float = 0.001  # c: slippage + commission both sides
+    use_volatility_adjust: bool = True  # scale barriers by ATR/vol
+    vol_scale: float = 1.0  # k_u, k_d = vol_scale * sigma
+    neutral_threshold: float = 1e-6  # |r_H| < this => label 0
 
 
 class TripleBarrierLabeler:
@@ -29,7 +30,7 @@ class TripleBarrierLabeler:
     For each bar t: look forward until first touch of U, L, or H bars; label +1, -1, or 0.
     """
 
-    def __init__(self, config: Optional[TripleBarrierConfig] = None):
+    def __init__(self, config: TripleBarrierConfig | None = None):
         self.config = config or TripleBarrierConfig()
 
     def _volatility_at(self, prices: np.ndarray, t: int, window: int = 20) -> float:
@@ -42,10 +43,10 @@ class TripleBarrierLabeler:
         self,
         t: int,
         prices: np.ndarray,
-        b_u: Optional[float] = None,
-        b_d: Optional[float] = None,
-        H: Optional[int] = None,
-        cost_pct: Optional[float] = None,
+        b_u: float | None = None,
+        b_d: float | None = None,
+        H: int | None = None,
+        cost_pct: float | None = None,
     ) -> int:
         """
         Return label at bar t: +1 (upper first), -1 (lower first), 0 (time out or neutral).
@@ -81,9 +82,9 @@ class TripleBarrierLabeler:
     def label_series(
         self,
         prices: np.ndarray,
-        b_u: Optional[float] = None,
-        b_d: Optional[float] = None,
-        H: Optional[int] = None,
+        b_u: float | None = None,
+        b_d: float | None = None,
+        H: int | None = None,
     ) -> np.ndarray:
         """Labels for all valid t (t + H <= len(prices) for time-out; else last bar gets 0)."""
         n = len(prices)

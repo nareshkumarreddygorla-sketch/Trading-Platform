@@ -1,29 +1,31 @@
 """Central configuration (env + YAML). Pydantic settings for validation."""
+
 import logging
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _config_logger = logging.getLogger(__name__)
 
-_KNOWN_DEFAULT_PASSWORDS = frozenset({
-    "Admin@Trade2026!",
-    "admin",
-    "password",
-    "changeme",
-    "secret",
-})
+_KNOWN_DEFAULT_PASSWORDS = frozenset(
+    {
+        "Admin@Trade2026!",
+        "admin",
+        "password",
+        "changeme",
+        "secret",
+    }
+)
 
 
 def _config_path() -> Path:
     return Path(__file__).resolve().parents[2] / "config" / "settings.yaml"
 
 
-def _parse_symbols(v: object) -> List[str]:
+def _parse_symbols(v: object) -> list[str]:
     if isinstance(v, list):
         return [str(x).strip() for x in v if str(x).strip()]
     if isinstance(v, str):
@@ -36,12 +38,12 @@ class AngelOneFeedConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="ANGEL_ONE_")
     marketdata_enabled: bool = False
-    symbols: List[str] = Field(default_factory=list)  # empty = discover dynamically
+    symbols: list[str] = Field(default_factory=list)  # empty = discover dynamically
     exchange: str = "NSE"
 
     @field_validator("symbols", mode="before")
     @classmethod
-    def parse_symbols(cls, v: object) -> List[str]:
+    def parse_symbols(cls, v: object) -> list[str]:
         return _parse_symbols(v)
 
 
@@ -71,14 +73,14 @@ class RiskConfig(BaseSettings):
 class ExecutionConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EXEC_")
     paper: bool = True  # Single toggle: True = paper trading, False = LIVE orders
-    angel_one_api_key: Optional[str] = None
-    angel_one_api_secret: Optional[str] = None
-    angel_one_token: Optional[str] = None
-    angel_one_refresh_token: Optional[str] = None
-    angel_one_client_code: Optional[str] = None
-    angel_one_password: Optional[str] = None
-    angel_one_totp: Optional[str] = None
-    angel_one_totp_secret: Optional[str] = None  # Base32 TOTP secret for auto token refresh
+    angel_one_api_key: str | None = None
+    angel_one_api_secret: str | None = None
+    angel_one_token: str | None = None
+    angel_one_refresh_token: str | None = None
+    angel_one_client_code: str | None = None
+    angel_one_password: str | None = None
+    angel_one_totp: str | None = None
+    angel_one_totp_secret: str | None = None  # Base32 TOTP secret for auto token refresh
     angel_one_request_timeout: float = 15.0
 
 
@@ -91,6 +93,7 @@ class APIConfig(BaseSettings):
 
 class SecurityConfig(BaseSettings):
     """Security-related settings. All secrets MUST come from environment variables."""
+
     model_config = SettingsConfigDict(env_prefix="SECURITY_")
     cors_origins: str = ""  # Comma-separated origins; set via CORS_ORIGINS or SECURITY_CORS_ORIGINS
     hsts_max_age: int = 31536000  # 1 year
@@ -107,7 +110,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     environment: str = "development"
-    database_url: Optional[str] = None
+    database_url: str | None = None
     jwt_secret: str = ""
     auth_password: str = ""
     market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
@@ -138,12 +141,12 @@ class Settings(BaseSettings):
             if not secret:
                 raise ValueError(
                     "JWT_SECRET is REQUIRED in production. "
-                    "Generate a strong secret with: python -c \"import secrets; print(secrets.token_hex(32))\""
+                    'Generate a strong secret with: python -c "import secrets; print(secrets.token_hex(32))"'
                 )
             if len(secret) < 32:
                 raise ValueError(
                     "JWT_SECRET must be at least 32 characters in production. "
-                    "Generate a strong secret with: python -c \"import secrets; print(secrets.token_hex(32))\""
+                    'Generate a strong secret with: python -c "import secrets; print(secrets.token_hex(32))"'
                 )
         elif not secret:
             _config_logger.warning(
@@ -151,9 +154,7 @@ class Settings(BaseSettings):
                 "Tokens will NOT survive restarts. Set JWT_SECRET for persistent sessions."
             )
         elif len(secret) < 16:
-            _config_logger.warning(
-                "JWT_SECRET is shorter than 16 characters. Use a stronger secret."
-            )
+            _config_logger.warning("JWT_SECRET is shorter than 16 characters. Use a stronger secret.")
         return self
 
     @model_validator(mode="after")
@@ -163,8 +164,8 @@ class Settings(BaseSettings):
             password = self.auth_password or os.environ.get("AUTH_PASSWORD", "")
             if password in _KNOWN_DEFAULT_PASSWORDS:
                 raise ValueError(
-                    f"AUTH_PASSWORD must not be a default password in production. "
-                    f"Change AUTH_PASSWORD to a strong, unique value."
+                    "AUTH_PASSWORD must not be a default password in production. "
+                    "Change AUTH_PASSWORD to a strong, unique value."
                 )
         return self
 
@@ -173,8 +174,7 @@ class Settings(BaseSettings):
         """In production with paper=False, log a CRITICAL warning about live trading."""
         if self.environment.lower() == "production" and not self.execution.paper:
             _config_logger.critical(
-                "LIVE TRADING ENABLED — paper=False in production environment. "
-                "Real broker orders WILL be placed."
+                "LIVE TRADING ENABLED — paper=False in production environment. Real broker orders WILL be placed."
             )
         return self
 

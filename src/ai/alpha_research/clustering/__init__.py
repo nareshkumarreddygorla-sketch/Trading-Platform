@@ -1,3 +1,3 @@
-from .cluster import SignalClustering, ClusterConfig
+from .cluster import ClusterConfig, SignalClustering
 
 __all__ = ["SignalClustering", "ClusterConfig"]

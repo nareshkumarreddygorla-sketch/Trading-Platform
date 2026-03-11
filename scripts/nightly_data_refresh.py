@@ -9,6 +9,7 @@ Nightly Data Refresh Pipeline:
 Run at 16:00 IST after market close.
 Usage: python -m scripts.nightly_data_refresh
 """
+
 import asyncio
 import logging
 import os
@@ -47,6 +48,7 @@ async def get_tradeable_universe():
     logger.info("=== Step 2: Get Tradeable Universe (Dynamic) ===")
     try:
         from src.scanner.dynamic_universe import get_dynamic_universe
+
         scanner = get_dynamic_universe()
         symbols = scanner.get_tradeable_stocks(count=200)
         logger.info("Dynamic universe: %d tradeable symbols", len(symbols))
@@ -58,6 +60,7 @@ async def get_tradeable_universe():
     # Fallback: use instrument master (Angel One) if available
     try:
         from src.market_data.symbol_token_map import get_symbol_token_map
+
         stm = get_symbol_token_map()
         if stm.is_loaded:
             all_nse = stm.get_all_nse_equity_symbols()
@@ -69,6 +72,7 @@ async def get_tradeable_universe():
     # Last resort: use whatever symbols already have data in the database
     try:
         from src.persistence.ohlcv_repo import OHLCVRepository
+
         repo = OHLCVRepository()
         existing = repo.get_symbols_with_data(interval="1d", min_bars=1)
         if existing:
@@ -99,6 +103,7 @@ async def fetch_and_store_ohlcv(symbols: list):
     if api_key and jwt_token:
         try:
             from src.market_data.connectors.angel_one_historical import AngelOneHistorical
+
             historical = AngelOneHistorical(api_key=api_key, jwt_token=jwt_token)
             bars_data = await historical.fetch_candles_bulk(
                 symbols=symbols,
@@ -130,17 +135,19 @@ async def fetch_and_store_ohlcv(symbols: list):
 
                     bars = []
                     for idx, row in df.iterrows():
-                        bars.append(Bar(
-                            symbol=symbol,
-                            exchange=Exchange.NSE,
-                            interval="1d",
-                            ts=idx.to_pydatetime(),
-                            open=float(row["Open"]),
-                            high=float(row["High"]),
-                            low=float(row["Low"]),
-                            close=float(row["Close"]),
-                            volume=int(row["Volume"]),
-                        ))
+                        bars.append(
+                            Bar(
+                                symbol=symbol,
+                                exchange=Exchange.NSE,
+                                interval="1d",
+                                ts=idx.to_pydatetime(),
+                                open=float(row["Open"]),
+                                high=float(row["High"]),
+                                low=float(row["Low"]),
+                                close=float(row["Close"]),
+                                volume=int(row["Volume"]),
+                            )
+                        )
 
                     if bars:
                         count = repo.upsert_bars(bars)
@@ -163,6 +170,7 @@ async def update_adv_cache(symbols: list):
     logger.info("=== Step 4: Update ADV Cache ===")
     try:
         from src.persistence.ohlcv_repo import OHLCVRepository
+
         repo = OHLCVRepository()
 
         adv_data = {}
@@ -184,6 +192,7 @@ async def check_data_quality(symbols: list) -> dict:
     logger.info("=== Step 5: Data Quality Check ===")
     try:
         from src.persistence.ohlcv_repo import OHLCVRepository
+
         repo = OHLCVRepository()
 
         good_symbols = repo.get_symbols_with_data(interval="1d", min_bars=50)
@@ -197,7 +206,9 @@ async def check_data_quality(symbols: list) -> dict:
         }
         logger.info(
             "Data quality: %d/%d symbols with 50+ bars (%.1f%%) - %s",
-            len(good_symbols), len(symbols), coverage,
+            len(good_symbols),
+            len(symbols),
+            coverage,
             "PASS" if quality["quality_pass"] else "FAIL",
         )
         return quality

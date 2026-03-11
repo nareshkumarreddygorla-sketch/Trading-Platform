@@ -14,6 +14,7 @@ Usage:
     python -m scripts.validate_models          # from project root
     python scripts/validate_models.py          # direct invocation
 """
+
 import sys
 import traceback
 from pathlib import Path
@@ -46,6 +47,7 @@ ENSEMBLE_MODEL_IDS = ["xgboost_alpha", "lstm_ts", "transformer_ts", "rl_ppo", "s
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class Result:
     def __init__(self, name: str):
         self.name = name
@@ -67,31 +69,34 @@ def _make_synthetic_bars(n: int = 100):
 
     for i in range(n):
         ret = np.random.normal(0, 0.01)
-        price *= (1 + ret)
+        price *= 1 + ret
         o = price
         h = price * (1 + abs(np.random.normal(0, 0.003)))
         l = price * (1 - abs(np.random.normal(0, 0.003)))
         c = price * (1 + np.random.normal(0, 0.002))
         v = max(1000, int(np.random.exponential(50000)))
         ts = base_ts.replace(minute=15 + (i % 45), hour=9 + i // 45)
-        bars.append(Bar(
-            symbol="TESTSTOCK",
-            exchange=Exchange.NSE,
-            interval="1m",
-            open=round(o, 2),
-            high=round(max(o, h, c), 2),
-            low=round(min(o, l, c), 2),
-            close=round(c, 2),
-            volume=float(v),
-            ts=ts,
-            source="synthetic",
-        ))
+        bars.append(
+            Bar(
+                symbol="TESTSTOCK",
+                exchange=Exchange.NSE,
+                interval="1m",
+                open=round(o, 2),
+                high=round(max(o, h, c), 2),
+                low=round(min(o, l, c), 2),
+                close=round(c, 2),
+                volume=float(v),
+                ts=ts,
+                source="synthetic",
+            )
+        )
     return bars
 
 
 def _build_features(bars) -> Dict[str, float]:
     """Build features from synthetic bars via FeatureEngine."""
     from src.ai.feature_engine import FeatureEngine
+
     engine = FeatureEngine()
     return engine.build_features(bars)
 
@@ -125,12 +130,13 @@ def _validate_prediction(pred, label: str) -> Tuple[bool, str]:
 # Check functions
 # ---------------------------------------------------------------------------
 
+
 def check_model_files_exist() -> List[Result]:
     """Check 1: Verify all expected model files exist."""
     results = []
     for display_name, filename, criticality in EXPECTED_MODELS:
         r = Result(f"File exists: {filename}")
-        r.critical = (criticality == "critical")
+        r.critical = criticality == "critical"
         path = MODELS_DIR / filename
         if path.exists():
             size_mb = path.stat().st_size / (1024 * 1024)
@@ -153,6 +159,7 @@ def check_xgboost_prediction(features: Dict[str, float]) -> Result:
         return r
     try:
         from src.ai.alpha_model import AlphaModel
+
         model = AlphaModel(strategy_id="ai_alpha", model_path=str(path))
         if model._model is None:
             r.passed = False
@@ -161,6 +168,7 @@ def check_xgboost_prediction(features: Dict[str, float]) -> Result:
         # AlphaModel.predict() expects features dict + market_state
         # We test the raw model predict_proba instead
         import numpy as np
+
         feature_names = model._feature_names
         if feature_names:
             X = np.array([[features.get(f, 0.0) for f in feature_names]])
@@ -190,6 +198,7 @@ def check_lstm_prediction(features: Dict[str, float]) -> Result:
         return r
     try:
         from src.ai.models.lstm_predictor import LSTMPredictor
+
         predictor = LSTMPredictor()
         loaded = predictor.load(str(path))
         if not loaded:
@@ -216,6 +225,7 @@ def check_transformer_prediction(features: Dict[str, float]) -> Result:
         return r
     try:
         from src.ai.models.transformer_predictor import TransformerPredictor
+
         predictor = TransformerPredictor()
         loaded = predictor.load(str(path))
         if not loaded:
@@ -243,6 +253,7 @@ def check_rl_prediction(features: Dict[str, float]) -> Result:
         return r
     try:
         from src.ai.models.rl_agent import RLPredictor
+
         predictor = RLPredictor()
         loaded = predictor.load(str(path))
         if not loaded:
@@ -285,9 +296,7 @@ def check_ensemble_alignment() -> Result:
         # Verify EnsembleEngine can be instantiated with the registry
         engine = EnsembleEngine(registry=registry, model_ids=lifespan_ids)
         if set(engine.model_ids) != set(lifespan_ids):
-            mismatches.append(
-                f"EnsembleEngine.model_ids={engine.model_ids} != lifespan_ids={lifespan_ids}"
-            )
+            mismatches.append(f"EnsembleEngine.model_ids={engine.model_ids} != lifespan_ids={lifespan_ids}")
 
         if mismatches:
             r.passed = False
@@ -304,6 +313,7 @@ def check_ensemble_alignment() -> Result:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     print("=" * 70)

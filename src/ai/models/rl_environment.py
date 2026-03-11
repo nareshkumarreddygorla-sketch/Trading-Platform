@@ -16,10 +16,11 @@ Usage:
     obs, info = env.reset()
     obs, reward, terminated, truncated, info = env.step(1)  # buy
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
@@ -76,7 +77,7 @@ class TradingGymEnv(gym.Env):
         features: np.ndarray,
         initial_cash: float = 1_000_000.0,
         max_shares: int = 100,
-        episode_length: Optional[int] = None,
+        episode_length: int | None = None,
         product_type: str = "INTRADAY",
         exchange: str = "NSE",
         reward_scaling: float = 1.0,
@@ -105,9 +106,7 @@ class TradingGymEnv(gym.Env):
         self._cost_calc = IndiaCostCalculator()
 
         # Gymnasium spaces
-        self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32
-        )
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32)
         self.action_space = spaces.Discrete(3)  # 0=hold, 1=buy, 2=sell
 
         # State variables (initialised in reset)
@@ -118,16 +117,16 @@ class TradingGymEnv(gym.Env):
         self._shares: int = 0  # positive = long, negative = short
         self._entry_price: float = 0.0
         self._peak_portfolio: float = 0.0
-        self._portfolio_values: List[float] = []
+        self._portfolio_values: list[float] = []
 
     # ------------------------------------------------------------------
     # Gymnasium interface
     # ------------------------------------------------------------------
     def reset(
         self,
-        seed: Optional[int] = None,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        seed: int | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed)
 
         # Determine episode window
@@ -150,7 +149,7 @@ class TradingGymEnv(gym.Env):
         info = self._build_info()
         return obs, info
 
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+    def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """
         Execute one step.
 
@@ -174,7 +173,7 @@ class TradingGymEnv(gym.Env):
             if self._shares == 0:
                 # Open long
                 trade_cost = self._transaction_cost("BUY", price, self._max_shares)
-                self._cash -= (price * self._max_shares + trade_cost)
+                self._cash -= price * self._max_shares + trade_cost
                 self._shares = self._max_shares
                 self._entry_price = price
 
@@ -185,7 +184,7 @@ class TradingGymEnv(gym.Env):
             if self._shares == 0:
                 # Open short
                 trade_cost = self._transaction_cost("SELL", price, self._max_shares)
-                self._cash += (price * self._max_shares - trade_cost)
+                self._cash += price * self._max_shares - trade_cost
                 self._shares = -self._max_shares
                 self._entry_price = price
 
@@ -312,7 +311,7 @@ class TradingGymEnv(gym.Env):
         extra = np.array([position_side, unrealized_pnl_pct, cash_ratio], dtype=np.float32)
         return np.concatenate([feats, extra])
 
-    def _build_info(self) -> Dict[str, Any]:
+    def _build_info(self) -> dict[str, Any]:
         """Return diagnostic info dict."""
         idx = min(self._step_idx, self._n_total - 1)
         price = self._close_price(idx)
@@ -331,8 +330,8 @@ class TradingGymEnv(gym.Env):
 # Vectorized environment factory
 # ---------------------------------------------------------------------------
 def make_vec_env(
-    bars_list: List[np.ndarray],
-    features_list: List[np.ndarray],
+    bars_list: list[np.ndarray],
+    features_list: list[np.ndarray],
     n_envs: int = 4,
     use_subproc: bool = False,
     **env_kwargs,
@@ -373,6 +372,7 @@ def make_vec_env(
                 **env_kwargs,
             )
             return env
+
         return _init
 
     env_fns = [_make_env(i) for i in range(n_envs)]

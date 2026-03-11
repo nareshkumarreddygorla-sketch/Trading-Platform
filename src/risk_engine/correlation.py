@@ -9,22 +9,22 @@ Prevents hidden concentration risk by:
   - Intraday correlation tracking (tick-level updates)
   - Correlation spike detection (alert if any pair jumps > 0.3 in one day)
 """
+
 from __future__ import annotations
 
 import logging
 import math
 import threading
 import time as _time
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 # Regime-adaptive correlation half-lives
-_NORMAL_HALFLIFE = 60   # days in normal regime
-_FAST_HALFLIFE = 20     # days in high-vol regime
+_NORMAL_HALFLIFE = 60  # days in normal regime
+_FAST_HALFLIFE = 20  # days in high-vol regime
 _VOL_REGIME_THRESHOLD = 2.0  # realized vol > 2x historical -> high-vol regime
 _CORRELATION_SPIKE_THRESHOLD = 0.3  # alert if pair correlation jumps > 0.3 in a day
 
@@ -32,6 +32,7 @@ _CORRELATION_SPIKE_THRESHOLD = 0.3  # alert if pair correlation jumps > 0.3 in a
 @dataclass
 class CorrelationCheckResult:
     """Result of a correlation check for a new position."""
+
     allowed: bool = True
     reason: str = ""
     max_correlation: float = 0.0
@@ -42,6 +43,7 @@ class CorrelationCheckResult:
 @dataclass
 class CorrelationSpikeAlert:
     """Alert for correlation spike between two symbols."""
+
     sym_a: str
     sym_b: str
     prev_correlation: float
@@ -88,22 +90,22 @@ class CorrelationGuard:
         self._lock = threading.RLock()
 
         # Per-symbol daily returns buffer
-        self._returns: Dict[str, List[float]] = {}
+        self._returns: dict[str, list[float]] = {}
         # EWMA variance
-        self._ewma_var: Dict[str, float] = {}
+        self._ewma_var: dict[str, float] = {}
 
         # ── Regime detection state ──
         self._high_vol_regime: bool = False
-        self._historical_vol: float = 0.0     # long-term average vol (annualised)
-        self._realized_vol: float = 0.0       # recent realised vol (annualised)
+        self._historical_vol: float = 0.0  # long-term average vol (annualised)
+        self._realized_vol: float = 0.0  # recent realised vol (annualised)
 
         # ── Intraday correlation tracking ──
-        self._intraday_returns: Dict[str, List[float]] = {}  # tick-level returns within day
-        self._intraday_correlations: Dict[Tuple[str, str], float] = {}  # latest intraday pair corr
+        self._intraday_returns: dict[str, list[float]] = {}  # tick-level returns within day
+        self._intraday_correlations: dict[tuple[str, str], float] = {}  # latest intraday pair corr
 
         # ── Correlation spike detection ──
-        self._prev_day_correlations: Dict[Tuple[str, str], float] = {}
-        self._correlation_spike_alerts: List[CorrelationSpikeAlert] = []
+        self._prev_day_correlations: dict[tuple[str, str], float] = {}
+        self._correlation_spike_alerts: list[CorrelationSpikeAlert] = []
 
     @property
     def high_vol_regime(self) -> bool:
@@ -141,8 +143,10 @@ class CorrelationGuard:
                     logger.warning(
                         "Correlation regime -> HIGH-VOL: realized_vol=%.2f%% > %.1fx historical=%.2f%% "
                         "— switching to fast correlation updates (half-life=%d days)",
-                        realized_vol * 100, self._vol_regime_threshold,
-                        historical_vol * 100, _FAST_HALFLIFE,
+                        realized_vol * 100,
+                        self._vol_regime_threshold,
+                        historical_vol * 100,
+                        _FAST_HALFLIFE,
                     )
             else:
                 self._high_vol_regime = False
@@ -150,8 +154,10 @@ class CorrelationGuard:
                     logger.info(
                         "Correlation regime -> NORMAL: realized_vol=%.2f%% <= %.1fx historical=%.2f%% "
                         "— reverting to standard correlation updates (half-life=%d days)",
-                        realized_vol * 100, self._vol_regime_threshold,
-                        historical_vol * 100, _NORMAL_HALFLIFE,
+                        realized_vol * 100,
+                        self._vol_regime_threshold,
+                        historical_vol * 100,
+                        _NORMAL_HALFLIFE,
                     )
 
     def update_intraday_return(self, symbol: str, tick_return: float) -> None:
@@ -169,12 +175,12 @@ class CorrelationGuard:
             if len(self._intraday_returns[symbol]) > 500:
                 self._intraday_returns[symbol] = self._intraday_returns[symbol][-500:]
 
-    def compute_intraday_correlations(self, symbols: List[str]) -> Dict[Tuple[str, str], float]:
+    def compute_intraday_correlations(self, symbols: list[str]) -> dict[tuple[str, str], float]:
         """
         Compute pairwise intraday correlations from tick-level returns.
         Returns dict of (sym_a, sym_b) -> correlation.
         """
-        result: Dict[Tuple[str, str], float] = {}
+        result: dict[tuple[str, str], float] = {}
         with self._lock:
             for i, sa in enumerate(symbols):
                 for j in range(i + 1, len(symbols)):
@@ -204,12 +210,12 @@ class CorrelationGuard:
             self._intraday_returns.clear()
             self._intraday_correlations.clear()
 
-    def detect_correlation_spikes(self, symbols: List[str]) -> List[CorrelationSpikeAlert]:
+    def detect_correlation_spikes(self, symbols: list[str]) -> list[CorrelationSpikeAlert]:
         """
         Detect if any pairwise correlation jumped > spike_threshold since yesterday.
         Returns list of spike alerts.
         """
-        alerts: List[CorrelationSpikeAlert] = []
+        alerts: list[CorrelationSpikeAlert] = []
         with self._lock:
             for i, sa in enumerate(symbols):
                 for j in range(i + 1, len(symbols)):
@@ -233,12 +239,17 @@ class CorrelationGuard:
                         alerts.append(alert)
                         logger.warning(
                             "CORRELATION SPIKE: %s/%s changed %.2f -> %.2f (delta=%.2f > threshold=%.2f)",
-                            sa, sb, prev, current, change, self._correlation_spike_threshold,
+                            sa,
+                            sb,
+                            prev,
+                            current,
+                            change,
+                            self._correlation_spike_threshold,
                         )
             self._correlation_spike_alerts = alerts
         return alerts
 
-    def get_recent_spike_alerts(self) -> List[CorrelationSpikeAlert]:
+    def get_recent_spike_alerts(self) -> list[CorrelationSpikeAlert]:
         """Return the most recent correlation spike alerts."""
         return list(self._correlation_spike_alerts)
 
@@ -258,9 +269,9 @@ class CorrelationGuard:
             # EWMA variance with regime-adaptive lambda
             lam = self.effective_ewma_lambda
             if symbol not in self._ewma_var:
-                self._ewma_var[symbol] = daily_return ** 2
+                self._ewma_var[symbol] = daily_return**2
             else:
-                self._ewma_var[symbol] = lam * self._ewma_var[symbol] + (1 - lam) * daily_return ** 2
+                self._ewma_var[symbol] = lam * self._ewma_var[symbol] + (1 - lam) * daily_return**2
 
     def pairwise_correlation(self, sym_a: str, sym_b: str) -> float:
         """Compute rolling pairwise correlation between two symbols."""
@@ -273,6 +284,7 @@ class CorrelationGuard:
                 # Same-sector Indian stocks correlate 0.7-0.9, cross-sector 0.3-0.5
                 try:
                     from src.risk_engine.var import PortfolioVaR
+
                     return PortfolioVaR._default_correlation(sym_a, sym_b)
                 except Exception:
                     return 0.50  # Fallback to moderate correlation
@@ -291,7 +303,7 @@ class CorrelationGuard:
             except Exception:
                 return 0.5  # Conservative default on error
 
-    def _estimate_portfolio_vol(self, symbols: List[str], notionals: List[float], total_value: float) -> float:
+    def _estimate_portfolio_vol(self, symbols: list[str], notionals: list[float], total_value: float) -> float:
         """Estimate daily portfolio volatility using correlation matrix."""
         with self._lock:
             n = len(symbols)
@@ -319,7 +331,7 @@ class CorrelationGuard:
             return float(np.std(returns, ddof=1))
         return 0.025  # default 2.5% daily vol
 
-    def _correlation_matrix(self, symbols: List[str]) -> np.ndarray:
+    def _correlation_matrix(self, symbols: list[str]) -> np.ndarray:
         """Build correlation matrix for given symbols. Uses adaptive window based on vol regime."""
         with self._lock:
             n = len(symbols)
@@ -337,6 +349,7 @@ class CorrelationGuard:
                     for j in range(i + 1, n):
                         try:
                             from src.risk_engine.var import PortfolioVaR
+
                             c = PortfolioVaR._default_correlation(symbols[i], symbols[j])
                         except Exception:
                             c = 0.5  # Conservative default
@@ -365,6 +378,7 @@ class CorrelationGuard:
                     for j in range(i + 1, n):
                         try:
                             from src.risk_engine.var import PortfolioVaR
+
                             c = PortfolioVaR._default_correlation(symbols[i], symbols[j])
                         except Exception:
                             c = 0.5
@@ -410,8 +424,8 @@ class CorrelationGuard:
     def check_new_position(
         self,
         new_symbol: str,
-        existing_symbols: List[str],
-        existing_notionals: Optional[List[float]] = None,
+        existing_symbols: list[str],
+        existing_notionals: list[float] | None = None,
         new_notional: float = 0.0,
         portfolio_value: float = 0.0,
         use_stress_correlation: bool = True,
@@ -469,7 +483,7 @@ class CorrelationGuard:
                 correlated_with=max_corr_symbol,
             )
 
-    def get_correlation_matrix(self, symbols: List[str]) -> Dict[str, Dict[str, float]]:
+    def get_correlation_matrix(self, symbols: list[str]) -> dict[str, dict[str, float]]:
         """Return full correlation matrix as nested dict (for API exposure)."""
         with self._lock:
             corr = self._correlation_matrix(symbols)

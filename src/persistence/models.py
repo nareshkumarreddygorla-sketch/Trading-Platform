@@ -1,5 +1,6 @@
 """SQLAlchemy models for Order, OrderEvent, Position. Institutional: constraints, version (OCC)."""
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     CheckConstraint,
@@ -21,7 +22,7 @@ ORDER_STATUS_VALUES = ("SUBMITTING", "NEW", "ACK", "PARTIAL", "FILLED", "REJECTE
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class OrderModel(Base):
@@ -95,6 +96,7 @@ class PositionModel(Base):
 
 class RiskSnapshotModel(Base):
     """Single-row snapshot for cold-start restore of equity and daily_pnl."""
+
     __tablename__ = "risk_snapshot"
 
     id = Column(Integer, primary_key=True, default=1)
@@ -105,6 +107,7 @@ class RiskSnapshotModel(Base):
 
 class UserModel(Base):
     """App users: persisted so they survive restart. Password stored hashed."""
+
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -124,6 +127,7 @@ class OpenTradeModel(Base):
     Write-ahead: row written BEFORE in-memory update.
     Deleted on trade close. Cold-start recovery loads these into AutonomousLoop._open_trades.
     """
+
     __tablename__ = "open_trades"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -148,6 +152,7 @@ class OpenTradeModel(Base):
 
 class AuditEventModel(Base):
     """Immutable audit log. All critical actions must be traceable to actor. Append-only."""
+
     __tablename__ = "audit_events"
 
     id = Column(Integer, primary_key=True, autoincrement=True)

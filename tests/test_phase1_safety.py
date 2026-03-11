@@ -25,31 +25,22 @@ Tests the four Phase 1 safety fixes:
    - Hash chain includes previous hash (tampering invalidates chain)
 """
 
-import asyncio
 import hashlib
 import json
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
-from src.execution.order_entry.kill_switch import (
-    KillReason,
-    KillSwitch,
-    KillSwitchState,
-    _MANUAL_DISARM_ONLY,
-)
-from src.execution.order_entry.idempotency import IdempotencyStore
-from src.execution.order_entry.redis_cluster_reservation import RedisClusterReservation
 from src.compliance.audit_trail import (
-    AuditEvent,
-    AuditEventType,
     SEBIAuditTrail,
 )
-
+from src.execution.order_entry.idempotency import IdempotencyStore
+from src.execution.order_entry.kill_switch import (
+    _MANUAL_DISARM_ONLY,
+    KillReason,
+    KillSwitch,
+)
+from src.execution.order_entry.redis_cluster_reservation import RedisClusterReservation
 
 # ========================================================================
 # Section 1: Kill Switch NameError Fix
@@ -198,9 +189,7 @@ class TestKillSwitchReasonOverwriteFix:
             ks = KillSwitch()
             await ks.arm(reason, f"test {reason.value}")
             result = await ks.check_auto_disarm(broker_healthy=True, vix_value=10.0)
-            assert result is False, (
-                f"check_auto_disarm returned True for manual-only reason {reason.value}"
-            )
+            assert result is False, f"check_auto_disarm returned True for manual-only reason {reason.value}"
 
     @pytest.mark.asyncio
     async def test_manual_only_to_manual_only_overwrites(self):
@@ -258,7 +247,7 @@ class TestKillSwitchReasonOverwriteFix:
         result2 = await ks.check_auto_disarm(broker_healthy=True)
         assert result2 is False  # only 2
         result3 = await ks.check_auto_disarm(broker_healthy=True)
-        assert result3 is True   # 3 -- auto-disarmed
+        assert result3 is True  # 3 -- auto-disarmed
 
         assert await ks.is_armed() is False
 
@@ -518,9 +507,7 @@ class TestAuditTrailWriteThroughAndHashChain:
             hashes.append(trail._last_hash)
 
         # All hashes should be unique
-        assert len(set(hashes)) == 10, (
-            f"Expected 10 unique hashes, got {len(set(hashes))}"
-        )
+        assert len(set(hashes)) == 10, f"Expected 10 unique hashes, got {len(set(hashes))}"
 
         # Hashes should be valid hex SHA-256 (64 chars)
         for h in hashes:
@@ -530,6 +517,8 @@ class TestAuditTrailWriteThroughAndHashChain:
     def test_hash_chain_includes_previous_hash(self):
         """Each hash must include the previous hash as input, forming a chain.
         Changing one event should invalidate all subsequent hashes."""
+        import hmac as _hmac
+
         trail = SEBIAuditTrail()
 
         # Record 3 events and capture the chain
@@ -547,17 +536,17 @@ class TestAuditTrailWriteThroughAndHashChain:
             hashes.append(trail._last_hash)
 
         # Manually recompute hash for event[1] using the hash from event[0]
-        # to verify the chain dependency
+        # to verify the chain dependency (must match HMAC-SHA256 with details)
         prev_hash_for_event_1 = hashes[0]
         evt1 = events[1]
         payload = (
             f"{prev_hash_for_event_1}|{evt1.event_id}|"
-            f"{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}"
+            f"{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}|"
+            f"{json.dumps(evt1.details, sort_keys=True, default=str)}"
         )
-        expected_hash_1 = hashlib.sha256(payload.encode()).hexdigest()
+        expected_hash_1 = _hmac.new(trail._HMAC_KEY, payload.encode(), hashlib.sha256).hexdigest()
         assert hashes[1] == expected_hash_1, (
-            "Hash for event[1] does not match manual recomputation -- "
-            "chain does not include previous hash"
+            "Hash for event[1] does not match manual recomputation -- chain does not include previous hash"
         )
 
         # Verify event[2] depends on event[1]'s hash
@@ -565,13 +554,16 @@ class TestAuditTrailWriteThroughAndHashChain:
         evt2 = events[2]
         payload2 = (
             f"{prev_hash_for_event_2}|{evt2.event_id}|"
-            f"{evt2.timestamp.isoformat()}|{evt2.event_type.value}|{evt2.symbol}"
+            f"{evt2.timestamp.isoformat()}|{evt2.event_type.value}|{evt2.symbol}|"
+            f"{json.dumps(evt2.details, sort_keys=True, default=str)}"
         )
-        expected_hash_2 = hashlib.sha256(payload2.encode()).hexdigest()
+        expected_hash_2 = _hmac.new(trail._HMAC_KEY, payload2.encode(), hashlib.sha256).hexdigest()
         assert hashes[2] == expected_hash_2
 
     def test_hash_chain_genesis_for_first_event(self):
         """The first event in the chain should use 'genesis' as the previous hash."""
+        import hmac as _hmac
+
         trail = SEBIAuditTrail()
         evt = trail.record_signal(
             symbol="FIRST.NS",
@@ -581,18 +573,20 @@ class TestAuditTrailWriteThroughAndHashChain:
         )
         first_hash = trail._last_hash
 
-        # Manually compute with "genesis" as previous
+        # Manually compute with "genesis" as previous (HMAC-SHA256 with details)
         payload = (
-            f"genesis|{evt.event_id}|"
-            f"{evt.timestamp.isoformat()}|{evt.event_type.value}|{evt.symbol}"
+            f"genesis|{evt.event_id}|{evt.timestamp.isoformat()}|{evt.event_type.value}|{evt.symbol}|"
+            f"{json.dumps(evt.details, sort_keys=True, default=str)}"
         )
-        expected = hashlib.sha256(payload.encode()).hexdigest()
+        expected = _hmac.new(trail._HMAC_KEY, payload.encode(), hashlib.sha256).hexdigest()
         assert first_hash == expected
 
     def test_tampering_detection_changing_event_invalidates_chain(self):
         """If we replay the chain computation with a modified event in the
         middle, the resulting hash will differ from the stored chain hash.
         This proves tamper detection works."""
+        import hmac as _hmac
+
         trail = SEBIAuditTrail()
 
         events = []
@@ -612,9 +606,10 @@ class TestAuditTrailWriteThroughAndHashChain:
         # Recompute what hash[0] WOULD be with a different symbol
         tampered_payload_0 = (
             f"genesis|{tampered_evt0.event_id}|"
-            f"{tampered_evt0.timestamp.isoformat()}|{tampered_evt0.event_type.value}|TAMPERED_SYMBOL"
+            f"{tampered_evt0.timestamp.isoformat()}|{tampered_evt0.event_type.value}|TAMPERED_SYMBOL|"
+            f"{json.dumps(tampered_evt0.details, sort_keys=True, default=str)}"
         )
-        tampered_hash_0 = hashlib.sha256(tampered_payload_0.encode()).hexdigest()
+        tampered_hash_0 = _hmac.new(trail._HMAC_KEY, tampered_payload_0.encode(), hashlib.sha256).hexdigest()
 
         # This tampered hash should differ from the real hash[0]
         assert tampered_hash_0 != hashes[0]
@@ -622,15 +617,13 @@ class TestAuditTrailWriteThroughAndHashChain:
         # Now recompute hash[1] using the tampered hash[0]
         evt1 = events[1]
         tampered_payload_1 = (
-            f"{tampered_hash_0}|{evt1.event_id}|"
-            f"{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}"
+            f"{tampered_hash_0}|{evt1.event_id}|{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}|"
+            f"{json.dumps(evt1.details, sort_keys=True, default=str)}"
         )
-        tampered_hash_1 = hashlib.sha256(tampered_payload_1.encode()).hexdigest()
+        tampered_hash_1 = _hmac.new(trail._HMAC_KEY, tampered_payload_1.encode(), hashlib.sha256).hexdigest()
 
         # The cascaded hash for event[1] should now differ from the real chain
-        assert tampered_hash_1 != hashes[1], (
-            "Tampering event[0] should cascade and invalidate event[1]'s hash"
-        )
+        assert tampered_hash_1 != hashes[1], "Tampering event[0] should cascade and invalidate event[1]'s hash"
 
     def test_hash_chain_different_event_types_produce_unique_hashes(self):
         """Different event types (signal, order, fill, risk) should all
@@ -639,27 +632,39 @@ class TestAuditTrailWriteThroughAndHashChain:
         hashes = set()
 
         trail.record_signal(
-            symbol="MULTI.NS", direction="BUY", confidence=0.8,
+            symbol="MULTI.NS",
+            direction="BUY",
+            confidence=0.8,
             model_source="m1",
         )
         hashes.add(trail._last_hash)
 
         trail.record_order(
-            symbol="MULTI.NS", side="BUY", qty=100, order_type="MARKET",
-            price=None, strategy_id="s1",
+            symbol="MULTI.NS",
+            side="BUY",
+            qty=100,
+            order_type="MARKET",
+            price=None,
+            strategy_id="s1",
             risk_checks_passed={"check1": True},
         )
         hashes.add(trail._last_hash)
 
         trail.record_fill(
-            symbol="MULTI.NS", side="BUY", qty=100, price=500.0,
-            costs_breakdown={"brokerage": 10.0}, slippage=0.1,
+            symbol="MULTI.NS",
+            side="BUY",
+            qty=100,
+            price=500.0,
+            costs_breakdown={"brokerage": 10.0},
+            slippage=0.1,
         )
         hashes.add(trail._last_hash)
 
         trail.record_risk_decision(
-            check_type="max_position_size", result=True,
-            values={"current": 5}, thresholds={"max": 10},
+            check_type="max_position_size",
+            result=True,
+            values={"current": 5},
+            thresholds={"max": 10},
         )
         hashes.add(trail._last_hash)
 
@@ -723,6 +728,10 @@ class TestPhase1Integration:
         """Every KillReason enum value must be armable without error."""
         for reason in KillReason:
             ks = KillSwitch()
+            # Disarm first to clear any persisted state from previous iteration
+            # (severity-based rejection prevents arming a lower-severity reason
+            # when a higher-severity one is already persisted).
+            await ks.disarm()
             await ks.arm(reason, f"test arming with {reason.value}")
             state = await ks.get_state()
             assert state.armed is True
@@ -745,9 +754,7 @@ class TestPhase1Integration:
         assert result["order_id"] == "order-100"
 
         # set_if_new_or_get (should find existing)
-        is_new, existing = await store.set_if_new_or_get(
-            "e2e-key", "order-200", None, "PENDING"
-        )
+        is_new, existing = await store.set_if_new_or_get("e2e-key", "order-200", None, "PENDING")
         assert is_new is False
         assert existing["order_id"] == "order-100"
 

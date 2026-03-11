@@ -8,12 +8,14 @@ Token lifecycle: tokens are tracked from acquisition and automatically refreshed
 immediate TOTP-based re-authentication is attempted (up to 3 consecutive failures
 before flagging a critical auth failure).
 """
+
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from src.core.events import Exchange, Order, OrderStatus, OrderType, Position, SignalSide
 
@@ -30,12 +32,12 @@ _SESSION_EXPIRED_CODES = {"AG8001", "AG8002", "AB8051"}
 _CIRCUIT_BREAKER_CODES = {"OI8001", "OI8002", "OI8003", "OI8004", "OI8005", "AB1003", "AB1004"}
 
 # Per-symbol circuit halt tracking
-_circuit_halted_symbols: Dict[str, float] = {}  # symbol -> time.monotonic() when halted
+_circuit_halted_symbols: dict[str, float] = {}  # symbol -> time.monotonic() when halted
 
 # Token refresh constants
-_TOKEN_MAX_AGE: float = 23 * 3600          # 23 hours (Angel One JWT validity)
+_TOKEN_MAX_AGE: float = 23 * 3600  # 23 hours (Angel One JWT validity)
 _TOKEN_REFRESH_HEADROOM: float = 1 * 3600  # refresh 1 hour before expiry
-_MAX_REFRESH_FAILURES: int = 3             # critical alert threshold
+_MAX_REFRESH_FAILURES: int = 3  # critical alert threshold
 
 # Clock drift thresholds (seconds)
 _CLOCK_DRIFT_WARN: float = 10.0
@@ -77,13 +79,13 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
         access_token: str,
         paper: bool = True,
         *,
-        client_code: Optional[str] = None,
-        password: Optional[str] = None,
-        totp: Optional[str] = None,
-        totp_secret: Optional[str] = None,
-        refresh_token: Optional[str] = None,
+        client_code: str | None = None,
+        password: str | None = None,
+        totp: str | None = None,
+        totp_secret: str | None = None,
+        refresh_token: str | None = None,
         request_timeout: float = 10.0,
-        on_health_failure: Optional[Callable[[], None]] = None,
+        on_health_failure: Callable[[], None] | None = None,
     ):
         # Live mode pre-flight: api_key is mandatory
         if not paper and not api_key:
@@ -101,19 +103,17 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
         self._totp_secret = totp_secret  # Base32 TOTP secret for generating fresh codes
         self._request_timeout = request_timeout
         self._on_health_failure = on_health_failure
-        self._client: Optional[AngelOneHttpClient] = None
+        self._client: AngelOneHttpClient | None = None
 
         # --- Token refresh state ---
-        self._token_acquired_at: float = 0.0       # time.monotonic() when token was obtained
+        self._token_acquired_at: float = 0.0  # time.monotonic() when token was obtained
         self._token_max_age: float = _TOKEN_MAX_AGE
-        self._refresh_failures: int = 0             # consecutive refresh failures
-        self._auth_failed: bool = False              # set True after _MAX_REFRESH_FAILURES
+        self._refresh_failures: int = 0  # consecutive refresh failures
+        self._auth_failed: bool = False  # set True after _MAX_REFRESH_FAILURES
         self._refresh_lock: asyncio.Lock = asyncio.Lock()
 
         if not paper:
-            logger.critical(
-                "LIVE TRADING MODE ACTIVE — real orders will be placed via Angel One"
-            )
+            logger.critical("LIVE TRADING MODE ACTIVE — real orders will be placed via Angel One")
 
         if not paper and api_key:
             self._client = AngelOneHttpClient(
@@ -144,7 +144,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             self._auth_failed = False
             audit_logger.info("Token acquired during connect at %.0f", time.time())
             logger.info("AngelOne execution (live): session ready")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("AngelOne connect timeout")
             self._notify_health_failure()
             raise
@@ -181,21 +181,18 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
         to guard against borderline timing issues.
         """
         if not self._totp_secret:
-            raise BrokerClientError(
-                "Cannot generate TOTP: no totp_secret configured for auto-refresh"
-            )
+            raise BrokerClientError("Cannot generate TOTP: no totp_secret configured for auto-refresh")
         try:
             import pyotp
         except ImportError:
             raise BrokerClientError(
-                "pyotp package is required for automatic token refresh. "
-                "Install it with: pip install pyotp"
-            )
+                "pyotp package is required for automatic token refresh. Install it with: pip install pyotp"
+            ) from None
         totp = pyotp.TOTP(self._totp_secret)
         # Generate code, optionally for an adjacent time window
         if time_offset != 0:
             adjusted_time = time.time() + time_offset
-            code = totp.at(datetime.fromtimestamp(adjusted_time, tz=timezone.utc))
+            code = totp.at(datetime.fromtimestamp(adjusted_time, tz=UTC))
         else:
             code = totp.now()
 
@@ -208,7 +205,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             )
         return code
 
-    def _check_system_clock(self, response_headers: Optional[Dict[str, str]] = None) -> Optional[float]:
+    def _check_system_clock(self, response_headers: dict[str, str] | None = None) -> float | None:
         """Check system clock drift against Angel One API response headers.
 
         Args:
@@ -229,7 +226,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
 
         try:
             server_time = parsedate_to_datetime(date_header)
-            local_time = datetime.now(tz=timezone.utc)
+            local_time = datetime.now(tz=UTC)
             drift = abs((local_time - server_time).total_seconds())
         except Exception as exc:
             logger.debug("Could not parse Date header for clock check: %s", exc)
@@ -279,16 +276,10 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
 
         async with self._refresh_lock:
             # Double-check: another coroutine may have refreshed while we waited
-            if (
-                self._token_acquired_at > 0.0
-                and not self._is_token_expiring()
-                and self._refresh_failures == 0
-            ):
+            if self._token_acquired_at > 0.0 and not self._is_token_expiring() and self._refresh_failures == 0:
                 return True
 
-            audit_logger.info(
-                "Token refresh attempt (failures so far: %d)", self._refresh_failures
-            )
+            audit_logger.info("Token refresh attempt (failures so far: %d)", self._refresh_failures)
 
             loop = asyncio.get_running_loop()
 
@@ -299,13 +290,15 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
                 (30, "next window (+30s)"),
             ]
 
-            last_exc: Optional[Exception] = None
+            last_exc: Exception | None = None
             for offset, label in totp_attempts:
                 try:
                     fresh_totp = self._generate_totp(time_offset=offset)
                     if offset != 0:
                         audit_logger.info(
-                            "Retrying TOTP login with %s (offset=%ds)", label, offset,
+                            "Retrying TOTP login with %s (offset=%ds)",
+                            label,
+                            offset,
                         )
 
                     # Perform TOTP-based login on the underlying sync client
@@ -324,8 +317,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
                     self._auth_failed = False
                     if offset != 0:
                         audit_logger.warning(
-                            "Token refresh succeeded with %s -- system clock may be "
-                            "drifting. Consider NTP sync.",
+                            "Token refresh succeeded with %s -- system clock may be drifting. Consider NTP sync.",
                             label,
                         )
                     audit_logger.info(
@@ -337,7 +329,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
                     # After successful login, try to check clock drift from
                     # any cached response headers on the client
                     try:
-                        headers = getattr(self._client, '_last_response_headers', None)
+                        headers = getattr(self._client, "_last_response_headers", None)
                         if headers:
                             self._check_system_clock(headers)
                     except Exception:
@@ -349,13 +341,14 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
                     last_exc = exc
                     if offset == 0:
                         audit_logger.warning(
-                            "TOTP login failed with current window: %s. "
-                            "Will try adjacent windows as fallback.",
+                            "TOTP login failed with current window: %s. Will try adjacent windows as fallback.",
                             exc,
                         )
                     else:
                         audit_logger.warning(
-                            "TOTP login failed with %s: %s", label, exc,
+                            "TOTP login failed with %s: %s",
+                            label,
+                            exc,
                         )
                     continue
 
@@ -393,19 +386,13 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             return
 
         if self._auth_failed:
-            raise BrokerClientError(
-                "Angel One authentication has failed repeatedly. "
-                "Manual re-login required."
-            )
+            raise BrokerClientError("Angel One authentication has failed repeatedly. Manual re-login required.")
 
         if self._is_token_expiring():
             logger.info("Token approaching expiry, initiating proactive refresh")
             success = await self._refresh_token()
             if not success and self._auth_failed:
-                raise BrokerClientError(
-                    "Angel One token refresh failed critically. "
-                    "Manual re-login required."
-                )
+                raise BrokerClientError("Angel One token refresh failed critically. Manual re-login required.")
 
     async def _execute_broker_call(
         self,
@@ -439,11 +426,11 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             track_broker_latency(operation_name, time.perf_counter() - t0)
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError as exc:
             track_broker_latency(operation_name, time.perf_counter() - t0)
             track_broker_failure(operation_name, "timeout")
             self._notify_health_failure()
-            raise BrokerClientError(f"{operation_name} timeout")
+            raise BrokerClientError(f"{operation_name} timeout") from exc
 
         except BrokerClientError as exc:
             elapsed = time.perf_counter() - t0
@@ -472,11 +459,11 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
                             operation_name,
                         )
                         return result
-                    except asyncio.TimeoutError:
+                    except TimeoutError as texc:
                         track_broker_latency(operation_name, time.perf_counter() - t1)
                         track_broker_failure(operation_name, "timeout_after_refresh")
                         self._notify_health_failure()
-                        raise BrokerClientError(f"{operation_name} timeout after refresh")
+                        raise BrokerClientError(f"{operation_name} timeout after refresh") from texc
                     except BrokerClientError as retry_exc:
                         track_broker_latency(operation_name, time.perf_counter() - t1)
                         track_broker_failure(
@@ -495,13 +482,15 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             if exc.errorcode in _CIRCUIT_BREAKER_CODES:
                 logger.warning(
                     "NSE circuit breaker halt during %s (code=%s): %s",
-                    operation_name, exc.errorcode, exc,
+                    operation_name,
+                    exc.errorcode,
+                    exc,
                 )
                 track_broker_failure(operation_name, f"circuit_breaker_{exc.errorcode}")
                 raise BrokerClientError(
                     f"NSE circuit breaker halt: {exc.errorcode}",
                     errorcode=exc.errorcode,
-                )
+                ) from exc
 
             # Non-session error: propagate as-is
             track_broker_failure(operation_name, exc.errorcode or type(exc).__name__)
@@ -536,7 +525,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
         side: str,
         quantity: float,
         order_type: str,
-        limit_price: Optional[float] = None,
+        limit_price: float | None = None,
         strategy_id: str = "",
         **kwargs,
     ) -> Order:
@@ -556,15 +545,13 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
                     errorcode="CIRCUIT_HALT",
                 )
         # Clear all expired halts safely (snapshot keys, then delete)
-        symbols_to_clear = [
-            k for k, v in _circuit_halted_symbols.items()
-            if time.monotonic() - v >= 300
-        ]
+        symbols_to_clear = [k for k, v in _circuit_halted_symbols.items() if time.monotonic() - v >= 300]
         for k in symbols_to_clear:
             del _circuit_halted_symbols[k]
 
         if self.paper:
             from uuid import uuid4
+
             return Order(
                 order_id=str(uuid4()),
                 strategy_id=strategy_id,
@@ -626,7 +613,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             metadata={"broker": "angel_one", "uniqueorderid": unique_id},
         )
 
-    async def health_check(self) -> Dict[str, object]:
+    async def health_check(self) -> dict[str, object]:
         """Verify Angel One gateway connectivity.
 
         Paper mode: always healthy.
@@ -649,7 +636,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             logger.warning("Angel One health check failed: %s", e)
             return {"healthy": False, "broker": "angel_one", "mode": "live", "detail": str(e)}
 
-    async def cancel_order(self, order_id: str, broker_order_id: Optional[str] = None) -> bool:
+    async def cancel_order(self, order_id: str, broker_order_id: str | None = None) -> bool:
         if self.paper:
             return True
         if not self._client:
@@ -665,7 +652,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             return False
         return True
 
-    async def get_order_status(self, order_id: str, broker_order_id: Optional[str] = None) -> OrderStatus:
+    async def get_order_status(self, order_id: str, broker_order_id: str | None = None) -> OrderStatus:
         if self.paper:
             return OrderStatus.PENDING
         if not self._client:
@@ -710,7 +697,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             metadata={"broker": "angel_one"},
         )
 
-    async def get_positions(self) -> List[Position]:
+    async def get_positions(self) -> list[Position]:
         if self.paper:
             return []
         if not self._client:
@@ -724,7 +711,7 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             return []
         return [self._position_from_row(r) for r in (rows or []) if r.get("netqty")]
 
-    async def get_orders(self, status: Optional[str] = None, limit: int = 100) -> List[Order]:
+    async def get_orders(self, status: str | None = None, limit: int = 100) -> list[Order]:
         if self.paper:
             return []
         if not self._client:

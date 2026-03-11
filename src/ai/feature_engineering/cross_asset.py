@@ -2,7 +2,6 @@
 Cross-asset features: index correlation, India VIX, USDINR impact, global spillover.
 Requires external data (index series, VIX, FX); stubs when not available.
 """
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -24,17 +23,17 @@ def compute_index_correlation(
 
 
 def compute_cross_asset_features(
-    bars: List[Bar],
-    index_returns: Optional[np.ndarray] = None,
-    india_vix: Optional[float] = None,
-    usdinr_return: Optional[float] = None,
-    global_index_return: Optional[float] = None,
-) -> Dict[str, float]:
+    bars: list[Bar],
+    index_returns: np.ndarray | None = None,
+    india_vix: float | None = None,
+    usdinr_return: float | None = None,
+    global_index_return: float | None = None,
+) -> dict[str, float]:
     """
     Cross-asset features. Pass index returns (same length as bar count for correlation);
     VIX and FX are point-in-time (e.g. current value).
     """
-    features: Dict[str, float] = {}
+    features: dict[str, float] = {}
     if not bars:
         return features
 
@@ -42,9 +41,7 @@ def compute_cross_asset_features(
     returns = np.diff(close) / (close[:-1] + 1e-12)
 
     if index_returns is not None:
-        features["index_correlation_5d"] = compute_index_correlation(
-            returns, index_returns, min(5, len(returns))
-        )
+        features["index_correlation_5d"] = compute_index_correlation(returns, index_returns, min(5, len(returns)))
     else:
         features["index_correlation_5d"] = 0.0
 

@@ -4,8 +4,8 @@ Slippage_bps = base + k1 * (order_size / avg_minute_volume)^alpha
              + k2 * (spread_bps / ref_spread) + k3 * vol_regime_mult
 Nonlinear scaling with participation; used in backtest and live participation cap.
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -13,8 +13,8 @@ class DynamicSlippageConfig:
     base_bps: float = 5.0
     k1: float = 10.0  # participation scaling
     alpha: float = 1.5  # nonlinear
-    k2: float = 2.0   # spread
-    k3: float = 5.0   # vol regime
+    k2: float = 2.0  # spread
+    k3: float = 5.0  # vol regime
     ref_spread_bps: float = 10.0
     max_volume_participation_pct: float = 10.0
     max_slippage_bps: float = 100.0
@@ -27,7 +27,7 @@ class DynamicSlippageModel:
     For live: reduce size if participation would exceed threshold.
     """
 
-    def __init__(self, config: Optional[DynamicSlippageConfig] = None):
+    def __init__(self, config: DynamicSlippageConfig | None = None):
         self.config = config or DynamicSlippageConfig()
 
     def participation_ratio(self, order_size: float, avg_minute_volume: float) -> float:
@@ -49,7 +49,7 @@ class DynamicSlippageModel:
         """
         cfg = self.config
         part = self.participation_ratio(order_size, avg_minute_volume)
-        term1 = cfg.k1 * (part ** cfg.alpha)
+        term1 = cfg.k1 * (part**cfg.alpha)
         term2 = cfg.k2 * (spread_bps / (cfg.ref_spread_bps + 1e-8))
         term3 = cfg.k3 * vol_regime_mult
         bps = cfg.base_bps + term1 + term2 + term3

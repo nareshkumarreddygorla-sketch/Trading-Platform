@@ -2,18 +2,20 @@
 Regime-aware: filters strategies by market regime when regime data is available.
 Multi-timeframe aware: optionally enriches strategy context with cross-TF alignment signals.
 """
+
 import logging
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from src.core.events import Bar, Exchange, Signal
 
-from .base import MarketState, StrategyBase
+from .base import MarketState
 from .registry import StrategyRegistry
 
 logger = logging.getLogger(__name__)
 
 # Regime → strategy mapping: which strategies are allowed in each regime
-REGIME_STRATEGY_MAP: Dict[str, Set[str]] = {
+REGIME_STRATEGY_MAP: dict[str, set[str]] = {
     "trending_up": {"ai_alpha", "ema_crossover", "macd", "momentum_breakout", "ml_predictor", "rl_agent"},
     "trending_down": {"ai_alpha", "ema_crossover", "macd", "ml_predictor", "rl_agent"},
     "sideways": {"ai_alpha", "rsi", "mean_reversion", "ml_predictor"},
@@ -23,7 +25,7 @@ REGIME_STRATEGY_MAP: Dict[str, Set[str]] = {
 }
 
 # Timeframes used for multi-TF analysis (ascending granularity)
-_MTF_INTERVALS: List[Tuple[str, int]] = [
+_MTF_INTERVALS: list[tuple[str, int]] = [
     ("1m", 100),
     ("5m", 100),
     ("15m", 60),
@@ -44,16 +46,16 @@ class StrategyRunner:
 
     # ── public API (unchanged) ──────────────────────────────────────────
 
-    def run(self, state: MarketState) -> List[Signal]:
+    def run(self, state: MarketState) -> list[Signal]:
         regime = (state.metadata or {}).get("regime", None) if state.metadata else None
-        allowed_ids: Optional[Set[str]] = None
+        allowed_ids: set[str] | None = None
         if regime and regime in REGIME_STRATEGY_MAP:
             allowed_ids = REGIME_STRATEGY_MAP[regime]
             if not allowed_ids:
                 logger.warning("Regime '%s' — all strategies blocked (crisis mode)", regime)
                 return []
 
-        signals: List[Signal] = []
+        signals: list[Signal] = []
         for strategy in self.registry.get_enabled_strategies():
             # Skip strategies not compatible with current regime
             if allowed_ids is not None and strategy.strategy_id not in allowed_ids:
@@ -73,8 +75,8 @@ class StrategyRunner:
     def run_with_multi_timeframe(
         self,
         state: MarketState,
-        get_bars: Callable[[str, Exchange, str, int], List[Bar]],
-    ) -> List[Signal]:
+        get_bars: Callable[[str, Exchange, str, int], list[Bar]],
+    ) -> list[Signal]:
         """Run strategies with multi-timeframe context injected into ``state.metadata``.
 
         1. Fetches bars across 1m / 5m / 15m / 1h / 1d via *get_bars*.
@@ -119,6 +121,7 @@ class StrategyRunner:
         if self._mtf_engine is None:
             try:
                 from src.ai.feature_engineering.multi_timeframe import MultiTimeframeEngine
+
                 self._mtf_engine = MultiTimeframeEngine()
             except Exception:
                 logger.exception("Failed to import MultiTimeframeEngine; MTF features disabled")
@@ -128,8 +131,8 @@ class StrategyRunner:
         self,
         symbol: str,
         exchange: Exchange,
-        get_bars: Callable[[str, Exchange, str, int], List[Bar]],
-    ) -> Optional[Dict[str, Any]]:
+        get_bars: Callable[[str, Exchange, str, int], list[Bar]],
+    ) -> dict[str, Any] | None:
         """Fetch multi-TF bars and compute alignment context dict.
 
         Returns ``None`` when insufficient data is available so the caller
@@ -139,7 +142,7 @@ class StrategyRunner:
         if engine is None:
             return None
 
-        bars_by_tf: Dict[str, List[Bar]] = {}
+        bars_by_tf: dict[str, list[Bar]] = {}
         for interval, count in _MTF_INTERVALS:
             try:
                 bars = get_bars(symbol, exchange, interval, count)

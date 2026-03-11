@@ -2,8 +2,11 @@
 Execution Agent: receives signals from Research Agent,
 optimizes entry timing, submits via OrderEntryService.
 """
+
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from collections.abc import Awaitable, Callable
+from datetime import UTC
+from typing import Any
 
 from .base import BaseAgent
 
@@ -24,9 +27,9 @@ class ExecutionAgent(BaseAgent):
 
     def __init__(
         self,
-        submit_order_fn: Optional[Callable[..., Awaitable]] = None,
-        get_bars: Optional[Callable] = None,
-        get_positions: Optional[Callable] = None,
+        submit_order_fn: Callable[..., Awaitable] | None = None,
+        get_bars: Callable | None = None,
+        get_positions: Callable | None = None,
         max_concurrent_orders: int = 5,
         execution_interval: float = 15.0,
     ):
@@ -36,7 +39,7 @@ class ExecutionAgent(BaseAgent):
         self._get_positions = get_positions
         self._max_concurrent = max_concurrent_orders
         self._execution_interval = execution_interval
-        self._pending_opportunities: List[Dict[str, Any]] = []
+        self._pending_opportunities: list[dict[str, Any]] = []
         self._executed_count = 0
         self._rejected_count = 0
 
@@ -44,7 +47,7 @@ class ExecutionAgent(BaseAgent):
     def interval_seconds(self) -> float:
         return self._execution_interval
 
-    def _is_favorable_entry(self, opportunity: Dict, current_price: float) -> bool:
+    def _is_favorable_entry(self, opportunity: dict, current_price: float) -> bool:
         """Check if current price is favorable for entry."""
         signal_price = opportunity.get("price", 0)
         direction = opportunity.get("direction", "BUY")
@@ -67,7 +70,7 @@ class ExecutionAgent(BaseAgent):
         while msg is not None:
             if msg.msg_type == "opportunities":
                 new_opps = msg.payload.get("opportunities", [])
-                self._pending_opportunities = new_opps[:self._max_concurrent * 2]
+                self._pending_opportunities = new_opps[: self._max_concurrent * 2]
                 logger.debug("ExecutionAgent: received %d opportunities", len(new_opps))
 
             elif msg.msg_type == "risk_alert":
@@ -113,6 +116,7 @@ class ExecutionAgent(BaseAgent):
             if self._get_bars:
                 try:
                     from src.core.events import Exchange
+
                     exchange = Exchange(exchange_str) if isinstance(exchange_str, str) else exchange_str
                     bars = self._get_bars(symbol, exchange, "1m", 5)
                     if bars:
@@ -134,10 +138,11 @@ class ExecutionAgent(BaseAgent):
 
             # Build and submit order
             try:
-                from src.core.events import Exchange, Signal, SignalSide, OrderType
-                from src.execution.order_entry.request import OrderEntryRequest
+                from datetime import datetime
+
+                from src.core.events import Exchange, OrderType, Signal, SignalSide
                 from src.execution.order_entry.idempotency import IdempotencyStore
-                from datetime import datetime, timezone
+                from src.execution.order_entry.request import OrderEntryRequest
 
                 exchange = Exchange(exchange_str) if isinstance(exchange_str, str) else exchange_str
                 side = SignalSide.BUY if direction == "BUY" else SignalSide.SELL
@@ -153,7 +158,7 @@ class ExecutionAgent(BaseAgent):
                         try:
                             # Try to get equity from risk manager via positions callback
                             positions_list = self._get_positions()
-                            if hasattr(positions_list, '__self__') and hasattr(positions_list.__self__, 'equity'):
+                            if hasattr(positions_list, "__self__") and hasattr(positions_list.__self__, "equity"):
                                 equity = positions_list.__self__.equity
                         except Exception:
                             pass
@@ -175,9 +180,12 @@ class ExecutionAgent(BaseAgent):
                     risk_level="NORMAL",
                 )
 
-                bar_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                bar_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
                 idem_key = IdempotencyStore.derive_key_bar_stable(
-                    bar_ts, "execution_agent", symbol, direction,
+                    bar_ts,
+                    "execution_agent",
+                    symbol,
+                    direction,
                 )
 
                 req = OrderEntryRequest(
@@ -194,12 +202,12 @@ class ExecutionAgent(BaseAgent):
                     self._executed_count += 1
                     executed += 1
                     existing_symbols.add(symbol)
-                    logger.info("ExecutionAgent: order submitted %s %s @ %.2f (conf=%.2f)",
-                                direction, symbol, price, confidence)
+                    logger.info(
+                        "ExecutionAgent: order submitted %s %s @ %.2f (conf=%.2f)", direction, symbol, price, confidence
+                    )
                 else:
                     self._rejected_count += 1
-                    logger.debug("ExecutionAgent: order rejected %s %s: %s",
-                                 direction, symbol, result.reject_reason)
+                    logger.debug("ExecutionAgent: order rejected %s %s: %s", direction, symbol, result.reject_reason)
 
             except Exception as e:
                 logger.debug("ExecutionAgent: submit failed for %s: %s", symbol, e)
@@ -207,7 +215,7 @@ class ExecutionAgent(BaseAgent):
         # Re-queue unprocessed opportunities
         self._pending_opportunities = remaining
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         status = super().get_status()
         status["pending_opportunities"] = len(self._pending_opportunities)
         status["executed_count"] = self._executed_count

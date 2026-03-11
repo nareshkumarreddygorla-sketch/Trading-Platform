@@ -16,6 +16,7 @@ Also callable via:
     make train-ai           # Quick train (5 stocks)
     make train-ai-full      # Full train (70 stocks)
 """
+
 import argparse
 import json
 import logging
@@ -53,8 +54,12 @@ def run_step(name: str, cmd: list, timeout: int = 1800) -> bool:
         env = os.environ.copy()
         env["PYTHONPATH"] = PROJECT_ROOT
         result = subprocess.run(
-            cmd, env=env, capture_output=True, text=True,
-            timeout=timeout, cwd=PROJECT_ROOT,
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=PROJECT_ROOT,
         )
         elapsed = time.time() - start
         if result.returncode == 0:
@@ -134,8 +139,7 @@ def step_train_xgboost():
 def step_train_lstm(epochs: int = 30, symbols: str = None):
     """Step 3: Train LSTM predictor."""
     banner("STEP 3: TRAINING LSTM")
-    cmd = [sys.executable, os.path.join(PROJECT_ROOT, "scripts", "train_lstm.py"),
-           "--epochs", str(epochs)]
+    cmd = [sys.executable, os.path.join(PROJECT_ROOT, "scripts", "train_lstm.py"), "--epochs", str(epochs)]
     if symbols:
         cmd.extend(["--symbols", symbols])
     return run_step("LSTM Predictor", cmd, timeout=3600)
@@ -144,8 +148,7 @@ def step_train_lstm(epochs: int = 30, symbols: str = None):
 def step_train_transformer(epochs: int = 30, symbols: str = None):
     """Step 4: Train Transformer predictor."""
     banner("STEP 4: TRAINING TRANSFORMER")
-    cmd = [sys.executable, os.path.join(PROJECT_ROOT, "scripts", "train_transformer.py"),
-           "--epochs", str(epochs)]
+    cmd = [sys.executable, os.path.join(PROJECT_ROOT, "scripts", "train_transformer.py"), "--epochs", str(epochs)]
     if symbols:
         cmd.extend(["--symbols", symbols])
     return run_step("Transformer Predictor", cmd, timeout=3600)
@@ -154,8 +157,7 @@ def step_train_transformer(epochs: int = 30, symbols: str = None):
 def step_train_rl(timesteps: int = 100000, symbols: str = None):
     """Step 5: Train RL agent."""
     banner("STEP 5: TRAINING RL AGENT")
-    cmd = [sys.executable, os.path.join(PROJECT_ROOT, "scripts", "train_rl_agent.py"),
-           "--timesteps", str(timesteps)]
+    cmd = [sys.executable, os.path.join(PROJECT_ROOT, "scripts", "train_rl_agent.py"), "--timesteps", str(timesteps)]
     if symbols:
         cmd.extend(["--symbols", symbols])
     return run_step("RL Agent (PPO)", cmd, timeout=3600)
@@ -176,46 +178,39 @@ def save_training_meta(results: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Master Auto-Train Pipeline: download data + train all AI models"
+    parser = argparse.ArgumentParser(description="Master Auto-Train Pipeline: download data + train all AI models")
+    parser.add_argument("--quick", action="store_true", help="Quick mode: 5 stocks, 10 epochs, 50k RL steps")
+    parser.add_argument("--full", action="store_true", help="Full mode: 70 stocks, 50 epochs, 200k RL steps")
+    parser.add_argument(
+        "--models",
+        type=str,
+        default=None,
+        help="Comma-separated models to train: xgboost,lstm,transformer,rl (default: all)",
     )
-    parser.add_argument("--quick", action="store_true",
-                        help="Quick mode: 5 stocks, 10 epochs, 50k RL steps")
-    parser.add_argument("--full", action="store_true",
-                        help="Full mode: 70 stocks, 50 epochs, 200k RL steps")
-    parser.add_argument("--models", type=str, default=None,
-                        help="Comma-separated models to train: xgboost,lstm,transformer,rl (default: all)")
-    parser.add_argument("--data-only", action="store_true",
-                        help="Only download data, skip training")
-    parser.add_argument("--skip-data", action="store_true",
-                        help="Skip data download, train with existing data")
-    parser.add_argument("--period", type=str, default="2y",
-                        help="Historical data period: 1y, 2y, 5y, max")
-    parser.add_argument("--epochs", type=int, default=None,
-                        help="Training epochs for LSTM/Transformer")
-    parser.add_argument("--timesteps", type=int, default=None,
-                        help="RL training timesteps")
-    parser.add_argument("--symbols", type=str, default=None,
-                        help="Specific symbols to use for training")
+    parser.add_argument("--data-only", action="store_true", help="Only download data, skip training")
+    parser.add_argument("--skip-data", action="store_true", help="Skip data download, train with existing data")
+    parser.add_argument("--period", type=str, default="2y", help="Historical data period: 1y, 2y, 5y, max")
+    parser.add_argument("--epochs", type=int, default=None, help="Training epochs for LSTM/Transformer")
+    parser.add_argument("--timesteps", type=int, default=None, help="RL training timesteps")
+    parser.add_argument("--symbols", type=str, default=None, help="Specific symbols to use for training")
     args = parser.parse_args()
 
     # Configuration based on mode
     # All modes use DYNAMIC stock selection from entire NSE market
     if args.quick:
-        n_stocks = 30       # top 30 most liquid (fast training)
+        n_stocks = 30  # top 30 most liquid (fast training)
         epochs = args.epochs or 10
         rl_timesteps = args.timesteps or 50000
     elif args.full:
-        n_stocks = 300      # top 300 from full market scan (comprehensive)
+        n_stocks = 300  # top 300 from full market scan (comprehensive)
         epochs = args.epochs or 50
         rl_timesteps = args.timesteps or 200000
     else:
-        n_stocks = 100      # top 100 most liquid (balanced)
+        n_stocks = 100  # top 100 most liquid (balanced)
         epochs = args.epochs or 30
         rl_timesteps = args.timesteps or 100000
 
-    models_to_train = (args.models.split(",") if args.models
-                       else ["xgboost", "lstm", "transformer", "rl"])
+    models_to_train = args.models.split(",") if args.models else ["xgboost", "lstm", "transformer", "rl"]
 
     # Need pandas for data step
     global pd

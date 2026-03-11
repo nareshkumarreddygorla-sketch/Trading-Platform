@@ -7,42 +7,43 @@ Multi-layer defence:
   3. Post-circuit recovery ramp-up (25% → 50% → 100% over 3 sessions)
   4. Cascading circuit (no new positions for rest of session after trip)
 """
+
 from __future__ import annotations
 
 import logging
 import time as _time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Deque, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 class VIXLevel(str, Enum):
-    NORMAL = "normal"         # VIX < 20
-    ELEVATED = "elevated"     # 20 <= VIX < 25
-    HIGH = "high"             # 25 <= VIX < 35
-    EXTREME = "extreme"       # VIX >= 35
+    NORMAL = "normal"  # VIX < 20
+    ELEVATED = "elevated"  # 20 <= VIX < 25
+    HIGH = "high"  # 25 <= VIX < 35
+    EXTREME = "extreme"  # VIX >= 35
 
 
 class RecoveryPhase(str, Enum):
-    NORMAL = "normal"           # 100% exposure allowed
-    PHASE_1 = "phase_1"        # 25% max exposure (first session after circuit)
-    PHASE_2 = "phase_2"        # 50% max exposure (second session)
-    PHASE_3 = "phase_3"        # 100% restored (third session)
+    NORMAL = "normal"  # 100% exposure allowed
+    PHASE_1 = "phase_1"  # 25% max exposure (first session after circuit)
+    PHASE_2 = "phase_2"  # 50% max exposure (second session)
+    PHASE_3 = "phase_3"  # 100% restored (third session)
 
 
 @dataclass
 class TailRiskState:
     """Current tail risk assessment."""
+
     vix_level: VIXLevel = VIXLevel.NORMAL
     vix_value: float = 0.0
-    exposure_scale: float = 1.0      # multiplier for position sizes
+    exposure_scale: float = 1.0  # multiplier for position sizes
     rapid_drawdown: bool = False
     recovery_phase: RecoveryPhase = RecoveryPhase.NORMAL
     recovery_max_exposure_pct: float = 100.0
-    last_circuit_trip_ts: Optional[float] = None
+    last_circuit_trip_ts: float | None = None
     sessions_since_trip: int = 999
 
     def as_dict(self) -> dict:
@@ -79,7 +80,7 @@ class TailRiskProtector:
         self.recovery_sessions = recovery_sessions
 
         # Equity snapshots for rapid drawdown detection: (timestamp, equity)
-        self._equity_snapshots: Deque[Tuple[float, float]] = deque(maxlen=120)
+        self._equity_snapshots: deque[tuple[float, float]] = deque(maxlen=120)
         self._state = TailRiskState()
         self._circuit_tripped_this_session = False
 
@@ -144,7 +145,10 @@ class TailRiskProtector:
             self._state.exposure_scale = min(self._state.exposure_scale, 0.25)
             logger.warning(
                 "Rapid drawdown detected: %.2f%% in %d min (peak=%.0f, current=%.0f)",
-                drawdown_pct, self.rapid_drawdown_window_min, peak_in_window, current_equity,
+                drawdown_pct,
+                self.rapid_drawdown_window_min,
+                peak_in_window,
+                current_equity,
             )
             return True
 
@@ -198,7 +202,7 @@ class TailRiskProtector:
         """Get current exposure scaling factor (0.0 to 1.0)."""
         return max(0.0, min(1.0, self._state.exposure_scale))
 
-    def should_block_new_positions(self) -> Tuple[bool, str]:
+    def should_block_new_positions(self) -> tuple[bool, str]:
         """Check if new positions should be blocked."""
         if self._circuit_tripped_this_session:
             return True, "Circuit breaker tripped this session — no new positions"
@@ -231,6 +235,7 @@ class TailRiskProtector:
         Returns CVaR as positive value in currency (INR).
         """
         import math
+
         from scipy.stats import norm
 
         if portfolio_vol_daily <= 0 or portfolio_value <= 0:
@@ -238,8 +243,8 @@ class TailRiskProtector:
 
         z_alpha = norm.ppf(1 - confidence)  # negative
         # Cornish-Fisher adjustment
-        z2 = z_alpha ** 2
-        z3 = z_alpha ** 3
+        z2 = z_alpha**2
+        z3 = z_alpha**3
         s = skewness
         k = excess_kurtosis
         z_cf = (
@@ -345,6 +350,7 @@ class TailRiskProtector:
         Returns projected max drawdown as a fraction (e.g. 0.05 = 5%).
         """
         import math
+
         if portfolio_vol_daily <= 0 or horizon_days <= 0:
             return 0.0
 
@@ -354,6 +360,7 @@ class TailRiskProtector:
 
         # Scale for confidence level (approx: 95% -> ~1.5x expected, 99% -> ~2x)
         from scipy.stats import norm
+
         z = norm.ppf(confidence)
         confidence_mult = max(1.0, z / 1.645)  # normalise to 95% baseline
 
@@ -408,7 +415,11 @@ class TailRiskProtector:
             logger.warning(
                 "RAPID DRAWDOWN SPEED: %.2f%% in %d min (%.3f%%/min) — "
                 "peak=%.0f, current=%.0f — triggering faster response",
-                dd_pct, lookback_minutes, dd_per_min, peak_in_window, current_equity,
+                dd_pct,
+                lookback_minutes,
+                dd_per_min,
+                peak_in_window,
+                current_equity,
             )
             # Reduce exposure more aggressively for fast drawdowns
             self._state.exposure_scale = min(self._state.exposure_scale, 0.15)

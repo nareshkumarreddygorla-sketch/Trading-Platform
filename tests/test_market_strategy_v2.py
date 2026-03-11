@@ -6,40 +6,35 @@ FeatureEngine, and EnsembleEngine.
 All tests are self-contained, use mocks where needed, and require no
 external services (no network, no Redis, no database).
 """
+
 import time
-import threading
-from collections import deque
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock, patch, PropertyMock
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import numpy as np
-import pytest
 
+from src.ai.feature_engine import FeatureEngine
+from src.ai.models.base import BasePredictor, PredictionOutput
+from src.ai.models.ensemble import EnsembleEngine
+from src.ai.models.registry import ModelRegistry
 from src.core.events import (
     Bar,
     Exchange,
+    OrderStatus,
     Position,
     Signal,
     SignalSide,
-    Order,
-    OrderStatus,
-    OrderType,
     validate_order_transition,
 )
 from src.strategy_engine.allocator import AllocatorConfig, PortfolioAllocator
 from src.strategy_engine.base import MarketState, StrategyBase
 from src.strategy_engine.registry import StrategyRegistry
-from src.strategy_engine.runner import StrategyRunner, REGIME_STRATEGY_MAP
-from src.ai.feature_engine import FeatureEngine
-from src.ai.models.base import BasePredictor, PredictionOutput
-from src.ai.models.registry import ModelRegistry
-from src.ai.models.ensemble import EnsembleEngine, MIN_AGREEING_MODELS
-
+from src.strategy_engine.runner import StrategyRunner
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_bar(
     symbol: str = "RELIANCE",
@@ -50,11 +45,11 @@ def _make_bar(
     low: float = 99.0,
     close: float = 103.0,
     volume: float = 10000.0,
-    ts: Optional[datetime] = None,
+    ts: datetime | None = None,
     source: str = "test",
 ) -> Bar:
     if ts is None:
-        ts = datetime.now(timezone.utc)
+        ts = datetime.now(UTC)
     return Bar(
         symbol=symbol,
         exchange=exchange,
@@ -74,10 +69,10 @@ def _make_bars(
     symbol: str = "RELIANCE",
     exchange: Exchange = Exchange.NSE,
     base_price: float = 100.0,
-) -> List[Bar]:
+) -> list[Bar]:
     """Generate n synthetic bars with monotonically increasing timestamps."""
     bars = []
-    now = datetime.now(timezone.utc) - timedelta(minutes=n)
+    now = datetime.now(UTC) - timedelta(minutes=n)
     for i in range(n):
         ts = now + timedelta(minutes=i)
         o = base_price + np.random.uniform(-2, 2)
@@ -124,27 +119,30 @@ def _make_signal(
 
 class _DummyStrategy(StrategyBase):
     """A minimal strategy for testing StrategyRunner."""
+
     strategy_id = "dummy_test"
     description = "dummy for tests"
 
-    def __init__(self, signals: Optional[List[Signal]] = None, min_bars: int = 5):
+    def __init__(self, signals: list[Signal] | None = None, min_bars: int = 5):
         self._signals = signals or []
         self._min_bars = min_bars
 
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= self._min_bars
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         return list(self._signals)
 
 
 class _StubPredictor(BasePredictor):
     """A stub predictor for EnsembleEngine tests."""
+
     model_id = "stub"
     version = "v1"
 
-    def __init__(self, model_id: str = "stub", prob_up: float = 0.7,
-                 confidence: float = 0.8, expected_return: float = 0.005):
+    def __init__(
+        self, model_id: str = "stub", prob_up: float = 0.7, confidence: float = 0.8, expected_return: float = 0.005
+    ):
         self.model_id = model_id
         self.version = "v1"
         self._prob_up = prob_up
@@ -165,13 +163,14 @@ class _StubPredictor(BasePredictor):
 # 1. BarCache Tests
 # ===================================================================
 
+
 class TestBarCache:
     """Tests for src.market_data.bar_cache.BarCache"""
 
     def _make_cache(self, max_bars: int = 500):
         """Create BarCache with a permissive OHLCValidator stub."""
-        from src.market_data.bar_cache import BarCache
         from src.data_pipeline.ohlc_validator import OHLCValidator
+        from src.market_data.bar_cache import BarCache
 
         # Use a very generous stale threshold so test bars always pass
         validator = OHLCValidator(stale_seconds=365 * 86400.0)
@@ -197,7 +196,7 @@ class TestBarCache:
     def test_get_bars_returns_requested_count(self):
         """get_bars(n=5) should return the last 5 bars when more are available."""
         cache = self._make_cache()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(20):
             c = 100.0 + i
             bar = _make_bar(
@@ -216,7 +215,7 @@ class TestBarCache:
     def test_deque_maxlen_enforcement(self):
         """BarCache with max_bars=10 should evict oldest bars when capacity exceeded."""
         cache = self._make_cache(max_bars=10)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(20):
             c = 100.0 + i
             bar = _make_bar(
@@ -275,7 +274,7 @@ class TestBarCache:
     def test_has_data_threshold(self):
         """has_data should respect min_bars threshold."""
         cache = self._make_cache()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(15):
             cache.append_bar(_make_bar(ts=now + timedelta(minutes=i)))
         assert cache.has_data("RELIANCE", Exchange.NSE, "1m", min_bars=10) is True
@@ -284,7 +283,7 @@ class TestBarCache:
     def test_out_of_order_bar_rejected(self):
         """A bar with a timestamp <= the last bar's timestamp should be rejected."""
         cache = self._make_cache()
-        t1 = datetime.now(timezone.utc)
+        t1 = datetime.now(UTC)
         t2 = t1 + timedelta(minutes=1)
         cache.append_bar(_make_bar(ts=t2))
         # Attempt to append an earlier bar
@@ -297,6 +296,7 @@ class TestBarCache:
 # ===================================================================
 # 2. PortfolioAllocator Tests
 # ===================================================================
+
 
 class TestPortfolioAllocator:
     """Tests for src.strategy_engine.allocator.PortfolioAllocator"""
@@ -333,10 +333,7 @@ class TestPortfolioAllocator:
         """allocate should respect max_active_signals limit."""
         config = AllocatorConfig(max_active_signals=2, min_confidence=0.5, use_kelly=False)
         alloc = PortfolioAllocator(config)
-        signals = [
-            _make_signal(strategy_id=f"s{i}", score=0.9 - i * 0.05, price=100.0)
-            for i in range(5)
-        ]
+        signals = [_make_signal(strategy_id=f"s{i}", score=0.9 - i * 0.05, price=100.0) for i in range(5)]
         result = alloc.allocate(signals, equity=500000.0, positions=[])
         assert len(result) <= 2
 
@@ -354,11 +351,15 @@ class TestPortfolioAllocator:
 
         # Use a high max_position_pct so the Kelly difference is visible
         result_high = alloc.allocate(
-            [high_signal], equity=1000000.0, positions=[],
+            [high_signal],
+            equity=1000000.0,
+            positions=[],
             max_position_pct=20.0,
         )
         result_low = alloc.allocate(
-            [low_signal], equity=1000000.0, positions=[],
+            [low_signal],
+            equity=1000000.0,
+            positions=[],
             max_position_pct=20.0,
         )
 
@@ -375,10 +376,8 @@ class TestPortfolioAllocator:
         alloc = PortfolioAllocator(config)
         signal = _make_signal(score=0.8, price=100.0)
 
-        result_full = alloc.allocate([signal], equity=100000.0, positions=[],
-                                     exposure_multiplier=1.0)
-        result_half = alloc.allocate([signal], equity=100000.0, positions=[],
-                                     exposure_multiplier=0.5)
+        result_full = alloc.allocate([signal], equity=100000.0, positions=[], exposure_multiplier=1.0)
+        result_half = alloc.allocate([signal], equity=100000.0, positions=[], exposure_multiplier=0.5)
         assert len(result_full) == 1
         assert len(result_half) == 1
         _, qty_full = result_full[0]
@@ -395,8 +394,7 @@ class TestPortfolioAllocator:
         )
         alloc = PortfolioAllocator(config)
         signal = _make_signal(score=0.95, price=100.0)
-        result = alloc.allocate([signal], equity=100000.0, positions=[],
-                                max_position_pct=2.0)
+        result = alloc.allocate([signal], equity=100000.0, positions=[], max_position_pct=2.0)
         assert len(result) == 1
         _, qty = result[0]
         max_qty = int(100000.0 * 0.02 / 100.0)  # 2% of equity at price=100
@@ -411,8 +409,7 @@ class TestPortfolioAllocator:
         )
         alloc = PortfolioAllocator(config)
         signal = _make_signal(strategy_id="ai_alpha", score=0.8, price=100.0)
-        result = alloc.allocate([signal], equity=100000.0, positions=[],
-                                max_position_pct=10.0)
+        result = alloc.allocate([signal], equity=100000.0, positions=[], max_position_pct=10.0)
         assert len(result) == 1
         _, qty = result[0]
         # Notional should not exceed 2% of 100k = 2000 (20 shares at 100)
@@ -429,6 +426,7 @@ class TestPortfolioAllocator:
 # ===================================================================
 # 3. StrategyRunner Tests
 # ===================================================================
+
 
 class TestStrategyRunner:
     """Tests for src.strategy_engine.runner.StrategyRunner"""
@@ -531,6 +529,7 @@ class TestStrategyRunner:
 # ===================================================================
 # 4. Signal / Position / Exchange Events Tests
 # ===================================================================
+
 
 class TestCoreEvents:
     """Tests for src.core.events domain objects."""
@@ -639,12 +638,14 @@ class TestCoreEvents:
 # 5. DynamicUniverse Tests
 # ===================================================================
 
+
 class TestDynamicUniverse:
     """Tests for src.scanner.dynamic_universe.DynamicUniverse"""
 
     def test_initialization_defaults(self):
         """DynamicUniverse should initialise with default parameters."""
         from src.scanner.dynamic_universe import DynamicUniverse
+
         du = DynamicUniverse()
         assert du.min_volume == 50_000
         assert du.min_turnover == 1e7
@@ -655,6 +656,7 @@ class TestDynamicUniverse:
     def test_initialization_custom_params(self):
         """DynamicUniverse should accept custom parameters."""
         from src.scanner.dynamic_universe import DynamicUniverse
+
         du = DynamicUniverse(
             min_volume=100_000,
             min_turnover=5e7,
@@ -670,6 +672,7 @@ class TestDynamicUniverse:
     def test_get_tradeable_stocks_returns_symbols(self, mock_build):
         """get_tradeable_stocks should return symbol list from build_universe."""
         from src.scanner.dynamic_universe import DynamicUniverse
+
         mock_build.return_value = {
             "symbols": ["RELIANCE", "TCS", "INFY", "HDFC", "SBIN"],
             "total_nse": 1800,
@@ -685,6 +688,7 @@ class TestDynamicUniverse:
     def test_get_training_stocks(self, mock_build):
         """get_training_stocks should return symbols up to requested count."""
         from src.scanner.dynamic_universe import DynamicUniverse
+
         mock_build.return_value = {
             "symbols": [f"SYM{i}" for i in range(500)],
             "total_nse": 1800,
@@ -699,6 +703,7 @@ class TestDynamicUniverse:
     def test_get_yfinance_symbols_appends_ns(self, mock_build):
         """get_yfinance_symbols should append .NS suffix."""
         from src.scanner.dynamic_universe import DynamicUniverse
+
         mock_build.return_value = {
             "symbols": ["RELIANCE", "TCS"],
             "total_nse": 1800,
@@ -713,6 +718,7 @@ class TestDynamicUniverse:
 # ===================================================================
 # 6. FeatureEngine Tests
 # ===================================================================
+
 
 class TestFeatureEngine:
     """Tests for src.ai.feature_engine.FeatureEngine"""
@@ -732,17 +738,35 @@ class TestFeatureEngine:
         bars = _make_bars(100, base_price=500.0)
         features = engine.build_features(bars)
         expected_keys = [
-            "returns_1", "returns_5", "returns_10", "returns_20",
-            "rolling_volatility", "atr", "rsi", "ema_spread",
-            "macd_line", "macd_signal", "macd_histogram",
-            "volume_spike", "obv_slope", "vwap_distance",
-            "bollinger_pct_b", "bollinger_bandwidth",
-            "price_position", "gap_pct",
-            "candle_body_ratio", "candle_upper_shadow",
-            "stochastic_k", "stochastic_d",
-            "close", "volume",
-            "momentum_5", "momentum_10", "momentum_20",
-            "hurst_exponent", "adx",
+            "returns_1",
+            "returns_5",
+            "returns_10",
+            "returns_20",
+            "rolling_volatility",
+            "atr",
+            "rsi",
+            "ema_spread",
+            "macd_line",
+            "macd_signal",
+            "macd_histogram",
+            "volume_spike",
+            "obv_slope",
+            "vwap_distance",
+            "bollinger_pct_b",
+            "bollinger_bandwidth",
+            "price_position",
+            "gap_pct",
+            "candle_body_ratio",
+            "candle_upper_shadow",
+            "stochastic_k",
+            "stochastic_d",
+            "close",
+            "volume",
+            "momentum_5",
+            "momentum_10",
+            "momentum_20",
+            "hurst_exponent",
+            "adx",
         ]
         for key in expected_keys:
             assert key in features, f"Missing feature key: {key}"
@@ -785,23 +809,20 @@ class TestFeatureEngine:
 # 7. EnsembleEngine Tests
 # ===================================================================
 
+
 class TestEnsembleEngine:
     """Tests for src.ai.models.ensemble.EnsembleEngine"""
 
-    def _make_engine(self, model_ids=None, n_models=3, prob_up=0.75,
-                     confidence=0.8, expected_return=0.005):
+    def _make_engine(self, model_ids=None, n_models=3, prob_up=0.75, confidence=0.8, expected_return=0.005):
         """Create EnsembleEngine with N stub predictors, all agreeing bullish."""
         registry = ModelRegistry()
         ids = model_ids or [f"model_{i}" for i in range(n_models)]
         for mid in ids:
-            pred = _StubPredictor(model_id=mid, prob_up=prob_up,
-                                  confidence=confidence,
-                                  expected_return=expected_return)
+            pred = _StubPredictor(model_id=mid, prob_up=prob_up, confidence=confidence, expected_return=expected_return)
             registry.register(pred)
         # Set uniform weights so predictions are not zero-weighted
         weights = {mid: 1.0 / len(ids) for mid in ids}
-        engine = EnsembleEngine(registry=registry, model_ids=ids,
-                                weights=weights, ic_weighted=False)
+        engine = EnsembleEngine(registry=registry, model_ids=ids, weights=weights, ic_weighted=False)
         return engine
 
     def test_ensemble_predict_aggregates_models(self):
@@ -838,8 +859,7 @@ class TestEnsembleEngine:
             pred = _StubPredictor(model_id=mid, prob_up=p, confidence=0.8)
             registry.register(pred)
         weights = {mid: 0.2 for mid in ids}
-        engine = EnsembleEngine(registry=registry, model_ids=ids,
-                                weights=weights, ic_weighted=False)
+        engine = EnsembleEngine(registry=registry, model_ids=ids, weights=weights, ic_weighted=False)
         result = engine.predict({"close": 100.0})
         # With 2 bullish vs 2 bearish vs 1 neutral, max_agreeing=2 < MIN_AGREEING_MODELS=3
         assert result is None
@@ -856,12 +876,14 @@ class TestEnsembleEngine:
 # 8. FeatureNormalizer Tests
 # ===================================================================
 
+
 class TestFeatureNormalizer:
     """Tests for src.ai.feature_engine.FeatureNormalizer"""
 
     def test_normalize_passthrough_when_not_fitted(self):
         """Unfitted normalizer should pass features through unchanged."""
         from src.ai.feature_engine import FeatureNormalizer
+
         norm = FeatureNormalizer()
         features = {"rsi": 55.0, "close": 100.0}
         result = norm.normalize(features)
@@ -870,6 +892,7 @@ class TestFeatureNormalizer:
     def test_fit_and_normalize(self):
         """Fitted normalizer should z-score normalize features."""
         from src.ai.feature_engine import FeatureNormalizer
+
         norm = FeatureNormalizer()
         # Generate enough history for fitting
         history = [{"rsi": 50.0 + i * 0.1, "close": 100.0 + i} for i in range(200)]
@@ -882,6 +905,7 @@ class TestFeatureNormalizer:
     def test_normalize_clips_outliers(self):
         """Normalizer should clip extreme z-scores to [-5, 5]."""
         from src.ai.feature_engine import FeatureNormalizer
+
         norm = FeatureNormalizer()
         history = [{"rsi": 50.0} for _ in range(200)]
         norm.fit(history)
@@ -894,6 +918,7 @@ class TestFeatureNormalizer:
 # ===================================================================
 # 9. PredictionOutput Validation Tests
 # ===================================================================
+
 
 class TestPredictionOutput:
     """Tests for PredictionOutput validation in __post_init__."""
@@ -948,6 +973,7 @@ class TestPredictionOutput:
 # 10. ModelRegistry Tests
 # ===================================================================
 
+
 class TestModelRegistry:
     """Tests for src.ai.models.registry.ModelRegistry"""
 
@@ -980,9 +1006,7 @@ class TestModelRegistry:
         original = _StubPredictor(model_id="test_model")
         registry.register(original, metrics={"sharpe": 1.0})
         candidate = _StubPredictor(model_id="test_model", prob_up=0.9)
-        replaced = registry.replace_if_better(
-            "test_model", candidate, {"sharpe": 2.0}, compare_metric="sharpe"
-        )
+        replaced = registry.replace_if_better("test_model", candidate, {"sharpe": 2.0}, compare_metric="sharpe")
         assert replaced is True
         assert registry.get("test_model") is candidate
 
@@ -990,6 +1014,7 @@ class TestModelRegistry:
 # ===================================================================
 # 11. StrategyRegistry Tests
 # ===================================================================
+
 
 class TestStrategyRegistry:
     """Tests for src.strategy_engine.registry.StrategyRegistry"""

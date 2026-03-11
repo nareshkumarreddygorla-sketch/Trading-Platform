@@ -6,8 +6,8 @@ Phase I: Edge preservation rules (hard constraints).
 4) All signals survive >= 3 walk-forward cycles.
 5) Correlation with existing alpha below threshold.
 """
+
 from dataclasses import dataclass
-from typing import Dict, Optional
 
 import numpy as np
 
@@ -39,7 +39,7 @@ class EdgePreservationRules:
     def check_correlation_with_existing(
         self,
         signal_returns: np.ndarray,
-        existing_returns: Dict[str, np.ndarray],
+        existing_returns: dict[str, np.ndarray],
     ) -> bool:
         """True if correlation with every existing alpha < max_correlation_with_existing."""
         for sid, ret in existing_returns.items():
@@ -56,8 +56,8 @@ class EdgePreservationRules:
         n_wf_positive: int,
         e_return_after_cost: float,
         ic_oos: float,
-        signal_returns: Optional[np.ndarray] = None,
-        existing_returns: Optional[Dict[str, np.ndarray]] = None,
+        signal_returns: np.ndarray | None = None,
+        existing_returns: dict[str, np.ndarray] | None = None,
         turnover_justified: bool = False,
     ) -> tuple[bool, str]:
         """

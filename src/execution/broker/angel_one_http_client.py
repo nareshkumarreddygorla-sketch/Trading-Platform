@@ -3,9 +3,10 @@ Angel One SmartAPI REST client: session lifecycle, place/cancel/status, position
 Sync HTTP with retries (max 3, exponential backoff), timeouts, session refresh on expiry.
 Base URL: https://apiconnect.angelone.in
 """
+
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 
@@ -22,7 +23,8 @@ TOKEN_EXPIRED_CODES = {"AG8001", "AG8002", "AB8051"}
 
 class BrokerClientError(Exception):
     """Broker API error (response status=false or HTTP error)."""
-    def __init__(self, message: str, errorcode: str = "", response: Optional[requests.Response] = None):
+
+    def __init__(self, message: str, errorcode: str = "", response: requests.Response | None = None):
         self.message = message
         self.errorcode = errorcode
         self.response = response
@@ -39,11 +41,11 @@ class AngelOneHttpClient:
         self,
         api_key: str,
         *,
-        client_code: Optional[str] = None,
-        password: Optional[str] = None,
-        totp: Optional[str] = None,
-        access_token: Optional[str] = None,
-        refresh_token: Optional[str] = None,
+        client_code: str | None = None,
+        password: str | None = None,
+        totp: str | None = None,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
         timeout: float = DEFAULT_TIMEOUT,
         local_ip: str = "127.0.0.1",
         public_ip: str = "127.0.0.1",
@@ -61,7 +63,7 @@ class AngelOneHttpClient:
         self.mac_address = mac_address
         self._session = requests.Session()
 
-    def _headers(self, include_auth: bool = True) -> Dict[str, str]:
+    def _headers(self, include_auth: bool = True) -> dict[str, str]:
         h = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -76,11 +78,11 @@ class AngelOneHttpClient:
             h["Authorization"] = f"Bearer {self._access_token}"
         return h
 
-    def _parse_response(self, r: requests.Response) -> Dict[str, Any]:
+    def _parse_response(self, r: requests.Response) -> dict[str, Any]:
         try:
             data = r.json()
         except Exception as e:
-            raise BrokerClientError(f"Invalid JSON: {e}", response=r)
+            raise BrokerClientError(f"Invalid JSON: {e}", response=r) from e
         if r.status_code >= 400:
             msg = data.get("message", r.text) or r.reason
             code = data.get("errorcode", "")
@@ -95,9 +97,9 @@ class AngelOneHttpClient:
         self,
         method: str,
         path: str,
-        json: Optional[Dict[str, Any]] = None,
+        json: dict[str, Any] | None = None,
         retry_on_expiry: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         url = f"{BASE_URL}{path}"
         last_error = None
         for attempt in range(MAX_RETRIES):
@@ -122,17 +124,17 @@ class AngelOneHttpClient:
                         logger.warning("Session refresh failed: %s", ref)
                         raise
                 if attempt + 1 < MAX_RETRIES:
-                    backoff = RETRY_BACKOFF_BASE * (2 ** attempt)
+                    backoff = RETRY_BACKOFF_BASE * (2**attempt)
                     time.sleep(backoff)
                     continue
                 raise
             except requests.RequestException as e:
                 last_error = e
                 if attempt + 1 < MAX_RETRIES:
-                    backoff = RETRY_BACKOFF_BASE * (2 ** attempt)
+                    backoff = RETRY_BACKOFF_BASE * (2**attempt)
                     time.sleep(backoff)
                     continue
-                raise BrokerClientError(str(e), response=getattr(e, "response", None))
+                raise BrokerClientError(str(e), response=getattr(e, "response", None)) from e
         raise last_error or BrokerClientError("Request failed")
 
     def login(self) -> None:
@@ -192,7 +194,7 @@ class AngelOneHttpClient:
             return
         raise BrokerClientError("No session: provide access_token+refresh_token or client_code+password+totp")
 
-    def place_order(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def place_order(self, params: dict[str, Any]) -> dict[str, Any]:
         """Place order. Params: exchange, tradingsymbol, quantity, transactiontype, ordertype, variety, producttype, etc."""
         self.ensure_session()
         path = "/rest/secure/angelbroking/order/v1/placeOrder"
@@ -204,21 +206,21 @@ class AngelOneHttpClient:
         data = self._request("POST", path, json=params)
         return data.get("data") or data
 
-    def cancel_order(self, variety: str, order_id: str) -> Dict[str, Any]:
+    def cancel_order(self, variety: str, order_id: str) -> dict[str, Any]:
         """Cancel by broker order id. variety typically NORMAL."""
         self.ensure_session()
         path = "/rest/secure/angelbroking/order/v1/cancelOrder"
         data = self._request("POST", path, json={"variety": variety, "orderid": order_id})
         return data.get("data") or data
 
-    def get_order_details(self, uniqueorderid: str) -> Dict[str, Any]:
+    def get_order_details(self, uniqueorderid: str) -> dict[str, Any]:
         """Get single order by uniqueorderid (UUID from place/cancel response)."""
         self.ensure_session()
         path = f"/rest/secure/angelbroking/order/v1/details/{uniqueorderid}"
         data = self._request("GET", path)
         return data.get("data") or data
 
-    def get_order_book(self) -> List[Dict[str, Any]]:
+    def get_order_book(self) -> list[dict[str, Any]]:
         """Get order book (list of orders)."""
         self.ensure_session()
         path = "/rest/secure/angelbroking/order/v1/getOrderBook"
@@ -228,7 +230,7 @@ class AngelOneHttpClient:
             return []
         return raw if isinstance(raw, list) else [raw]
 
-    def get_position(self) -> List[Dict[str, Any]]:
+    def get_position(self) -> list[dict[str, Any]]:
         """Get positions (day positions)."""
         self.ensure_session()
         path = "/rest/secure/angelbroking/order/v1/getPosition"

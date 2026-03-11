@@ -4,12 +4,14 @@ Authenticates via SmartAPI (session token), opens WebSocket, subscribes to symbo
 parses tick data, pushes into TickToBarAggregator via MarketDataService consumption.
 Reconnect with exponential backoff; heartbeat failure detection; optional on_feed_unhealthy.
 """
+
 import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Callable, List, Optional
+from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from src.core.events import Exchange, Tick
 from src.market_data.timestamp import normalize_ts
@@ -31,8 +33,8 @@ _PONG_TIMEOUT_SECONDS = 60
 def _parse_smartapi_tick(
     payload: dict,
     exchange: Exchange,
-    token_to_symbol: Optional[dict] = None,
-) -> Optional[Tick]:
+    token_to_symbol: dict | None = None,
+) -> Tick | None:
     """Parse SmartAPI tick payload to Tick. Returns None if not a tick message.
 
     If *token_to_symbol* is provided, numeric-only symbol values are
@@ -42,7 +44,7 @@ def _parse_smartapi_tick(
     ltp = payload.get("ltp") or payload.get("last_price")
     if ltp is None:
         return None
-    raw = (payload.get("tradingsymbol") or payload.get("symbol") or payload.get("tk") or "")
+    raw = payload.get("tradingsymbol") or payload.get("symbol") or payload.get("tk") or ""
     symbol = (raw.replace("-EQ", "").strip() or (payload.get("symbol") or "").replace("-EQ", "").strip()) or raw
 
     # Reverse-resolve numeric token to symbol name
@@ -52,7 +54,7 @@ def _parse_smartapi_tick(
             symbol = resolved
 
     vol = payload.get("volume") or payload.get("last_quantity") or 0
-    ts_val = payload.get("last_trade_time") or payload.get("ts") or datetime.now(timezone.utc)
+    ts_val = payload.get("last_trade_time") or payload.get("ts") or datetime.now(UTC)
     return Tick(
         symbol=symbol,
         exchange=exchange,
@@ -91,7 +93,7 @@ class AngelOneWsConnector:
         *,
         exchange: str = "NSE",
         feed_url: str = DEFAULT_WS_URL,
-        on_feed_unhealthy: Optional[Callable[[], None]] = None,
+        on_feed_unhealthy: Callable[[], None] | None = None,
         heartbeat_timeout_seconds: float = HEARTBEAT_TIMEOUT_SECONDS,
         symbol_token_map=None,
     ):
@@ -106,13 +108,13 @@ class AngelOneWsConnector:
         self._symbol_token_map = symbol_token_map
         self._tick_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
         self._ws: Any = None
-        self._recv_task: Optional[asyncio.Task] = None
-        self._reconnect_task: Optional[asyncio.Task] = None
-        self._heartbeat_task: Optional[asyncio.Task] = None
+        self._recv_task: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
+        self._heartbeat_task: asyncio.Task | None = None
         self._connected = False
-        self._last_tick_ts: Optional[datetime] = None
-        self._last_message_ts: Optional[datetime] = None
-        self._symbols: List[str] = []
+        self._last_tick_ts: datetime | None = None
+        self._last_message_ts: datetime | None = None
+        self._symbols: list[str] = []
         self._closed = False
         # Track whether stop() was called intentionally vs unexpected disconnect
         self._intentional_stop = False
@@ -126,7 +128,7 @@ class AngelOneWsConnector:
         self._reconnect_count: int = 0
         self._last_reconnect_at: float = 0.0
         self._total_disconnect_seconds: float = 0.0
-        self._disconnect_started_at: Optional[float] = None
+        self._disconnect_started_at: float | None = None
 
     # ------------------------------------------------------------------
     # Connection state helpers
@@ -159,7 +161,7 @@ class AngelOneWsConnector:
         if self._closed:
             raise RuntimeError("Connector is closed")
         self._intentional_stop = False
-        self._last_message_ts = datetime.now(timezone.utc)
+        self._last_message_ts = datetime.now(UTC)
         try:
             import websockets  # noqa: F401
         except ImportError:
@@ -174,6 +176,7 @@ class AngelOneWsConnector:
         """Open WebSocket. Uses websockets library if available."""
         try:
             import websockets
+
             extra_headers = {
                 "Authorization": f"Bearer {self.token}",
                 "x-api-key": self.api_key,
@@ -190,19 +193,21 @@ class AngelOneWsConnector:
                 timeout=15,
             )
             # SmartAPI requires auth handshake frame after connection
-            auth_frame = json.dumps({
-                "task": "cn",
-                "channel": "",
-                "token": self.token,
-                "user": self.api_secret,
-                "acctid": self.api_secret,
-            })
+            auth_frame = json.dumps(
+                {
+                    "task": "cn",
+                    "channel": "",
+                    "token": self.token,
+                    "user": self.api_secret,
+                    "acctid": self.api_secret,
+                }
+            )
             await ws.send(auth_frame)
             # Wait for auth acknowledgement
             try:
-                ack = await asyncio.wait_for(ws.recv(), timeout=10)
+                _ack = await asyncio.wait_for(ws.recv(), timeout=10)
                 logger.info("Angel One WS auth response received")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Angel One WS auth ack timeout — continuing")
             return ws
         except ImportError:
@@ -212,17 +217,22 @@ class AngelOneWsConnector:
                 "Install with: pip install websockets"
             )
             self._using_noop_ws = True
+
             class NoOpWs:
                 async def recv(self):
                     logger.debug("NoOpWs.recv() sleeping (no websockets installed)")
                     await asyncio.sleep(3600)
                     return None
+
                 async def send(self, data):
                     pass
+
                 async def close(self):
                     pass
+
                 async def ping(self):
                     pass
+
             return NoOpWs()
 
     async def disconnect(self) -> None:
@@ -302,7 +312,7 @@ class AngelOneWsConnector:
 
                 # Check staleness
                 if self._last_message_ts is not None:
-                    silence = (datetime.now(timezone.utc) - self._last_message_ts).total_seconds()
+                    silence = (datetime.now(UTC) - self._last_message_ts).total_seconds()
                     if silence >= _PONG_TIMEOUT_SECONDS:
                         logger.warning(
                             "No data received for %.0fs — treating connection as dead",
@@ -324,7 +334,7 @@ class AngelOneWsConnector:
             while self._ws and self._connected and not self._closed:
                 try:
                     msg = await asyncio.wait_for(self._ws.recv(), timeout=self.heartbeat_timeout)
-                    self._last_message_ts = datetime.now(timezone.utc)
+                    self._last_message_ts = datetime.now(UTC)
                     if isinstance(msg, bytes):
                         msg = msg.decode("utf-8", errors="ignore")
                     data = json.loads(msg) if isinstance(msg, str) else msg
@@ -335,7 +345,7 @@ class AngelOneWsConnector:
                             self._last_tick_ts = tick.ts
                         except asyncio.QueueFull:
                             logger.warning("Tick queue full; dropping tick")
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning("Angel One WebSocket heartbeat timeout")
                     self._set_connected(False)
                     break
@@ -351,10 +361,10 @@ class AngelOneWsConnector:
             if not self._intentional_stop and not self._closed:
                 self._trigger_reconnect()
 
-    def _payload_to_tick(self, data) -> List[Tick]:
+    def _payload_to_tick(self, data) -> list[Tick]:
         """Convert SmartAPI message to list of Ticks. Handles LTP/quote and nested payloads."""
         if isinstance(data, list):
-            ticks: List[Tick] = []
+            ticks: list[Tick] = []
             for item in data:
                 ticks.extend(self._payload_to_tick(item))
             return ticks
@@ -413,7 +423,7 @@ class AngelOneWsConnector:
 
             try:
                 self._ws = await self._connect_ws()
-                self._last_message_ts = datetime.now(timezone.utc)
+                self._last_message_ts = datetime.now(UTC)
 
                 # Update reconnect metrics
                 self._reconnect_count += 1
@@ -454,8 +464,7 @@ class AngelOneWsConnector:
         # Exhausted all attempts
         if not self._intentional_stop and not self._closed:
             logger.error(
-                "Failed to reconnect after %d attempts — giving up. "
-                "Total disconnect time: %.1fs",
+                "Failed to reconnect after %d attempts — giving up. Total disconnect time: %.1fs",
                 _MAX_RECONNECT_ATTEMPTS,
                 self._total_disconnect_seconds,
             )
@@ -482,13 +491,15 @@ class AngelOneWsConnector:
             return
         try:
             # SmartAPI v2 subscription format with numeric exchange|token pairs
-            payload = json.dumps({
-                "action": 1,  # 1 = subscribe
-                "params": {
-                    "mode": 1,  # 1 = LTP mode
-                    "tokenList": [{"exchangeType": 1, "tokens": token_list}],  # 1 = NSE
-                },
-            })
+            payload = json.dumps(
+                {
+                    "action": 1,  # 1 = subscribe
+                    "params": {
+                        "mode": 1,  # 1 = LTP mode
+                        "tokenList": [{"exchangeType": 1, "tokens": token_list}],  # 1 = NSE
+                    },
+                }
+            )
             await self._ws.send(payload)
             logger.info("Subscribed to %d symbols (%d tokens resolved)", len(symbols), len(token_list))
         except Exception as e:
@@ -504,31 +515,63 @@ class AngelOneWsConnector:
         # Hardcoded fallback for top NSE stocks — used ONLY when SymbolTokenMap
         # cannot resolve a symbol (e.g. map not yet loaded or symbol missing).
         _FALLBACK_TOKENS = {
-            "RELIANCE": "2885", "TCS": "11536", "HDFCBANK": "1333",
-            "INFY": "1594", "ICICIBANK": "4963", "HINDUNILVR": "1394",
-            "ITC": "1660", "SBIN": "3045", "BHARTIARTL": "10604",
-            "KOTAKBANK": "1922", "LT": "11483", "AXISBANK": "5900",
-            "WIPRO": "3787", "ADANIENT": "25", "BAJFINANCE": "317",
-            "MARUTI": "10999", "TATAMOTORS": "3456", "SUNPHARMA": "3351",
-            "TITAN": "3506", "ULTRACEMCO": "11532", "ASIANPAINT": "236",
-            "NESTLEIND": "17963", "TECHM": "13538", "POWERGRID": "14977",
-            "NTPC": "11630", "BAJAJFINSV": "16675", "JSWSTEEL": "11723",
-            "TATASTEEL": "3499", "ONGC": "2475", "HCLTECH": "7229",
-            "INDUSINDBK": "5258", "ADANIPORTS": "15083", "COALINDIA": "20374",
-            "GRASIM": "1232", "CIPLA": "694", "EICHERMOT": "910",
-            "DRREDDY": "881", "APOLLOHOSP": "157", "BPCL": "526",
-            "DIVISLAB": "10940", "SBILIFE": "21808", "BRITANNIA": "547",
-            "HEROMOTOCO": "1348", "HINDALCO": "1363", "BAJAJ-AUTO": "16669",
-            "TATACONSUM": "3432", "M&M": "2031",
-            "NIFTY50": "26000", "BANKNIFTY": "26009",
+            "RELIANCE": "2885",
+            "TCS": "11536",
+            "HDFCBANK": "1333",
+            "INFY": "1594",
+            "ICICIBANK": "4963",
+            "HINDUNILVR": "1394",
+            "ITC": "1660",
+            "SBIN": "3045",
+            "BHARTIARTL": "10604",
+            "KOTAKBANK": "1922",
+            "LT": "11483",
+            "AXISBANK": "5900",
+            "WIPRO": "3787",
+            "ADANIENT": "25",
+            "BAJFINANCE": "317",
+            "MARUTI": "10999",
+            "TATAMOTORS": "3456",
+            "SUNPHARMA": "3351",
+            "TITAN": "3506",
+            "ULTRACEMCO": "11532",
+            "ASIANPAINT": "236",
+            "NESTLEIND": "17963",
+            "TECHM": "13538",
+            "POWERGRID": "14977",
+            "NTPC": "11630",
+            "BAJAJFINSV": "16675",
+            "JSWSTEEL": "11723",
+            "TATASTEEL": "3499",
+            "ONGC": "2475",
+            "HCLTECH": "7229",
+            "INDUSINDBK": "5258",
+            "ADANIPORTS": "15083",
+            "COALINDIA": "20374",
+            "GRASIM": "1232",
+            "CIPLA": "694",
+            "EICHERMOT": "910",
+            "DRREDDY": "881",
+            "APOLLOHOSP": "157",
+            "BPCL": "526",
+            "DIVISLAB": "10940",
+            "SBILIFE": "21808",
+            "BRITANNIA": "547",
+            "HEROMOTOCO": "1348",
+            "HINDALCO": "1363",
+            "BAJAJ-AUTO": "16669",
+            "TATACONSUM": "3432",
+            "M&M": "2031",
+            "NIFTY50": "26000",
+            "BANKNIFTY": "26009",
         }
 
         stm = self._symbol_token_map
         use_stm = stm is not None and stm.is_loaded
         if not use_stm:
             logger.warning(
-                "SymbolTokenMap not available/loaded — falling back to "
-                "hardcoded KNOWN_TOKENS (%d entries only)", len(_FALLBACK_TOKENS),
+                "SymbolTokenMap not available/loaded — falling back to hardcoded KNOWN_TOKENS (%d entries only)",
+                len(_FALLBACK_TOKENS),
             )
 
         tokens = []
@@ -548,7 +591,8 @@ class AngelOneWsConnector:
                 if use_stm:
                     logger.warning(
                         "SymbolTokenMap miss for %s — using hardcoded fallback token %s",
-                        clean, resolved_token,
+                        clean,
+                        resolved_token,
                     )
 
             if resolved_token is not None:
@@ -559,7 +603,7 @@ class AngelOneWsConnector:
 
         return tokens
 
-    def subscribe(self, symbols: List[str]) -> None:
+    def subscribe(self, symbols: list[str]) -> None:
         """Sync alias for subscribe_ticks (for API compatibility)."""
         self._symbols = list(symbols)
 
@@ -576,10 +620,10 @@ class AngelOneWsConnector:
             return False
         if self._last_message_ts is None:
             return True
-        age = (datetime.now(timezone.utc) - self._last_message_ts).total_seconds()
+        age = (datetime.now(UTC) - self._last_message_ts).total_seconds()
         return age < self.heartbeat_timeout
 
-    def get_last_tick_ts(self) -> Optional[datetime]:
+    def get_last_tick_ts(self) -> datetime | None:
         """Last tick timestamp."""
         return self._last_tick_ts
 
@@ -606,7 +650,7 @@ class AngelOneWsConnector:
             try:
                 tick = await asyncio.wait_for(self._tick_queue.get(), timeout=30.0)
                 yield tick
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break

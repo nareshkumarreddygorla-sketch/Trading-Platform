@@ -1,6 +1,7 @@
 """API router for strategy marketplace."""
+
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -15,6 +16,7 @@ def _get_svc():
     global _service
     if _service is None:
         from src.marketplace.service import MarketplaceService
+
         _service = MarketplaceService()
     return _service
 
@@ -26,9 +28,9 @@ class PublishRequest(BaseModel):
     author: str = Field(default="anonymous", max_length=50)
     category: str = "custom"
     risk_level: str = "medium"
-    indicators: List[str] = []
-    backtest_stats: Dict[str, Any] = {}
-    tags: List[str] = []
+    indicators: list[str] = []
+    backtest_stats: dict[str, Any] = {}
+    tags: list[str] = []
 
 
 class SubscribeRequest(BaseModel):
@@ -45,14 +47,15 @@ class ReviewRequest(BaseModel):
 
 @router.get("/marketplace/strategies")
 async def list_strategies(
-    category: Optional[str] = None,
-    risk_level: Optional[str] = None,
-    search: Optional[str] = None,
+    category: str | None = None,
+    risk_level: str | None = None,
+    search: str | None = None,
     sort_by: str = Query(default="rating"),
     limit: int = Query(default=20, ge=1, le=100),
 ):
     svc = _get_svc()
     from src.marketplace.models import StrategyCategory, StrategyRisk
+
     cat_values = [e.value for e in StrategyCategory]
     risk_values = [e.value for e in StrategyRisk]
     cat = StrategyCategory(category) if category and category in cat_values else None
@@ -61,13 +64,23 @@ async def list_strategies(
     return {
         "strategies": [
             {
-                "listing_id": s.listing_id, "strategy_id": s.strategy_id,
-                "name": s.name, "description": s.description, "author": s.author,
-                "category": s.category.value, "risk_level": s.risk_level.value,
-                "indicators": s.indicators, "sharpe_ratio": s.sharpe_ratio,
-                "max_drawdown_pct": s.max_drawdown_pct, "win_rate": s.win_rate,
-                "total_return_pct": s.total_return_pct, "subscribers": s.subscribers,
-                "rating": s.rating, "reviews": s.reviews, "tags": s.tags, "is_free": s.is_free,
+                "listing_id": s.listing_id,
+                "strategy_id": s.strategy_id,
+                "name": s.name,
+                "description": s.description,
+                "author": s.author,
+                "category": s.category.value,
+                "risk_level": s.risk_level.value,
+                "indicators": s.indicators,
+                "sharpe_ratio": s.sharpe_ratio,
+                "max_drawdown_pct": s.max_drawdown_pct,
+                "win_rate": s.win_rate,
+                "total_return_pct": s.total_return_pct,
+                "subscribers": s.subscribers,
+                "rating": s.rating,
+                "reviews": s.reviews,
+                "tags": s.tags,
+                "is_free": s.is_free,
             }
             for s in strategies
         ],
@@ -84,16 +97,25 @@ async def get_strategy(listing_id: str):
     reviews = svc.get_reviews(listing_id)
     return {
         "listing": {
-            "listing_id": listing.listing_id, "strategy_id": listing.strategy_id,
-            "name": listing.name, "description": listing.description,
-            "author": listing.author, "category": listing.category.value,
-            "risk_level": listing.risk_level.value, "indicators": listing.indicators,
-            "backtest_stats": listing.backtest_stats, "sharpe_ratio": listing.sharpe_ratio,
-            "max_drawdown_pct": listing.max_drawdown_pct, "win_rate": listing.win_rate,
-            "total_return_pct": listing.total_return_pct, "subscribers": listing.subscribers,
-            "rating": listing.rating, "tags": listing.tags,
+            "listing_id": listing.listing_id,
+            "strategy_id": listing.strategy_id,
+            "name": listing.name,
+            "description": listing.description,
+            "author": listing.author,
+            "category": listing.category.value,
+            "risk_level": listing.risk_level.value,
+            "indicators": listing.indicators,
+            "backtest_stats": listing.backtest_stats,
+            "sharpe_ratio": listing.sharpe_ratio,
+            "max_drawdown_pct": listing.max_drawdown_pct,
+            "win_rate": listing.win_rate,
+            "total_return_pct": listing.total_return_pct,
+            "subscribers": listing.subscribers,
+            "rating": listing.rating,
+            "tags": listing.tags,
             "supported_exchanges": listing.supported_exchanges,
-            "min_capital": listing.min_capital, "created_at": listing.created_at,
+            "min_capital": listing.min_capital,
+            "created_at": listing.created_at,
         },
         "reviews": [
             {"rating": r.rating, "comment": r.comment, "user_id": r.user_id, "created_at": r.created_at}
@@ -106,9 +128,15 @@ async def get_strategy(listing_id: str):
 async def publish_strategy(req: PublishRequest):
     svc = _get_svc()
     listing = svc.publish_strategy(
-        strategy_id=req.strategy_id, name=req.name, description=req.description,
-        author=req.author, category=req.category, risk_level=req.risk_level,
-        indicators=req.indicators, backtest_stats=req.backtest_stats, tags=req.tags,
+        strategy_id=req.strategy_id,
+        name=req.name,
+        description=req.description,
+        author=req.author,
+        category=req.category,
+        risk_level=req.risk_level,
+        indicators=req.indicators,
+        backtest_stats=req.backtest_stats,
+        tags=req.tags,
     )
     return {"listing_id": listing.listing_id, "message": "Strategy published"}
 
@@ -147,8 +175,10 @@ async def my_subscriptions():
     return {
         "subscriptions": [
             {
-                "subscription_id": s.subscription_id, "listing_id": s.listing_id,
-                "strategy_id": s.strategy_id, "auto_trade": s.auto_trade,
+                "subscription_id": s.subscription_id,
+                "listing_id": s.listing_id,
+                "strategy_id": s.strategy_id,
+                "auto_trade": s.auto_trade,
                 "capital_allocated": s.capital_allocated,
                 "pnl_since_subscribe": s.pnl_since_subscribe,
                 "subscribed_at": s.subscribed_at,

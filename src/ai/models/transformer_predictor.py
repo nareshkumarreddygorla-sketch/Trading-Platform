@@ -3,11 +3,12 @@ Transformer-based price predictor.
 Multi-head self-attention on price sequences for directional prediction.
 Implements BasePredictor contract for EnsembleEngine integration.
 """
+
 import logging
 import math
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -22,15 +23,21 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 TRANSFORMER_SPECIFIC_FEATURES = [
     # Relative strength vs benchmark (2)
-    "relative_strength_nifty", "relative_strength_nifty_20d",
+    "relative_strength_nifty",
+    "relative_strength_nifty_20d",
     # Sector momentum (2)
-    "sector_momentum_5d", "sector_momentum_20d",
+    "sector_momentum_5d",
+    "sector_momentum_20d",
     # Peer correlation features (2)
-    "peer_correlation_5d", "peer_correlation_20d",
+    "peer_correlation_5d",
+    "peer_correlation_20d",
     # Volume profile features (3)
-    "volume_profile_skew", "volume_concentration_ratio", "volume_relative_to_sector",
+    "volume_profile_skew",
+    "volume_concentration_ratio",
+    "volume_relative_to_sector",
     # Cross-sectional rank features (2)
-    "cross_sectional_return_rank", "cross_sectional_volume_rank",
+    "cross_sectional_return_rank",
+    "cross_sectional_volume_rank",
     # Mean reversion signal (1)
     "mean_reversion_zscore",
 ]
@@ -43,6 +50,7 @@ def _try_import_torch():
     try:
         import torch
         import torch.nn as nn
+
         return torch, nn
     except ImportError:
         return None, None
@@ -51,8 +59,14 @@ def _try_import_torch():
 class TransformerModel:
     """Transformer encoder for time-series binary classification."""
 
-    def __init__(self, input_size: int = TRANSFORMER_NUM_FEATURES, d_model: int = 64,
-                 nhead: int = 4, num_layers: int = 2, dropout: float = 0.2):
+    def __init__(
+        self,
+        input_size: int = TRANSFORMER_NUM_FEATURES,
+        d_model: int = 64,
+        nhead: int = 4,
+        num_layers: int = 2,
+        dropout: float = 0.2,
+    ):
         torch, nn = _try_import_torch()
         if torch is None:
             self._model = None
@@ -69,12 +83,12 @@ class TransformerModel:
                 position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
                 div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
                 pe[:, 0::2] = torch.sin(position * div_term)
-                pe[:, 1::2] = torch.cos(position * div_term[:pe[:, 1::2].shape[1]])
+                pe[:, 1::2] = torch.cos(position * div_term[: pe[:, 1::2].shape[1]])
                 pe = pe.unsqueeze(0)
-                self_pe.register_buffer('pe', pe)
+                self_pe.register_buffer("pe", pe)
 
             def forward(self_pe, x):
-                return x + self_pe.pe[:, :x.size(1), :]
+                return x + self_pe.pe[:, : x.size(1), :]
 
         class _TransformerNet(nn.Module):
             def __init__(self_net):
@@ -82,8 +96,11 @@ class TransformerModel:
                 self_net.input_proj = nn.Linear(input_size, d_model)
                 self_net.pos_encoder = _PositionalEncoding(d_model, max_len=200)
                 encoder_layer = nn.TransformerEncoderLayer(
-                    d_model=d_model, nhead=nhead, dim_feedforward=d_model * 4,
-                    dropout=dropout, batch_first=True,
+                    d_model=d_model,
+                    nhead=nhead,
+                    dim_feedforward=d_model * 4,
+                    dropout=dropout,
+                    batch_first=True,
                 )
                 self_net.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
                 self_net.dropout = nn.Dropout(dropout)
@@ -137,9 +154,11 @@ class TransformerModel:
             for key in model_sd:
                 if key in state_dict and model_sd[key].shape != state_dict[key].shape:
                     logger.warning(
-                        "Failed to load Transformer model from %s: shape mismatch for %s: "
-                        "checkpoint=%s vs model=%s",
-                        path, key, state_dict[key].shape, model_sd[key].shape,
+                        "Failed to load Transformer model from %s: shape mismatch for %s: checkpoint=%s vs model=%s",
+                        path,
+                        key,
+                        state_dict[key].shape,
+                        model_sd[key].shape,
                     )
                     return False
             missing = set(model_sd.keys()) - set(state_dict.keys())
@@ -162,7 +181,7 @@ class TransformerPredictor(BasePredictor):
     version = "v2"
 
     @classmethod
-    def get_feature_keys(cls) -> List[str]:
+    def get_feature_keys(cls) -> list[str]:
         """Return the full feature list for this model (base + transformer-specific).
 
         This classmethod allows the training pipeline and feature engine to
@@ -181,8 +200,8 @@ class TransformerPredictor(BasePredictor):
         self._transformer = TransformerModel()
         self.path = model_path
         self._loaded = False
-        self._feature_means: Optional[np.ndarray] = None
-        self._feature_stds: Optional[np.ndarray] = None
+        self._feature_means: np.ndarray | None = None
+        self._feature_stds: np.ndarray | None = None
 
         if model_path and os.path.exists(model_path):
             self._loaded = self._transformer.load(model_path)
@@ -204,14 +223,14 @@ class TransformerPredictor(BasePredictor):
         # Fallback: expanding window normalization (prevents lookahead bias)
         normed = np.zeros_like(seq)
         for t in range(len(seq)):
-            window = seq[:t + 1]
+            window = seq[: t + 1]
             mean = window.mean(axis=0)
             std = window.std(axis=0)
             std = np.where(std < 1e-8, 1.0, std)
             normed[t] = (seq[t] - mean) / std
         return normed
 
-    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> Optional[PredictionOutput]:
+    def predict(self, features: dict[str, float], context: dict[str, Any] | None = None) -> PredictionOutput | None:
         if not self._transformer.available:
             return None
 
@@ -227,9 +246,12 @@ class TransformerPredictor(BasePredictor):
                     sample = feature_history[-1]
                     available = [k for k in _feature_keys if k in sample]
                     if len(available) < len(_feature_keys) * 0.7:
-                        logger.warning("Transformer: Only %d/%d expected features available (missing: %s)",
-                                      len(available), len(_feature_keys),
-                                      [k for k in _feature_keys if k not in sample][:5])
+                        logger.warning(
+                            "Transformer: Only %d/%d expected features available (missing: %s)",
+                            len(available),
+                            len(_feature_keys),
+                            [k for k in _feature_keys if k not in sample][:5],
+                        )
                     rows = []
                     for fdict in feature_history[-SEQ_LEN:]:
                         rows.append([fdict.get(k, np.nan) for k in _feature_keys])

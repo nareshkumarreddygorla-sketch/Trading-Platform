@@ -14,10 +14,11 @@ References:
   - SEBI (Fees and Other Charges) Regulations
   - Angel One schedule of charges
 """
+
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class ProductType(str, Enum):
 @dataclass
 class CostBreakdown:
     """Itemised cost breakdown for a single fill."""
+
     stt: float = 0.0
     brokerage: float = 0.0
     exchange_charges: float = 0.0
@@ -54,27 +56,27 @@ class CostBreakdown:
 @dataclass
 class IndiaCostConfig:
     # STT rates
-    stt_delivery_buy_pct: float = 0.1    # 0.1% on buy side (delivery)
-    stt_delivery_sell_pct: float = 0.1   # 0.1% on sell side (delivery)
-    stt_intraday_sell_pct: float = 0.025 # 0.025% on sell side only (intraday)
+    stt_delivery_buy_pct: float = 0.1  # 0.1% on buy side (delivery)
+    stt_delivery_sell_pct: float = 0.1  # 0.1% on sell side (delivery)
+    stt_intraday_sell_pct: float = 0.025  # 0.025% on sell side only (intraday)
 
     # Brokerage (Angel One flat fee model)
-    brokerage_flat_per_order: float = 20.0   # ₹20 flat per executed order
-    brokerage_pct_cap: float = 0.03          # 0.03% cap (whichever is lower)
+    brokerage_flat_per_order: float = 20.0  # ₹20 flat per executed order
+    brokerage_pct_cap: float = 0.03  # 0.03% cap (whichever is lower)
 
     # Exchange transaction charges (NSE equity)
-    nse_txn_charge_pct: float = 0.00345      # 0.00345% of turnover
-    bse_txn_charge_pct: float = 0.00375      # 0.00375% of turnover
+    nse_txn_charge_pct: float = 0.00345  # 0.00345% of turnover
+    bse_txn_charge_pct: float = 0.00375  # 0.00375% of turnover
 
     # SEBI turnover fee
-    sebi_fee_pct: float = 0.0001             # 0.0001% (₹10 per crore)
+    sebi_fee_pct: float = 0.0001  # 0.0001% (₹10 per crore)
 
     # GST rate on (brokerage + exchange charges + SEBI fee)
-    gst_pct: float = 18.0                    # 18%
+    gst_pct: float = 18.0  # 18%
 
     # Stamp duty (state of Maharashtra, buyer side only)
-    stamp_duty_buy_pct: float = 0.015        # 0.015% on buy side
-    stamp_duty_sell_pct: float = 0.0          # 0% on sell side
+    stamp_duty_buy_pct: float = 0.015  # 0.015% on buy side
+    stamp_duty_sell_pct: float = 0.0  # 0% on sell side
 
 
 class IndiaCostCalculator:

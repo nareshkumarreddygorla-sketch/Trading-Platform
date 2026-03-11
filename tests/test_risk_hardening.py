@@ -1,10 +1,11 @@
 """Risk hardening: drawdown auto-trip, sector/VaR/per-symbol/consecutive-loss, volatility scaling."""
+
 import pytest
 
 from src.core.events import Exchange, Position, Signal, SignalSide
 from src.risk_engine import RiskManager
-from src.risk_engine.limits import RiskLimits
 from src.risk_engine.circuit_breaker import CircuitBreaker
+from src.risk_engine.limits import RiskLimits
 
 
 @pytest.fixture
@@ -49,26 +50,45 @@ def test_sector_breach_rejection(limits):
         Position(symbol="B", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=100, avg_price=200, strategy_id="s1"),
     ]
     # Sector GENERIC: 20k + 20k = 40k. Add 10k -> 50k = 50% > 20%
-    sig = Signal(strategy_id="s1", symbol="C", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.8, portfolio_weight=0.1, price=100.0)
+    sig = Signal(
+        strategy_id="s1",
+        symbol="C",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.8,
+        portfolio_weight=0.1,
+        price=100.0,
+    )
     r = rm.can_place_order(sig, 100, 100.0)
     assert not r.allowed
     assert "sector" in r.reason.lower()
 
 
-def test_var_breach_rejection(limits):
-    """Order rejected when VaR (notional) exposure would exceed limit."""
-    limits.var_limit_pct = 30.0
-    limits.max_sector_concentration_pct = 100.0  # so VaR check triggers first
+def test_leverage_breach_rejection(limits):
+    """Order rejected when total notional exposure exceeds leverage limit (200% of equity)."""
+    limits.max_sector_concentration_pct = 300.0  # must exceed 210% so sector check doesn't fire first
     limits.max_open_positions = 10
+    limits.max_position_pct = 100.0  # allow large positions
+    limits.max_per_symbol_pct = 100.0
     rm = RiskManager(equity=100_000.0, limits=limits)
     rm.positions = [
-        Position(symbol="X", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=500, avg_price=50, strategy_id="s1"),
+        Position(
+            symbol="X", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=1500, avg_price=100, strategy_id="s1"
+        ),
     ]
-    # 25k notional. Add 10k -> 35k = 35% > 30%
-    sig = Signal(strategy_id="s1", symbol="Y", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.8, portfolio_weight=0.1, price=100.0)
-    r = rm.can_place_order(sig, 100, 100.0)
+    # 150k notional existing. Add 60k -> 210k = 210% > 200% leverage limit
+    sig = Signal(
+        strategy_id="s1",
+        symbol="Y",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.8,
+        portfolio_weight=0.1,
+        price=100.0,
+    )
+    r = rm.can_place_order(sig, 600, 100.0)
     assert not r.allowed
-    assert "var" in r.reason.lower() or "exposure" in r.reason.lower()
+    assert "leverage" in r.reason.lower()
 
 
 def test_consecutive_loss_disable(limits):
@@ -78,7 +98,15 @@ def test_consecutive_loss_disable(limits):
     rm = RiskManager(equity=100_000.0, limits=limits)
     rm.register_pnl(-100.0)
     rm.register_pnl(-100.0)
-    sig = Signal(strategy_id="s1", symbol="Z", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.8, portfolio_weight=0.1, price=10.0)
+    sig = Signal(
+        strategy_id="s1",
+        symbol="Z",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.8,
+        portfolio_weight=0.1,
+        price=10.0,
+    )
     r = rm.can_place_order(sig, 10, 10.0)
     assert not r.allowed
     assert "consecutive" in r.reason.lower()
@@ -102,9 +130,19 @@ def test_per_symbol_cap_rejection(limits):
     limits.max_open_positions = 10
     rm = RiskManager(equity=100_000.0, limits=limits)
     rm.positions = [
-        Position(symbol="INFY", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=100, avg_price=1500, strategy_id="s1"),
+        Position(
+            symbol="INFY", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=100, avg_price=1500, strategy_id="s1"
+        ),
     ]
     # 150k notional = 150% - wait, equity 100k so 150k is 150%. So we're already over. Add more INFY:
-    sig = Signal(strategy_id="s1", symbol="INFY", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.8, portfolio_weight=0.1, price=1500.0)
+    sig = Signal(
+        strategy_id="s1",
+        symbol="INFY",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.8,
+        portfolio_weight=0.1,
+        price=1500.0,
+    )
     r = rm.can_place_order(sig, 1, 1500.0)
     assert not r.allowed

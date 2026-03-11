@@ -2,9 +2,10 @@
 LLM client: OpenAI and Claude. Used for sentiment, macro risk, strategy review only.
 LLM does NOT place trades; only suggests risk parameters or strategy weights.
 """
+
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class LLMConfig:
 
 class LLMClient:
     """Unified client for OpenAI and Anthropic. Async."""
-    
+
     def __init__(self, config: LLMConfig):
         self.config = config
         self._client: Any = None
@@ -30,12 +31,14 @@ class LLMClient:
         if self.config.provider == "openai":
             try:
                 from openai import AsyncOpenAI
+
                 self._client = AsyncOpenAI(api_key=self.config.api_key)
             except ImportError:
                 logger.warning("openai not installed")
         elif self.config.provider == "anthropic":
             try:
                 from anthropic import AsyncAnthropic
+
                 self._client = AsyncAnthropic(api_key=self.config.api_key)
             except ImportError:
                 logger.warning("anthropic not installed")
@@ -45,7 +48,7 @@ class LLMClient:
         self,
         system: str,
         user: str,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Single completion. Returns response text."""
         client = await self._get_client()

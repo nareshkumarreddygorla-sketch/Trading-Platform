@@ -6,10 +6,12 @@ Production-grade: every position state change is persisted to DB before
 in-memory update. On startup, positions are loaded from DB and reconciled
 with the broker (if available) to detect phantom or missing positions.
 """
+
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
@@ -19,7 +21,6 @@ from src.core.events import Exchange, Position, SignalSide
 from .database import get_session_factory, session_scope
 from .models import (
     AuditEventModel,
-    Base,
     OrderModel,
     PositionModel,
 )
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class PositionRecoveryManager:
@@ -44,9 +45,9 @@ class PositionRecoveryManager:
 
     def __init__(self, session_factory=None):
         self._session_factory = session_factory or get_session_factory()
-        self._recovered_positions: List[Position] = []
-        self._recovery_audit: List[Dict[str, Any]] = []
-        self._idempotency_keys: Dict[str, datetime] = {}
+        self._recovered_positions: list[Position] = []
+        self._recovery_audit: list[dict[str, Any]] = []
+        self._idempotency_keys: dict[str, datetime] = {}
 
     # ── Write-Ahead Position Persistence ──
 
@@ -57,7 +58,7 @@ class PositionRecoveryManager:
         side: str,
         quantity: float,
         avg_price: float,
-        strategy_id: Optional[str] = None,
+        strategy_id: str | None = None,
         change_type: str = "update",
         reason: str = "",
     ) -> bool:
@@ -69,13 +70,17 @@ class PositionRecoveryManager:
         """
         try:
             with session_scope() as sess:
-                existing = sess.query(PositionModel).filter(
-                    and_(
-                        PositionModel.symbol == symbol,
-                        PositionModel.exchange == exchange,
-                        PositionModel.side == side,
+                existing = (
+                    sess.query(PositionModel)
+                    .filter(
+                        and_(
+                            PositionModel.symbol == symbol,
+                            PositionModel.exchange == exchange,
+                            PositionModel.side == side,
+                        )
                     )
-                ).first()
+                    .first()
+                )
 
                 now = _utc_now()
 
@@ -84,37 +89,51 @@ class PositionRecoveryManager:
                     if existing:
                         sess.delete(existing)
                     self._audit_log(
-                        sess, "position_closed", "recovery_manager",
+                        sess,
+                        "position_closed",
+                        "recovery_manager",
                         {
-                            "symbol": symbol, "exchange": exchange, "side": side,
-                            "final_avg_price": avg_price, "reason": reason,
+                            "symbol": symbol,
+                            "exchange": exchange,
+                            "side": side,
+                            "final_avg_price": avg_price,
+                            "reason": reason,
                         },
                     )
                 elif existing is None:
                     # New position
-                    sess.add(PositionModel(
-                        symbol=symbol,
-                        exchange=exchange,
-                        side=side,
-                        quantity=quantity,
-                        avg_price=avg_price,
-                        realized_pnl=0.0,
-                        strategy_id=strategy_id,
-                        version=0,
-                        updated_at=now,
-                    ))
+                    sess.add(
+                        PositionModel(
+                            symbol=symbol,
+                            exchange=exchange,
+                            side=side,
+                            quantity=quantity,
+                            avg_price=avg_price,
+                            realized_pnl=0.0,
+                            strategy_id=strategy_id,
+                            version=0,
+                            updated_at=now,
+                        )
+                    )
                     self._audit_log(
-                        sess, "position_opened", "recovery_manager",
+                        sess,
+                        "position_opened",
+                        "recovery_manager",
                         {
-                            "symbol": symbol, "exchange": exchange, "side": side,
-                            "quantity": quantity, "avg_price": avg_price,
-                            "strategy_id": strategy_id, "reason": reason,
+                            "symbol": symbol,
+                            "exchange": exchange,
+                            "side": side,
+                            "quantity": quantity,
+                            "avg_price": avg_price,
+                            "strategy_id": strategy_id,
+                            "reason": reason,
                         },
                     )
                 else:
                     # Update existing position with OCC
                     current_version = existing.version or 0
                     from sqlalchemy import update
+
                     result = sess.execute(
                         update(PositionModel)
                         .where(
@@ -134,15 +153,24 @@ class PositionRecoveryManager:
                     if result.rowcount == 0:
                         logger.error(
                             "OCC conflict persisting position %s/%s/%s (version=%d)",
-                            symbol, exchange, side, current_version,
+                            symbol,
+                            exchange,
+                            side,
+                            current_version,
                         )
                         return False
                     self._audit_log(
-                        sess, "position_updated", "recovery_manager",
+                        sess,
+                        "position_updated",
+                        "recovery_manager",
                         {
-                            "symbol": symbol, "exchange": exchange, "side": side,
-                            "quantity": quantity, "avg_price": avg_price,
-                            "version": current_version + 1, "reason": reason,
+                            "symbol": symbol,
+                            "exchange": exchange,
+                            "side": side,
+                            "quantity": quantity,
+                            "avg_price": avg_price,
+                            "version": current_version + 1,
+                            "reason": reason,
                         },
                     )
             return True
@@ -152,17 +180,15 @@ class PositionRecoveryManager:
 
     # ── Startup Recovery ──
 
-    def recover_positions(self) -> List[Position]:
+    def recover_positions(self) -> list[Position]:
         """
         Load all open positions from DB on startup.
         Returns list of Position domain objects for RiskManager initialization.
         """
-        positions: List[Position] = []
+        positions: list[Position] = []
         try:
             with session_scope() as sess:
-                rows = sess.query(PositionModel).filter(
-                    PositionModel.quantity > 0
-                ).all()
+                rows = sess.query(PositionModel).filter(PositionModel.quantity > 0).all()
                 for row in rows:
                     try:
                         pos = Position(
@@ -178,10 +204,14 @@ class PositionRecoveryManager:
                     except Exception as e:
                         logger.warning(
                             "Skipping corrupt position row id=%d symbol=%s: %s",
-                            row.id, row.symbol, e,
+                            row.id,
+                            row.symbol,
+                            e,
                         )
                 self._audit_log(
-                    sess, "position_recovery", "recovery_manager",
+                    sess,
+                    "position_recovery",
+                    "recovery_manager",
                     {"positions_recovered": len(positions)},
                 )
             self._recovered_positions = positions
@@ -192,9 +222,9 @@ class PositionRecoveryManager:
 
     def reconcile_with_broker(
         self,
-        broker_positions: List[Dict[str, Any]],
-        local_positions: Optional[List[Position]] = None,
-    ) -> Dict[str, Any]:
+        broker_positions: list[dict[str, Any]],
+        local_positions: list[Position] | None = None,
+    ) -> dict[str, Any]:
         """
         Reconcile local DB positions with broker-reported positions.
 
@@ -208,7 +238,7 @@ class PositionRecoveryManager:
         Broker positions are expected as list of dicts:
             {"symbol": str, "exchange": str, "side": str, "quantity": float, "avg_price": float}
         """
-        report: Dict[str, Any] = {
+        report: dict[str, Any] = {
             "in_sync": True,
             "missing_locally": [],
             "phantom_local": [],
@@ -220,12 +250,12 @@ class PositionRecoveryManager:
         local = local_positions or self._recovered_positions
 
         # Build lookup maps
-        local_map: Dict[str, Position] = {}
+        local_map: dict[str, Position] = {}
         for p in local:
             key = f"{p.symbol}:{getattr(p.exchange, 'value', str(p.exchange))}:{getattr(p.side, 'value', str(p.side))}"
             local_map[key] = p
 
-        broker_map: Dict[str, Dict[str, Any]] = {}
+        broker_map: dict[str, dict[str, Any]] = {}
         for bp in broker_positions:
             key = f"{bp['symbol']}:{bp.get('exchange', 'NSE')}:{bp.get('side', 'BUY')}"
             broker_map[key] = bp
@@ -246,23 +276,22 @@ class PositionRecoveryManager:
                     change_type="update",
                     reason="reconciliation_missing_locally",
                 )
-                report["actions_taken"].append(
-                    f"Added missing position {key} (qty={bp['quantity']})"
-                )
+                report["actions_taken"].append(f"Added missing position {key} (qty={bp['quantity']})")
 
         # Find positions locally but not on broker
         for key, lp in local_map.items():
             if key not in broker_map:
-                report["phantom_local"].append({
-                    "symbol": lp.symbol,
-                    "exchange": getattr(lp.exchange, "value", str(lp.exchange)),
-                    "side": getattr(lp.side, "value", str(lp.side)),
-                    "quantity": lp.quantity,
-                })
+                report["phantom_local"].append(
+                    {
+                        "symbol": lp.symbol,
+                        "exchange": getattr(lp.exchange, "value", str(lp.exchange)),
+                        "side": getattr(lp.side, "value", str(lp.side)),
+                        "quantity": lp.quantity,
+                    }
+                )
                 report["in_sync"] = False
                 logger.warning(
-                    "PHANTOM position detected: %s exists locally but NOT on broker. "
-                    "Manual review required.",
+                    "PHANTOM position detected: %s exists locally but NOT on broker. Manual review required.",
                     key,
                 )
 
@@ -271,12 +300,14 @@ class PositionRecoveryManager:
             lp = local_map[key]
             bp = broker_map[key]
             if abs(lp.quantity - bp["quantity"]) > 0.01:
-                report["quantity_mismatches"].append({
-                    "key": key,
-                    "local_qty": lp.quantity,
-                    "broker_qty": bp["quantity"],
-                    "diff": bp["quantity"] - lp.quantity,
-                })
+                report["quantity_mismatches"].append(
+                    {
+                        "key": key,
+                        "local_qty": lp.quantity,
+                        "broker_qty": bp["quantity"],
+                        "diff": bp["quantity"] - lp.quantity,
+                    }
+                )
                 report["in_sync"] = False
                 # Auto-heal: trust broker quantity
                 parts = key.split(":")
@@ -289,15 +320,15 @@ class PositionRecoveryManager:
                     change_type="update",
                     reason=f"reconciliation_qty_mismatch_local={lp.quantity}_broker={bp['quantity']}",
                 )
-                report["actions_taken"].append(
-                    f"Corrected quantity for {key}: {lp.quantity} -> {bp['quantity']}"
-                )
+                report["actions_taken"].append(f"Corrected quantity for {key}: {lp.quantity} -> {bp['quantity']}")
 
         # Audit the reconciliation result
         try:
             with session_scope() as sess:
                 self._audit_log(
-                    sess, "position_reconciliation", "recovery_manager",
+                    sess,
+                    "position_reconciliation",
+                    "recovery_manager",
                     {
                         "in_sync": report["in_sync"],
                         "missing_locally": len(report["missing_locally"]),
@@ -313,8 +344,7 @@ class PositionRecoveryManager:
             logger.info("Position reconciliation: IN SYNC (%d positions)", len(local))
         else:
             logger.warning(
-                "Position reconciliation: OUT OF SYNC "
-                "(missing=%d, phantom=%d, qty_mismatch=%d, actions=%d)",
+                "Position reconciliation: OUT OF SYNC (missing=%d, phantom=%d, qty_mismatch=%d, actions=%d)",
                 len(report["missing_locally"]),
                 len(report["phantom_local"]),
                 len(report["quantity_mismatches"]),
@@ -325,7 +355,7 @@ class PositionRecoveryManager:
 
     # ── Idempotency Key Persistence ──
 
-    def persist_idempotency_key(self, key: str, created_at: Optional[datetime] = None) -> bool:
+    def persist_idempotency_key(self, key: str, created_at: datetime | None = None) -> bool:
         """
         Persist an idempotency key to DB so it survives restarts.
         Uses the orders table idempotency_key column to avoid schema changes.
@@ -333,46 +363,51 @@ class PositionRecoveryManager:
         try:
             with session_scope() as sess:
                 # Check if key already exists
-                existing = sess.query(OrderModel).filter(
-                    OrderModel.idempotency_key == key
-                ).first()
+                existing = sess.query(OrderModel).filter(OrderModel.idempotency_key == key).first()
                 if existing is not None:
                     return True  # Already persisted
                 # Insert a placeholder order with this idempotency key
-                sess.add(OrderModel(
-                    order_id=f"idem_{key[:48]}_{_utc_now().strftime('%Y%m%d%H%M%S')}",
-                    idempotency_key=key,
-                    symbol="IDEMPOTENCY_KEY",
-                    exchange="NSE",
-                    side="NONE",
-                    quantity=0,
-                    order_type="LIMIT",
-                    status="CANCELLED",
-                    filled_qty=0,
-                    created_at=created_at or _utc_now(),
-                ))
+                sess.add(
+                    OrderModel(
+                        order_id=f"idem_{key[:48]}_{_utc_now().strftime('%Y%m%d%H%M%S')}",
+                        idempotency_key=key,
+                        symbol="IDEMPOTENCY_KEY",
+                        exchange="NSE",
+                        side="NONE",
+                        quantity=0,
+                        order_type="LIMIT",
+                        status="CANCELLED",
+                        filled_qty=0,
+                        created_at=created_at or _utc_now(),
+                    )
+                )
             self._idempotency_keys[key] = created_at or _utc_now()
             return True
         except Exception as e:
             logger.debug("Idempotency key persist failed for %s: %s", key[:40], e)
             return False
 
-    def load_idempotency_keys(self, max_age_hours: int = 24) -> Dict[str, datetime]:
+    def load_idempotency_keys(self, max_age_hours: int = 24) -> dict[str, datetime]:
         """
         Load recent idempotency keys from DB on startup.
         Returns dict of key -> created_at for deduplication.
         """
-        keys: Dict[str, datetime] = {}
+        keys: dict[str, datetime] = {}
         try:
             from datetime import timedelta
+
             cutoff = _utc_now() - timedelta(hours=max_age_hours)
             with session_scope() as sess:
-                rows = sess.query(OrderModel).filter(
-                    and_(
-                        OrderModel.idempotency_key.isnot(None),
-                        OrderModel.created_at >= cutoff,
+                rows = (
+                    sess.query(OrderModel)
+                    .filter(
+                        and_(
+                            OrderModel.idempotency_key.isnot(None),
+                            OrderModel.created_at >= cutoff,
+                        )
                     )
-                ).all()
+                    .all()
+                )
                 for row in rows:
                     if row.idempotency_key:
                         keys[row.idempotency_key] = row.created_at
@@ -389,9 +424,7 @@ class PositionRecoveryManager:
         # DB fallback
         try:
             with session_scope() as sess:
-                existing = sess.query(OrderModel).filter(
-                    OrderModel.idempotency_key == key
-                ).first()
+                existing = sess.query(OrderModel).filter(OrderModel.idempotency_key == key).first()
                 if existing is not None:
                     self._idempotency_keys[key] = existing.created_at
                     return True
@@ -409,7 +442,7 @@ class PositionRecoveryManager:
         from_qty: float,
         to_qty: float,
         avg_price: float,
-        strategy_id: Optional[str] = None,
+        strategy_id: str | None = None,
         reason: str = "",
     ) -> bool:
         """
@@ -418,43 +451,54 @@ class PositionRecoveryManager:
         """
         try:
             with session_scope() as sess:
-                existing = sess.query(PositionModel).filter(
-                    and_(
-                        PositionModel.symbol == symbol,
-                        PositionModel.exchange == exchange,
-                        PositionModel.side == side,
+                existing = (
+                    sess.query(PositionModel)
+                    .filter(
+                        and_(
+                            PositionModel.symbol == symbol,
+                            PositionModel.exchange == exchange,
+                            PositionModel.side == side,
+                        )
                     )
-                ).first()
+                    .first()
+                )
 
                 if existing is None:
                     if from_qty != 0:
                         logger.error(
-                            "Atomic transition failed: expected qty=%.2f but position "
-                            "not found for %s/%s/%s",
-                            from_qty, symbol, exchange, side,
+                            "Atomic transition failed: expected qty=%.2f but position not found for %s/%s/%s",
+                            from_qty,
+                            symbol,
+                            exchange,
+                            side,
                         )
                         return False
                     # Create new position
                     if to_qty > 0:
-                        sess.add(PositionModel(
-                            symbol=symbol,
-                            exchange=exchange,
-                            side=side,
-                            quantity=to_qty,
-                            avg_price=avg_price,
-                            realized_pnl=0.0,
-                            strategy_id=strategy_id,
-                            version=0,
-                            updated_at=_utc_now(),
-                        ))
+                        sess.add(
+                            PositionModel(
+                                symbol=symbol,
+                                exchange=exchange,
+                                side=side,
+                                quantity=to_qty,
+                                avg_price=avg_price,
+                                realized_pnl=0.0,
+                                strategy_id=strategy_id,
+                                version=0,
+                                updated_at=_utc_now(),
+                            )
+                        )
                     return True
 
                 # Verify current state matches expectation
                 if abs(existing.quantity - from_qty) > 0.01:
                     logger.error(
-                        "Atomic transition failed: expected qty=%.2f but found qty=%.2f "
-                        "for %s/%s/%s (stale state)",
-                        from_qty, existing.quantity, symbol, exchange, side,
+                        "Atomic transition failed: expected qty=%.2f but found qty=%.2f for %s/%s/%s (stale state)",
+                        from_qty,
+                        existing.quantity,
+                        symbol,
+                        exchange,
+                        side,
                     )
                     return False
 
@@ -463,6 +507,7 @@ class PositionRecoveryManager:
                 if to_qty <= 0:
                     # Close position
                     from sqlalchemy import delete
+
                     result = sess.execute(
                         delete(PositionModel).where(
                             and_(
@@ -474,6 +519,7 @@ class PositionRecoveryManager:
                 else:
                     # Update position
                     from sqlalchemy import update
+
                     result = sess.execute(
                         update(PositionModel)
                         .where(
@@ -494,16 +540,25 @@ class PositionRecoveryManager:
                 if result.rowcount == 0:
                     logger.error(
                         "Atomic transition OCC conflict for %s/%s/%s (version=%d)",
-                        symbol, exchange, side, current_version,
+                        symbol,
+                        exchange,
+                        side,
+                        current_version,
                     )
                     return False
 
                 self._audit_log(
-                    sess, "position_transition", "recovery_manager",
+                    sess,
+                    "position_transition",
+                    "recovery_manager",
                     {
-                        "symbol": symbol, "exchange": exchange, "side": side,
-                        "from_qty": from_qty, "to_qty": to_qty,
-                        "avg_price": avg_price, "reason": reason,
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "side": side,
+                        "from_qty": from_qty,
+                        "to_qty": to_qty,
+                        "avg_price": avg_price,
+                        "reason": reason,
                     },
                 )
             return True
@@ -513,7 +568,7 @@ class PositionRecoveryManager:
 
     # ── Recovery Audit Logging ──
 
-    def get_recovery_audit(self) -> List[Dict[str, Any]]:
+    def get_recovery_audit(self) -> list[dict[str, Any]]:
         """Return the audit trail for the last recovery operation."""
         return list(self._recovery_audit)
 
@@ -522,24 +577,28 @@ class PositionRecoveryManager:
         session: Session,
         event_type: str,
         actor: str,
-        payload: Optional[Dict[str, Any]] = None,
+        payload: dict[str, Any] | None = None,
     ) -> None:
         """Append an audit event within an existing session/transaction."""
         try:
             payload_str = json.dumps(payload, default=str) if payload else None
-            session.add(AuditEventModel(
-                ts=_utc_now(),
-                event_type=event_type,
-                actor=actor,
-                payload=payload_str,
-            ))
+            session.add(
+                AuditEventModel(
+                    ts=_utc_now(),
+                    event_type=event_type,
+                    actor=actor,
+                    payload=payload_str,
+                )
+            )
             session.flush()
-            self._recovery_audit.append({
-                "ts": _utc_now().isoformat(),
-                "event_type": event_type,
-                "actor": actor,
-                "payload": payload,
-            })
+            self._recovery_audit.append(
+                {
+                    "ts": _utc_now().isoformat(),
+                    "event_type": event_type,
+                    "actor": actor,
+                    "payload": payload,
+                }
+            )
         except Exception as e:
             logger.debug("Recovery audit log failed: %s", e)
 
@@ -547,10 +606,10 @@ class PositionRecoveryManager:
 
     def run_full_recovery(
         self,
-        broker_get_positions: Optional[Callable] = None,
+        broker_get_positions: Callable | None = None,
         risk_manager=None,
         is_live: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Execute the full startup recovery workflow:
         1. Load positions from DB
@@ -560,7 +619,7 @@ class PositionRecoveryManager:
 
         Returns recovery report.
         """
-        report: Dict[str, Any] = {
+        report: dict[str, Any] = {
             "success": True,
             "positions_recovered": 0,
             "idempotency_keys_loaded": 0,
@@ -591,6 +650,7 @@ class PositionRecoveryManager:
                 broker_positions = broker_get_positions()
                 # Handle async result
                 import asyncio
+
                 if asyncio.iscoroutine(broker_positions):
                     loop = asyncio.get_event_loop()
                     broker_positions = loop.run_until_complete(broker_positions)
@@ -602,21 +662,23 @@ class PositionRecoveryManager:
                         if isinstance(bp, dict):
                             normalized.append(bp)
                         else:
-                            normalized.append({
-                                "symbol": getattr(bp, "symbol", ""),
-                                "exchange": getattr(
-                                    getattr(bp, "exchange", None),
-                                    "value",
-                                    str(getattr(bp, "exchange", "NSE")),
-                                ),
-                                "side": getattr(
-                                    getattr(bp, "side", None),
-                                    "value",
-                                    str(getattr(bp, "side", "BUY")),
-                                ),
-                                "quantity": getattr(bp, "quantity", 0),
-                                "avg_price": getattr(bp, "avg_price", 0),
-                            })
+                            normalized.append(
+                                {
+                                    "symbol": getattr(bp, "symbol", ""),
+                                    "exchange": getattr(
+                                        getattr(bp, "exchange", None),
+                                        "value",
+                                        str(getattr(bp, "exchange", "NSE")),
+                                    ),
+                                    "side": getattr(
+                                        getattr(bp, "side", None),
+                                        "value",
+                                        str(getattr(bp, "side", "BUY")),
+                                    ),
+                                    "quantity": getattr(bp, "quantity", 0),
+                                    "avg_price": getattr(bp, "avg_price", 0),
+                                }
+                            )
 
                     recon = self.reconcile_with_broker(normalized, positions)
                     report["reconciliation"] = recon

@@ -1,25 +1,25 @@
 """
 Backtest API: run backtests via BacktestEngine, store results, return job status and equity.
 """
+
 import asyncio
 import logging
 import threading
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from src.api.auth import get_current_user
-
 from src.core.events import Bar, Exchange
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Job store: job_id -> { status, body, result (equity_curve, metrics, trades), error }
-_backtest_jobs: Dict[str, Dict[str, Any]] = {}
+_backtest_jobs: dict[str, dict[str, Any]] = {}
 _backtest_lock = threading.Lock()
 MAX_JOBS = 100  # Limit stored jobs to prevent unbounded memory growth
 
@@ -43,7 +43,7 @@ def _parse_date(s: str) -> datetime:
         raise ValueError("Empty date")
     for fmt, size in (("%Y-%m-%d", 10), ("%Y-%m-%dT%H:%M:%S", 19)):
         try:
-            return datetime.strptime(s[:size], fmt).replace(tzinfo=timezone.utc)
+            return datetime.strptime(s[:size], fmt).replace(tzinfo=UTC)
         except ValueError:
             continue
     raise ValueError(f"Invalid date: {s}")
@@ -55,11 +55,12 @@ def _fetch_bars_for_backtest(
     start: datetime,
     end: datetime,
     interval: str = "1d",
-) -> List[Bar]:
+) -> list[Bar]:
     """Fetch OHLCV bars for backtest using Yahoo Finance. Returns empty list on failure."""
     exch = Exchange(exchange) if exchange in ("NSE", "BSE", "NYSE", "NASDAQ", "LSE", "FX") else Exchange.NSE
     try:
         from src.market_data.connectors.yahoo_finance import get_yahoo_connector
+
         yf = get_yahoo_connector()
         if yf is not None:
             raw_bars = yf.get_bars(
@@ -71,7 +72,7 @@ def _fetch_bars_for_backtest(
                 to_ts=end.strftime("%Y-%m-%d"),
             )
             if raw_bars:
-                bars: List[Bar] = []
+                bars: list[Bar] = []
                 for b in raw_bars:
                     try:
                         ts = b.get("ts", "")
@@ -80,7 +81,7 @@ def _fetch_bars_for_backtest(
                             for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S%z", "%Y-%m-%d"):
                                 try:
                                     ts_dt = datetime.strptime(ts[:26].rstrip("+").rstrip("-"), fmt.rstrip("%z"))
-                                    ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+                                    ts_dt = ts_dt.replace(tzinfo=UTC)
                                     break
                                 except ValueError:
                                     continue
@@ -89,18 +90,20 @@ def _fetch_bars_for_backtest(
                         else:
                             ts_dt = ts if hasattr(ts, "year") else start
 
-                        bars.append(Bar(
-                            symbol=symbol,
-                            exchange=exch,
-                            interval=interval,
-                            open=float(b.get("open", 0)),
-                            high=float(b.get("high", 0)),
-                            low=float(b.get("low", 0)),
-                            close=float(b.get("close", 0)),
-                            volume=float(b.get("volume", 0)),
-                            ts=ts_dt,
-                            source="yahoo_finance",
-                        ))
+                        bars.append(
+                            Bar(
+                                symbol=symbol,
+                                exchange=exch,
+                                interval=interval,
+                                open=float(b.get("open", 0)),
+                                high=float(b.get("high", 0)),
+                                low=float(b.get("low", 0)),
+                                close=float(b.get("close", 0)),
+                                volume=float(b.get("volume", 0)),
+                                ts=ts_dt,
+                                source="yahoo_finance",
+                            )
+                        )
                     except Exception:
                         continue
                 if bars:
@@ -118,7 +121,7 @@ def _run_backtest_sync(job_id: str, body: dict) -> None:
     global _backtest_jobs
     try:
         from src.api.routers.strategies import get_registry
-        from src.backtesting.engine import BacktestEngine, BacktestConfig
+        from src.backtesting.engine import BacktestConfig, BacktestEngine
 
         reg = get_registry()
         strategy_id = body.get("strategy_id")
@@ -162,11 +165,15 @@ def _run_backtest_sync(job_id: str, body: dict) -> None:
             initial_capital=body.get("config", {}).get("initial_capital", 100_000.0),
         )
         engine = BacktestEngine(config=config)
-        exch = Exchange(body.get("exchange", "NSE")) if body.get("exchange") in ("NSE", "BSE", "NYSE", "NASDAQ", "LSE", "FX") else Exchange.NSE
+        exch = (
+            Exchange(body.get("exchange", "NSE"))
+            if body.get("exchange") in ("NSE", "BSE", "NYSE", "NASDAQ", "LSE", "FX")
+            else Exchange.NSE
+        )
         result = engine.run(strategy, bars, body["symbol"], exchange=exch)
 
         metrics = result.metrics
-        metrics_dict: Dict[str, Any] = {}
+        metrics_dict: dict[str, Any] = {}
         if metrics:
             metrics_dict = {
                 "total_return_pct": metrics.total_return_pct,
@@ -191,7 +198,7 @@ def _run_backtest_sync(job_id: str, body: dict) -> None:
                 "trades": result.trades[:100],
                 "num_trades": len(result.trades),
             }
-    except Exception as e:
+    except Exception:
         logger.exception("Backtest run failed")
         with _backtest_lock:
             _backtest_jobs[job_id]["status"] = "failed"
@@ -204,18 +211,23 @@ class BacktestRunRequest(BaseModel):
     exchange: str = "NSE"
     start: str
     end: str
-    config: Optional[dict] = None
+    config: dict | None = None
     interval: str = "1d"
 
 
 @router.post("/run")
-async def run_backtest(request: Request, body: BacktestRunRequest, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
+async def run_backtest(
+    request: Request,
+    body: BacktestRunRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     """Queue and run backtest; returns job_id. Runs in background."""
     try:
         _parse_date(body.start)
         _parse_date(body.end)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
     job_id = f"bt_{uuid.uuid4().hex[:12]}"
     with _backtest_lock:

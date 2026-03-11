@@ -1,31 +1,32 @@
 """Agent management API: status, start/stop agents, autonomous loop state."""
-from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Request, HTTPException
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from src.api.auth import get_current_user, require_roles
-
 
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
 
+
 class AutonomousLoopStatus(BaseModel):
     running: bool
-    message: Optional[str] = None
-    tick_count: Optional[int] = None
-    open_trades: Optional[int] = None
-    daily_pnl: Optional[float] = None
-    last_tick_ts: Optional[str] = None
-    paper_mode: Optional[bool] = None
-    poll_interval_seconds: Optional[float] = None
-    signals_generated: Optional[int] = None
-    orders_submitted: Optional[int] = None
+    message: str | None = None
+    tick_count: int | None = None
+    open_trades: int | None = None
+    daily_pnl: float | None = None
+    last_tick_ts: str | None = None
+    paper_mode: bool | None = None
+    poll_interval_seconds: float | None = None
+    signals_generated: int | None = None
+    orders_submitted: int | None = None
 
 
 class AgentStatusResponse(BaseModel):
-    agents: Dict[str, Any]
+    agents: dict[str, Any]
     autonomous_loop: AutonomousLoopStatus
 
 

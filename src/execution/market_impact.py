@@ -6,12 +6,12 @@ Implements Almgren-Chriss framework:
   - Permanent impact: lasting price impact from information
   - Transaction cost budget: only trade when expected alpha > expected cost
 """
+
 from __future__ import annotations
 
 import logging
 import math
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +19,15 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ImpactEstimate:
     """Estimated market impact for an order."""
+
     temporary_impact_bps: float = 0.0
     permanent_impact_bps: float = 0.0
     total_impact_bps: float = 0.0
     transaction_cost_bps: float = 0.0  # from IndiaCostCalculator
-    total_cost_bps: float = 0.0        # impact + transaction costs
+    total_cost_bps: float = 0.0  # impact + transaction costs
     participation_rate: float = 0.0
-    recommended_qty: int = 0            # qty where impact < alpha
-    alpha_sufficient: bool = True       # True if alpha > total cost
+    recommended_qty: int = 0  # qty where impact < alpha
+    alpha_sufficient: bool = True  # True if alpha > total cost
 
     def as_dict(self) -> dict:
         return {
@@ -44,9 +45,10 @@ class ImpactEstimate:
 @dataclass
 class NSEImpactConfig:
     """NSE-specific market impact parameters (calibrated from empirical NSE data)."""
-    gamma: float = 0.25           # permanent impact coefficient (NSE empirical, higher than US 0.1)
-    min_adv: float = 10_000       # minimum ADV floor
-    default_sigma: float = 0.02   # default daily vol for NSE equities
+
+    gamma: float = 0.25  # permanent impact coefficient (NSE empirical, higher than US 0.1)
+    min_adv: float = 10_000  # minimum ADV floor
+    default_sigma: float = 0.02  # default daily vol for NSE equities
     transaction_cost_bps: float = 12.0  # realistic India round-trip cost (STT+brokerage+GST+stamp)
 
 
@@ -66,9 +68,9 @@ class MarketImpactModel:
 
     def __init__(
         self,
-        gamma: float = 0.25,       # NSE calibrated (was 0.1 for US)
+        gamma: float = 0.25,  # NSE calibrated (was 0.1 for US)
         min_adv: float = 10_000,
-        config: Optional[NSEImpactConfig] = None,
+        config: NSEImpactConfig | None = None,
     ):
         if config:
             self.gamma = config.gamma
@@ -187,7 +189,5 @@ class MarketImpactModel:
         transaction_cost_bps: float = 5.0,
     ) -> bool:
         """Simple check: should this trade be executed?"""
-        result = self.check_alpha_sufficient(
-            quantity, price, adv, expected_alpha_bps, sigma, transaction_cost_bps
-        )
+        result = self.check_alpha_sufficient(quantity, price, adv, expected_alpha_bps, sigma, transaction_cost_bps)
         return result.alpha_sufficient

@@ -7,13 +7,14 @@ drives automatic weight recalculation.
 Calibration: supports Platt scaling or isotonic regression for prob_up calibration.
 Calibrator is retrained weekly alongside model retrain.
 """
+
 import logging
 import math
 import threading
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 
@@ -28,14 +29,16 @@ from .registry import ModelRegistry
 logger = logging.getLogger(__name__)
 
 # Default model list matching actual model_id attributes in predictor classes
-DEFAULT_MODEL_IDS: List[str] = ["xgb_direction", "lstm_ts", "rl_ppo", "sentiment_finbert", "transformer_ts"]
+DEFAULT_MODEL_IDS: list[str] = ["xgb_direction", "lstm_ts", "rl_ppo", "sentiment_finbert", "transformer_ts"]
 
 # IC calculation parameters
-IC_ROLLING_WINDOW: int = 63          # Rolling window size for IC calculation (63 ≈ 3 months trading days, statistically significant)
-IC_THRESHOLD: float = 0.05           # Minimum IC for a model to receive any weight (raised from 0.02)
-MIN_WEIGHT_FLOOR: float = 0.05       # 5% minimum weight for any non-zero IC model
-NEGATIVE_IC_STREAK_LIMIT: int = 20   # Consecutive negative IC days to zero-out weight
-MIN_AGREEING_MODELS: int = 3         # Minimum models that must agree on direction to produce signal (of 5)
+IC_ROLLING_WINDOW: int = (
+    63  # Rolling window size for IC calculation (63 ≈ 3 months trading days, statistically significant)
+)
+IC_THRESHOLD: float = 0.05  # Minimum IC for a model to receive any weight (raised from 0.02)
+MIN_WEIGHT_FLOOR: float = 0.05  # 5% minimum weight for any non-zero IC model
+NEGATIVE_IC_STREAK_LIMIT: int = 20  # Consecutive negative IC days to zero-out weight
+MIN_AGREEING_MODELS: int = 3  # Minimum models that must agree on direction to produce signal (of 5)
 MAX_INTER_MODEL_CORRELATION: float = 0.95  # Diversity: max pairwise correlation before warning
 
 
@@ -57,9 +60,9 @@ class EnsembleEngine:
     def __init__(
         self,
         registry: ModelRegistry,
-        model_ids: Optional[List[str]] = None,
-        weights: Optional[Dict[str, float]] = None,
-        calibrator: Optional[Any] = None,
+        model_ids: list[str] | None = None,
+        weights: dict[str, float] | None = None,
+        calibrator: Any | None = None,
         ic_weighted: bool = False,
     ):
         self.registry = registry
@@ -73,8 +76,14 @@ class EnsembleEngine:
         # Try to load persisted IC weights from Redis (Sprint 8.6)
         if not self.weights or not any(v > 0 for v in self.weights.values()):
             try:
-                import redis, json, os
-                self._redis_client = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), socket_connect_timeout=2)
+                import json
+                import os
+
+                import redis
+
+                self._redis_client = redis.Redis.from_url(
+                    os.environ.get("REDIS_URL", "redis://localhost:6379"), socket_connect_timeout=2
+                )
                 saved = self._redis_client.get("ensemble:ic_weights")
                 if saved:
                     loaded = json.loads(saved)
@@ -87,15 +96,15 @@ class EnsembleEngine:
         # --- IC tracking state ---
         # Per-model, per-symbol prediction history:
         #   _prediction_history[model_id][symbol] = list of (predicted_direction, actual_return)
-        self._prediction_history: Dict[str, Dict[str, List[Tuple[float, float]]]] = defaultdict(
+        self._prediction_history: dict[str, dict[str, list[tuple[float, float]]]] = defaultdict(
             lambda: defaultdict(list)
         )
 
         # Per-model current IC score (aggregated across symbols)
-        self._ic_scores: Dict[str, float] = {}
+        self._ic_scores: dict[str, float] = {}
 
         # Per-model count of consecutive days with negative IC
-        self._negative_ic_streak: Dict[str, int] = defaultdict(int)
+        self._negative_ic_streak: dict[str, int] = defaultdict(int)
 
         # Halt flag: True when all model ICs are below threshold
         self._all_models_halted: bool = False
@@ -106,9 +115,9 @@ class EnsembleEngine:
         self._prediction_counter: int = 0
 
         # Audit trail: list of (timestamp, weights_snapshot) dicts
-        self._weight_history: List[Dict[str, Any]] = []
+        self._weight_history: list[dict[str, Any]] = []
 
-    def set_weights(self, weights: Dict[str, float]) -> None:
+    def set_weights(self, weights: dict[str, float]) -> None:
         self.weights = weights
 
     # ------------------------------------------------------------------
@@ -134,16 +143,14 @@ class EnsembleEngine:
             actual_return: Realised return for the same period.
         """
         with self._lock:
-            self._prediction_history[model_id][symbol].append(
-                (float(predicted_direction), float(actual_return))
-            )
+            self._prediction_history[model_id][symbol].append((float(predicted_direction), float(actual_return)))
             # Keep only the most recent IC_ROLLING_WINDOW entries per symbol
             # to bound memory usage.
             hist = self._prediction_history[model_id][symbol]
             if len(hist) > IC_ROLLING_WINDOW:
                 self._prediction_history[model_id][symbol] = hist[-IC_ROLLING_WINDOW:]
 
-    def _compute_model_ic(self, model_id: str) -> Optional[float]:
+    def _compute_model_ic(self, model_id: str) -> float | None:
         """
         Compute the rolling IC for *model_id* as the average Spearman
         rank correlation (across all tracked symbols) of the most recent
@@ -156,7 +163,7 @@ class EnsembleEngine:
         if not symbol_histories:
             return None
 
-        per_symbol_ics: List[float] = []
+        per_symbol_ics: list[float] = []
         for _symbol, pairs in symbol_histories.items():
             recent = pairs[-IC_ROLLING_WINDOW:]
             if len(recent) < 20:
@@ -183,7 +190,7 @@ class EnsembleEngine:
             return None
         return float(np.mean(per_symbol_ics))
 
-    def update_weights_from_ic(self, recent_predictions=None, actual_returns=None, **kwargs) -> Dict[str, float]:
+    def update_weights_from_ic(self, recent_predictions=None, actual_returns=None, **kwargs) -> dict[str, float]:
         """
         Recalculate ensemble weights based on rolling IC scores.
 
@@ -217,7 +224,7 @@ class EnsembleEngine:
                 self._negative_ic_streak[model_id] = 0
 
         # Step 3: compute raw weights
-        raw: Dict[str, float] = {}
+        raw: dict[str, float] = {}
         for model_id in self.model_ids:
             # Zero weight if negative IC streak hit limit
             if self._negative_ic_streak.get(model_id, 0) >= NEGATIVE_IC_STREAK_LIMIT:
@@ -244,8 +251,9 @@ class EnsembleEngine:
         total_raw = sum(raw.values())
         if total_raw < 1e-12:
             logger.warning(
-                "ALL model ICs below threshold (%.2f) or negative — ensemble halted. "
-                "IC scores: %s", IC_THRESHOLD, dict(self._ic_scores),
+                "ALL model ICs below threshold (%.2f) or negative — ensemble halted. IC scores: %s",
+                IC_THRESHOLD,
+                dict(self._ic_scores),
             )
             new_weights = {mid: 0.0 for mid in self.model_ids}
             self._all_models_halted = True
@@ -269,12 +277,14 @@ class EnsembleEngine:
         self.weights = new_weights
 
         # Record to audit trail
-        self._weight_history.append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "weights": dict(new_weights),
-            "ic_scores": dict(self._ic_scores),
-            "negative_ic_streaks": dict(self._negative_ic_streak),
-        })
+        self._weight_history.append(
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "weights": dict(new_weights),
+                "ic_scores": dict(self._ic_scores),
+                "negative_ic_streaks": dict(self._negative_ic_streak),
+            }
+        )
         if len(self._weight_history) > 500:
             self._weight_history = self._weight_history[-500:]
 
@@ -282,19 +292,26 @@ class EnsembleEngine:
 
         # Persist to Redis (Sprint 8.6)
         try:
-            import json, os
+            import json
+            import os
+
             if self._redis_client is None:
                 import redis
-                self._redis_client = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), socket_connect_timeout=2)
+
+                self._redis_client = redis.Redis.from_url(
+                    os.environ.get("REDIS_URL", "redis://localhost:6379"), socket_connect_timeout=2
+                )
             self._redis_client.set("ensemble:ic_weights", json.dumps(new_weights), ex=86400 * 30)
-            self._redis_client.set("ensemble:ic_scores", json.dumps({k: v for k, v in self._ic_scores.items()}), ex=86400 * 30)
+            self._redis_client.set(
+                "ensemble:ic_scores", json.dumps({k: v for k, v in self._ic_scores.items()}), ex=86400 * 30
+            )
         except Exception as e:
             logger.warning("IC weight persistence to Redis failed (non-critical): %s", e)
 
         # Return IC scores dict (used by scheduler for IC degradation detection)
         return dict(new_weights)
 
-    def get_weight_history(self) -> List[Dict[str, Any]]:
+    def get_weight_history(self) -> list[dict[str, Any]]:
         """
         Return the full weight audit trail.
 
@@ -306,7 +323,7 @@ class EnsembleEngine:
         """
         return list(self._weight_history)
 
-    def get_model_ic_scores(self) -> Dict[str, Optional[float]]:
+    def get_model_ic_scores(self) -> dict[str, float | None]:
         """
         Return the current IC score for every tracked model.
 
@@ -314,12 +331,12 @@ class EnsembleEngine:
             ``{model_id: ic_score}`` where *ic_score* is ``None`` if
             insufficient data has been recorded.
         """
-        result: Dict[str, Optional[float]] = {}
+        result: dict[str, float | None] = {}
         for model_id in self.model_ids:
             result[model_id] = self._ic_scores.get(model_id)
         return result
 
-    def check_ensemble_diversity(self) -> Dict[str, Any]:
+    def check_ensemble_diversity(self) -> dict[str, Any]:
         """
         Check inter-model prediction correlation to ensure ensemble diversity.
 
@@ -331,7 +348,7 @@ class EnsembleEngine:
         redundant information and reduce ensemble value. When detected, the
         correlated model with the LOWER IC score gets its weight halved.
         """
-        pairwise_corrs: Dict[str, float] = {}
+        pairwise_corrs: dict[str, float] = {}
         model_ids_with_data = []
 
         for model_id in self.model_ids:
@@ -349,7 +366,7 @@ class EnsembleEngine:
             }
 
         # Collect all predictions per model (flattened across symbols)
-        model_preds: Dict[str, List[float]] = {}
+        model_preds: dict[str, list[float]] = {}
         for model_id in model_ids_with_data:
             preds = []
             for _sym, pairs in self._prediction_history[model_id].items():
@@ -358,9 +375,9 @@ class EnsembleEngine:
 
         # Compute pairwise correlations
         high_corr_pairs = []
-        all_corrs: List[float] = []
+        all_corrs: list[float] = []
         for i, m1 in enumerate(model_ids_with_data):
-            for m2 in model_ids_with_data[i + 1:]:
+            for m2 in model_ids_with_data[i + 1 :]:
                 min_len = min(len(model_preds[m1]), len(model_preds[m2]))
                 if min_len < 20:
                     continue
@@ -383,12 +400,13 @@ class EnsembleEngine:
         diversity_score = float(np.clip(diversity_score, 0.0, 1.0))
 
         diversity_ok = len(high_corr_pairs) == 0
-        weight_adjustments: Dict[str, float] = {}
+        weight_adjustments: dict[str, float] = {}
 
         if not diversity_ok:
             logger.warning(
                 "Ensemble diversity warning: %d model pairs exceed correlation threshold %.2f: %s",
-                len(high_corr_pairs), MAX_INTER_MODEL_CORRELATION,
+                len(high_corr_pairs),
+                MAX_INTER_MODEL_CORRELATION,
                 [(p[0], p[1], f"{p[2]:.3f}") for p in high_corr_pairs],
             )
             # Penalise the weaker model in each correlated pair:
@@ -402,9 +420,11 @@ class EnsembleEngine:
                 adjusted = current_weight * penalty
                 weight_adjustments[weaker] = adjusted
                 logger.info(
-                    "Diversity enforcement: reducing %s weight %.4f -> %.4f "
-                    "(correlated %.3f with %s)",
-                    weaker, current_weight, adjusted, corr,
+                    "Diversity enforcement: reducing %s weight %.4f -> %.4f (correlated %.3f with %s)",
+                    weaker,
+                    current_weight,
+                    adjusted,
+                    corr,
                     m1 if weaker == m2 else m2,
                 )
 
@@ -415,10 +435,7 @@ class EnsembleEngine:
                 # Re-normalise weights
                 total = sum(self.weights.get(mid, 0.0) for mid in self.model_ids)
                 if total > 1e-12:
-                    self.weights = {
-                        mid: self.weights.get(mid, 0.0) / total
-                        for mid in self.model_ids
-                    }
+                    self.weights = {mid: self.weights.get(mid, 0.0) / total for mid in self.model_ids}
 
         self._last_diversity_score = diversity_score
         return {
@@ -435,8 +452,8 @@ class EnsembleEngine:
 
     def fit_calibrator(
         self,
-        raw_probs: List[float],
-        actual_outcomes: List[int],
+        raw_probs: list[float],
+        actual_outcomes: list[int],
         method: str = "isotonic",
     ) -> bool:
         """
@@ -463,12 +480,15 @@ class EnsembleEngine:
             if method == "platt":
                 lr = LogisticRegression(C=1.0, solver="lbfgs", max_iter=1000)
                 lr.fit(X, y)
+
                 # Wrap in a transform-compatible object
                 class PlattCalibrator:
                     def __init__(self, model):
                         self._model = model
+
                     def transform(self, x):
                         return self._model.predict_proba(np.asarray(x).reshape(-1, 1))[:, 1]
+
                 self.calibrator = PlattCalibrator(lr)
             else:  # isotonic
                 ir = IsotonicRegression(out_of_bounds="clip", y_min=0.01, y_max=0.99)
@@ -476,12 +496,14 @@ class EnsembleEngine:
                 self.calibrator = ir
 
             logger.info("Calibrator fitted: method=%s, n_samples=%d", method, len(raw_probs))
-            self._weight_history.append({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "event": "calibrator_fitted",
-                "method": method,
-                "n_samples": len(raw_probs),
-            })
+            self._weight_history.append(
+                {
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "event": "calibrator_fitted",
+                    "method": method,
+                    "n_samples": len(raw_probs),
+                }
+            )
             if len(self._weight_history) > 500:
                 self._weight_history = self._weight_history[-500:]
             return True
@@ -494,9 +516,9 @@ class EnsembleEngine:
 
     def update_ic_weights(
         self,
-        recent_predictions: List[Dict[str, Any]],
-        actual_returns: List[float],
-    ) -> Dict[str, float]:
+        recent_predictions: list[dict[str, Any]],
+        actual_returns: list[float],
+    ) -> dict[str, float]:
         """
         Convenience method: record prediction/actual pairs for all models,
         then recalculate IC-based weights.
@@ -527,9 +549,9 @@ class EnsembleEngine:
 
     def predict(
         self,
-        features: Dict[str, float],
-        context: Optional[Dict[str, Any]] = None,
-    ) -> Optional[PredictionOutput]:
+        features: dict[str, float],
+        context: dict[str, Any] | None = None,
+    ) -> PredictionOutput | None:
         """Aggregate predictions from all registered models.
 
         Returns None (halt trading) when:
@@ -556,7 +578,7 @@ class EnsembleEngine:
                     len(diversity_result.get("high_correlation_pairs", [])),
                 )
 
-        predictions: List[PredictionOutput] = []
+        predictions: list[PredictionOutput] = []
         ids = self.model_ids or list(self.weights.keys())
         if not ids:
             ids = self.registry.list_models()
@@ -582,9 +604,10 @@ class EnsembleEngine:
 
         if len(predictions) >= MIN_AGREEING_MODELS and max_agreeing < MIN_AGREEING_MODELS:
             logger.info(
-                "Ensemble halt: insufficient model agreement (bullish=%d, bearish=%d, "
-                "need %d agreeing). Models: %s",
-                n_bullish, n_bearish, MIN_AGREEING_MODELS,
+                "Ensemble halt: insufficient model agreement (bullish=%d, bearish=%d, need %d agreeing). Models: %s",
+                n_bullish,
+                n_bearish,
+                MIN_AGREEING_MODELS,
                 [(p.model_id, f"{p.prob_up:.3f}") for p in predictions],
             )
             return None
@@ -593,10 +616,17 @@ class EnsembleEngine:
         prob_up = 0.0
         exp_ret = 0.0
         conf = 0.0
+        # Determine if we have any configured weights.
+        # If self.weights is empty (no explicit weights, no IC data, Redis unavailable),
+        # fall back to equal weighting (1.0 per model).
+        use_equal_weights = not self.weights
         for p in predictions:
-            # Default to 0.0 for unregistered models (not 1.0) to prevent
-            # unknown models from dominating the ensemble
-            w = self.weights.get(p.model_id, 0.0)
+            if use_equal_weights:
+                w = 1.0  # Equal weight fallback — no IC data or explicit weights
+            else:
+                # Default to 0.0 for unregistered models (not 1.0) to prevent
+                # unknown models from dominating the ensemble
+                w = self.weights.get(p.model_id, 0.0)
             total_weight += w
             prob_up += p.prob_up * w
             exp_ret += p.expected_return * w
@@ -619,14 +649,18 @@ class EnsembleEngine:
             conf_f *= agreement_ratio
             logger.debug(
                 "Ensemble agreement: %d/%d agree, penalty=%.2f, adjusted_conf=%.4f",
-                max_agreeing, n_models, agreement_ratio, conf_f,
+                max_agreeing,
+                n_models,
+                agreement_ratio,
+                conf_f,
             )
 
         # Halt when probability is too close to coin flip (noise, not signal)
         if abs(prob_up_f - 0.5) < 0.05:
             logger.info(
                 "Ensemble halt: prob_up=%.4f too close to 0.5 (noise). Models: %s",
-                prob_up_f, [(p.model_id, f"{p.prob_up:.3f}") for p in predictions],
+                prob_up_f,
+                [(p.model_id, f"{p.prob_up:.3f}") for p in predictions],
             )
             return None
 

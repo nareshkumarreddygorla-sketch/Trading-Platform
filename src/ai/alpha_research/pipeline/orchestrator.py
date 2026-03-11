@@ -4,19 +4,20 @@ Data → Hypothesis → Statistical Filter → Backtest → OOS → FDR → Clus
 Capacity Sim → Shadow → Promote → Monitor → Decay handling.
 Zero manual bias; orchestrate existing modules.
 """
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
+from ..capacity import CapacityModel
+from ..clustering import SignalClustering
+from ..decay import DecayMonitor
 from ..hypothesis import AlphaHypothesisGenerator, HypothesisSpec
+from ..rules import EdgePreservationRules
+from ..scoring import AlphaQualityScorer
 from ..validation import StatisticalValidator
 from ..validation.validator import ValidationResult
-from ..scoring import AlphaQualityScorer
-from ..clustering import SignalClustering
-from ..capacity import CapacityModel
-from ..decay import DecayMonitor
-from ..rules import EdgePreservationRules
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,9 @@ class PipelineConfig:
     min_sample_size: int = 500
     fdr_alpha: float = 0.05
     top_decile: bool = True
-    run_backtest_fn: Optional[Callable[[str, Dict], Dict]] = None  # (signal_id, params) -> {sharpe, turnover, ...}
-    run_shadow_fn: Optional[Callable[[str], None]] = None  # deploy to shadow
-    existing_returns: Optional[Dict[str, Any]] = None  # signal_id -> return array
+    run_backtest_fn: Callable[[str, dict], dict] | None = None  # (signal_id, params) -> {sharpe, turnover, ...}
+    run_shadow_fn: Callable[[str], None] | None = None  # deploy to shadow
+    existing_returns: dict[str, Any] | None = None  # signal_id -> return array
 
 
 class ResearchPipeline:
@@ -49,7 +50,7 @@ class ResearchPipeline:
         capacity_model: CapacityModel,
         decay_monitor: DecayMonitor,
         preservation_rules: EdgePreservationRules,
-        config: Optional[PipelineConfig] = None,
+        config: PipelineConfig | None = None,
     ):
         self.hypothesis_generator = hypothesis_generator
         self.validator = validator
@@ -59,32 +60,33 @@ class ResearchPipeline:
         self.decay_monitor = decay_monitor
         self.preservation_rules = preservation_rules
         self.config = config or PipelineConfig()
-        self._validated: List[ValidationResult] = []
-        self._selected_ids: List[str] = []
-        self._quality_scores: Dict[str, float] = {}
+        self._validated: list[ValidationResult] = []
+        self._selected_ids: list[str] = []
+        self._quality_scores: dict[str, float] = {}
 
-    def run_generation(self) -> List[HypothesisSpec]:
+    def run_generation(self) -> list[HypothesisSpec]:
         """Phase A: generate candidate hypotheses (no backtest yet)."""
         candidates = self.hypothesis_generator.generate_candidates()
         return candidates[: self.config.max_candidates_per_run]
 
     def run_validation(
         self,
-        candidates: List[HypothesisSpec],
-        signal_matrix: Optional[Dict[str, Any]] = None,
-        forward_returns: Optional[Any] = None,
-        regime_labels: Optional[Any] = None,
-        backtest_results: Optional[Dict[str, Dict]] = None,
-    ) -> List[ValidationResult]:
+        candidates: list[HypothesisSpec],
+        signal_matrix: dict[str, Any] | None = None,
+        forward_returns: Any | None = None,
+        regime_labels: Any | None = None,
+        backtest_results: dict[str, dict] | None = None,
+    ) -> list[ValidationResult]:
         """
         Phase B: validate each candidate.
         signal_matrix: hypothesis_id -> signal array (if pre_filter used);
         forward_returns: array; regime_labels: array;
         backtest_results: signal_id -> {sharpe_oos, turnover, mean_return_gross, n_wf_positive}.
         """
-        results: List[ValidationResult] = []
+        results: list[ValidationResult] = []
         backtest_results = backtest_results or {}
         import numpy as np
+
         for c in candidates:
             sig = signal_matrix.get(c.hypothesis_id) if signal_matrix else None
             fwd = forward_returns
@@ -127,9 +129,9 @@ class ResearchPipeline:
 
     def run_scoring(
         self,
-        capacity_scores: Optional[Dict[str, float]] = None,
-        slippage_sensitivities: Optional[Dict[str, float]] = None,
-    ) -> List[tuple[str, float]]:
+        capacity_scores: dict[str, float] | None = None,
+        slippage_sensitivities: dict[str, float] | None = None,
+    ) -> list[tuple[str, float]]:
         """Phase C: score validated signals; return top decile (signal_id, score)."""
         ranked = self.scorer.rank_and_select(
             self._validated,
@@ -142,8 +144,8 @@ class ResearchPipeline:
     def run_clustering(
         self,
         signal_returns_matrix: Any,
-        signal_ids: Optional[List[str]] = None,
-    ) -> List[str]:
+        signal_ids: list[str] | None = None,
+    ) -> list[str]:
         """Phase D: cluster by correlation; select one per cluster by quality score."""
         if signal_ids is None:
             signal_ids = list(self._quality_scores.keys())
@@ -159,11 +161,11 @@ class ResearchPipeline:
 
     def run_capacity_check(
         self,
-        adv_by_signal: Optional[Dict[str, float]] = None,
-        e_return_gross_by_signal: Optional[Dict[str, float]] = None,
-    ) -> Dict[str, bool]:
+        adv_by_signal: dict[str, float] | None = None,
+        e_return_gross_by_signal: dict[str, float] | None = None,
+    ) -> dict[str, bool]:
         """Phase E: estimate capacity per signal; return signal_id -> passed."""
-        passed: Dict[str, bool] = {}
+        passed: dict[str, bool] = {}
         for sid in self._selected_ids:
             adv = (adv_by_signal or {}).get(sid, 1e9)
             e_ret = (e_return_gross_by_signal or {}).get(sid, 0.0)
@@ -171,6 +173,6 @@ class ResearchPipeline:
             passed[sid] = cr.passed
         return passed
 
-    def get_decay_weight_multipliers(self, signal_ids: List[str]) -> Dict[str, float]:
+    def get_decay_weight_multipliers(self, signal_ids: list[str]) -> dict[str, float]:
         """Phase G: recommended weight multipliers from decay monitor."""
         return {sid: self.decay_monitor.recommended_weight_multiplier(sid) for sid in signal_ids}

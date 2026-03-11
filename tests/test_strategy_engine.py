@@ -1,6 +1,5 @@
-import pytest
-from src.core.events import Bar, Exchange
-from src.strategy_engine import EMACrossoverStrategy, StrategyRegistry, StrategyRunner
+from src.core.events import Exchange
+from src.strategy_engine import EMACrossoverStrategy, StrategyRegistry
 from src.strategy_engine.base import MarketState
 
 

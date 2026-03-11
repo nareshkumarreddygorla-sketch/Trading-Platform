@@ -1,5 +1,4 @@
 """Volatility-based regime: high / low vs rolling history."""
-from typing import List
 
 import numpy as np
 
@@ -11,7 +10,7 @@ class VolatilityRegimeDetector:
         self.window = window
         self.high_pct = high_pct
         self.low_pct = low_pct
-        self._vols: List[float] = []
+        self._vols: list[float] = []
 
     def add(self, vol: float) -> None:
         self._vols.append(vol)

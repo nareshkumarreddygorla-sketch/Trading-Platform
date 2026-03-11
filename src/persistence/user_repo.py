@@ -1,6 +1,6 @@
 """User repository: create and lookup users by username. Passwords stored hashed."""
+
 import logging
-from typing import List, Optional
 
 from .database import session_scope
 from .models import UserModel
@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from passlib.context import CryptContext
+
     _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 except ImportError:
     _pwd_context = None
@@ -22,6 +23,7 @@ def _hash_password(password: str) -> str:
     # Fallback: PBKDF2-SHA256 with random salt (stdlib)
     import hashlib
     import os
+
     salt = os.urandom(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100_000)
     return f"pbkdf2:sha256:100000${salt.hex()}${dk.hex()}"
@@ -35,8 +37,10 @@ def _verify_password(plain: str, hashed: str) -> bool:
             pass
     # Handle PBKDF2 fallback format
     import hmac as _hmac
+
     if hashed.startswith("pbkdf2:sha256:"):
         import hashlib
+
         parts = hashed.split("$")
         if len(parts) == 3:
             salt = bytes.fromhex(parts[1])
@@ -46,6 +50,7 @@ def _verify_password(plain: str, hashed: str) -> bool:
             return _hmac.compare_digest(dk.hex(), expected)
     # Legacy SHA256 migration path — constant-time comparison
     import hashlib
+
     return _hmac.compare_digest(
         hashlib.sha256(f"trading-platform-salt-{plain}".encode()).hexdigest(),
         hashed,
@@ -55,7 +60,7 @@ def _verify_password(plain: str, hashed: str) -> bool:
 class UserRepository:
     """Sync repository for users. Use from async via run_in_executor if needed."""
 
-    def get_by_username(self, username: str) -> Optional[dict]:
+    def get_by_username(self, username: str) -> dict | None:
         """Return user dict with keys: username, password_hash, email, roles (list)."""
         with session_scope() as session:
             m = session.query(UserModel).filter(UserModel.username == username).first()
@@ -69,21 +74,23 @@ class UserRepository:
                 "roles": roles,
             }
 
-    def create(self, username: str, password: str, email: Optional[str] = None, roles: Optional[List[str]] = None) -> bool:
+    def create(self, username: str, password: str, email: str | None = None, roles: list[str] | None = None) -> bool:
         """Create user with hashed password. Returns True if created, False if username exists."""
         with session_scope() as session:
             if session.query(UserModel).filter(UserModel.username == username).first():
                 return False
             roles_str = ",".join(roles or ["user"])
-            session.add(UserModel(
-                username=username,
-                password_hash=_hash_password(password),
-                email=email,
-                roles=roles_str,
-            ))
+            session.add(
+                UserModel(
+                    username=username,
+                    password_hash=_hash_password(password),
+                    email=email,
+                    roles=roles_str,
+                )
+            )
             return True
 
-    def verify_password(self, username: str, password: str) -> Optional[dict]:
+    def verify_password(self, username: str, password: str) -> dict | None:
         """If user exists and password matches, return user dict (username, roles). Else None."""
         user = self.get_by_username(username)
         if user is None:

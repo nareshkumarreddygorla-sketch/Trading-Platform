@@ -3,14 +3,11 @@ Microstructure features: order flow imbalance, bid-ask spread, volume delta,
 VWAP deviation, liquidity pressure.
 Requires tick/orderbook data; falls back to OHLCV proxies when missing.
 """
-from typing import Dict, List, Optional
 
 from src.core.events import Bar, OrderBookSnapshot
 
 
-def compute_order_flow_imbalance(
-    buy_volume: float, sell_volume: float
-) -> float:
+def compute_order_flow_imbalance(buy_volume: float, sell_volume: float) -> float:
     """(buy - sell) / (buy + sell). -1 to 1."""
     total = buy_volume + sell_volume
     if total < 1e-12:
@@ -42,17 +39,17 @@ def compute_liquidity_pressure(volume: float, depth: float) -> float:
 
 
 def compute_microstructure_features(
-    bars: List[Bar],
-    order_book: Optional[OrderBookSnapshot] = None,
-    buy_volume: Optional[float] = None,
-    sell_volume: Optional[float] = None,
-    vwap: Optional[float] = None,
-) -> Dict[str, float]:
+    bars: list[Bar],
+    order_book: OrderBookSnapshot | None = None,
+    buy_volume: float | None = None,
+    sell_volume: float | None = None,
+    vwap: float | None = None,
+) -> dict[str, float]:
     """
     Compute microstructure features. If order book / tick data not available,
     use OHLCV proxies (e.g. spread from high-low, volume delta from close vs open).
     """
-    features: Dict[str, float] = {}
+    features: dict[str, float] = {}
     if not bars:
         return features
 
@@ -61,9 +58,7 @@ def compute_microstructure_features(
     volume = last.volume
 
     if order_book:
-        features["bid_ask_spread_bps"] = compute_bid_ask_spread_bps(
-            order_book.bid, order_book.ask
-        )
+        features["bid_ask_spread_bps"] = compute_bid_ask_spread_bps(order_book.bid, order_book.ask)
         depth = order_book.bid_size + order_book.ask_size
         features["liquidity_pressure"] = compute_liquidity_pressure(volume, depth)
     else:
@@ -75,9 +70,7 @@ def compute_microstructure_features(
         features["liquidity_pressure"] = 0.0  # no depth
 
     if buy_volume is not None and sell_volume is not None:
-        features["order_flow_imbalance"] = compute_order_flow_imbalance(
-            buy_volume, sell_volume
-        )
+        features["order_flow_imbalance"] = compute_order_flow_imbalance(buy_volume, sell_volume)
         features["volume_delta"] = compute_volume_delta(buy_volume, sell_volume)
     else:
         # Proxy: close > open => buy pressure
@@ -85,9 +78,7 @@ def compute_microstructure_features(
             prev = bars[-2]
             buy_proxy = volume if close > prev.close else 0.0
             sell_proxy = volume if close <= prev.close else 0.0
-            features["order_flow_imbalance"] = compute_order_flow_imbalance(
-                buy_proxy, sell_proxy
-            )
+            features["order_flow_imbalance"] = compute_order_flow_imbalance(buy_proxy, sell_proxy)
         else:
             features["order_flow_imbalance"] = 0.0
         features["volume_delta"] = 0.0

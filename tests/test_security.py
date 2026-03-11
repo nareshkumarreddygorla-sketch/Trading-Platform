@@ -8,15 +8,15 @@ Covers:
   4. Input validation (invalid side, exchange, negative qty, missing limit_price, SQL injection)
   5. Password security (min length enforcement, no plaintext in responses)
 """
-import os
+
 import time
-from typing import List, Optional
 
 import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.api.app import create_app
+from src.risk_engine.manager import RiskManager
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -28,6 +28,7 @@ API_PREFIX = "/api/v1"
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _set_jwt_env(monkeypatch):
     """Ensure JWT_SECRET is set so auth enforcement is active."""
@@ -37,7 +38,9 @@ def _set_jwt_env(monkeypatch):
 @pytest.fixture
 def app():
     """Fresh FastAPI application per test (middleware state is isolated)."""
-    return create_app()
+    _app = create_app()
+    _app.state.risk_manager = RiskManager(equity=1_000_000, load_persisted_state=False)
+    return _app
 
 
 @pytest.fixture
@@ -46,7 +49,7 @@ def make_token():
 
     def _make(
         sub: str = "testuser",
-        roles: Optional[List[str]] = None,
+        roles: list[str] | None = None,
         token_type: str = "access",
         exp_delta: int = 1800,
         secret: str = TEST_JWT_SECRET,
@@ -70,6 +73,7 @@ def make_token():
 # 1. JWT Authentication Tests
 # =========================================================================
 
+
 class TestJWTAuthentication:
     """Verify that JWT authentication correctly guards protected endpoints."""
 
@@ -77,9 +81,7 @@ class TestJWTAuthentication:
     async def test_expired_token_rejected(self, app, make_token):
         """A token whose exp is in the past must be rejected with 401."""
         expired_token = make_token(exp_delta=-60)  # expired 60 s ago
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -97,9 +99,7 @@ class TestJWTAuthentication:
     @pytest.mark.asyncio
     async def test_invalid_token_rejected(self, app):
         """A completely garbage token must be rejected with 401."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -117,9 +117,7 @@ class TestJWTAuthentication:
     @pytest.mark.asyncio
     async def test_missing_token_on_protected_endpoint(self, app):
         """Requests without an Authorization header to a protected endpoint must get 401."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -141,9 +139,7 @@ class TestJWTAuthentication:
         configured), but it must NOT be a 401.
         """
         valid_token = make_token()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -163,9 +159,7 @@ class TestJWTAuthentication:
     async def test_wrong_secret_rejected(self, app, make_token):
         """A token signed with a different secret must be rejected."""
         wrong_secret_token = make_token(secret="wrong-secret")
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -189,9 +183,7 @@ class TestJWTAuthentication:
         refresh_tok = make_token(token_type="refresh", exp_delta=7 * 86400)
         access_tok = make_token(token_type="access", exp_delta=1800)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             # Valid refresh token -> new access token
             resp = await client.post(
                 f"{API_PREFIX}/auth/refresh",
@@ -214,15 +206,14 @@ class TestJWTAuthentication:
 # 2. CORS Tests
 # =========================================================================
 
+
 class TestCORS:
     """Verify that CORS headers are set correctly based on origin."""
 
     @pytest.mark.asyncio
     async def test_disallowed_origin_cors_response(self, app):
         """An Origin not in the allow-list must NOT receive access-control-allow-origin."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.options(
                 "/health",
                 headers={
@@ -240,9 +231,7 @@ class TestCORS:
     async def test_allowed_origin_cors_headers(self, app):
         """An allowed dev origin must receive proper CORS headers."""
         allowed = "http://localhost:3000"
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.options(
                 "/health",
                 headers={
@@ -259,15 +248,14 @@ class TestCORS:
 # 3. Rate Limiting Tests
 # =========================================================================
 
+
 class TestRateLimiting:
     """Verify the in-memory per-IP rate limiter."""
 
     @pytest.mark.asyncio
     async def test_requests_within_limit_succeed(self, app):
         """A handful of requests should all succeed (not 429)."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             for _ in range(5):
                 resp = await client.get("/health")
                 assert resp.status_code != 429
@@ -278,9 +266,7 @@ class TestRateLimiting:
 
         Auth endpoints have a stricter limit (20 req/min in default config).
         """
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             got_429 = False
             for i in range(25):
                 resp = await client.post(
@@ -295,9 +281,7 @@ class TestRateLimiting:
     @pytest.mark.asyncio
     async def test_rate_limit_returns_retry_after(self, app):
         """When rate limited, the response must include a Retry-After header (or account lockout 429)."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             for _ in range(25):
                 resp = await client.post(
                     f"{API_PREFIX}/auth/login",
@@ -319,6 +303,7 @@ class TestRateLimiting:
 # 4. Input Validation Tests
 # =========================================================================
 
+
 class TestInputValidation:
     """Verify that the order placement endpoint rejects malformed input."""
 
@@ -328,9 +313,7 @@ class TestInputValidation:
     @pytest.mark.asyncio
     async def test_invalid_side(self, app, make_token):
         """Order side must be BUY or SELL; anything else -> 422."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -348,9 +331,7 @@ class TestInputValidation:
     @pytest.mark.asyncio
     async def test_invalid_exchange(self, app, make_token):
         """Exchange must be one of NSE/BSE/NYSE/NASDAQ/LSE/FX; anything else -> 422."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -368,9 +349,7 @@ class TestInputValidation:
     @pytest.mark.asyncio
     async def test_negative_quantity(self, app, make_token):
         """Quantity must be >0; negative -> 422."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -388,9 +367,7 @@ class TestInputValidation:
     @pytest.mark.asyncio
     async def test_zero_quantity(self, app, make_token):
         """Quantity must be >0; zero -> 422."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -412,9 +389,7 @@ class TestInputValidation:
         Depending on the flow, this may be a 400 (app-level check) or 503
         (order entry not wired in tests) but never silently accepted (200).
         """
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -443,11 +418,9 @@ class TestInputValidation:
             "'; DROP TABLE orders;--",
             "RELIANCE' OR '1'='1",
             "1; SELECT * FROM users",
-            "RELIANCE\"; DELETE FROM orders;--",
+            'RELIANCE"; DELETE FROM orders;--',
         ]
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             for payload in sql_payloads:
                 resp = await client.post(
                     f"{API_PREFIX}/orders",
@@ -460,16 +433,12 @@ class TestInputValidation:
                     },
                     headers=self._auth_header(make_token),
                 )
-                assert resp.status_code == 422, (
-                    f"SQL injection payload was not rejected: {payload!r}"
-                )
+                assert resp.status_code == 422, f"SQL injection payload was not rejected: {payload!r}"
 
     @pytest.mark.asyncio
     async def test_quantity_exceeds_max(self, app, make_token):
         """Quantity above the 1,000,000 max must be rejected."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/orders",
                 json={
@@ -488,6 +457,7 @@ class TestInputValidation:
 # 5. Password Security Tests
 # =========================================================================
 
+
 class TestPasswordSecurity:
     """Verify password handling meets security requirements."""
 
@@ -496,9 +466,7 @@ class TestPasswordSecurity:
         """Registration with a password shorter than MIN_PASSWORD_LENGTH (8)
         must be rejected with 422 (Pydantic validation) or 400.
         """
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/auth/register",
                 json={
@@ -513,9 +481,7 @@ class TestPasswordSecurity:
     @pytest.mark.asyncio
     async def test_exactly_min_length_password_accepted(self, app):
         """A password with exactly MIN_PASSWORD_LENGTH chars and complexity should pass validation."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/auth/register",
                 json={
@@ -532,9 +498,7 @@ class TestPasswordSecurity:
     async def test_plaintext_password_never_in_register_response(self, app):
         """The register response body must never contain the plaintext password."""
         password = "SuperSecretP@ssw0rd!"
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/auth/register",
                 json={
@@ -551,9 +515,7 @@ class TestPasswordSecurity:
         """The login response body must never contain the plaintext password."""
         password = "MyTradingP@ss99"
         # First register, then login
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post(
                 f"{API_PREFIX}/auth/register",
                 json={
@@ -571,9 +533,7 @@ class TestPasswordSecurity:
     @pytest.mark.asyncio
     async def test_empty_password_rejected(self, app):
         """An empty password string must be rejected."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 f"{API_PREFIX}/auth/register",
                 json={
@@ -589,17 +549,16 @@ class TestPasswordSecurity:
 # 6. Security Headers Tests (bonus)
 # =========================================================================
 
+
 class TestSecurityHeaders:
     """Verify that SecurityHeadersMiddleware sets expected headers."""
 
     @pytest.mark.asyncio
     async def test_security_headers_present(self, app):
         """Responses should contain standard security headers."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/health")
         assert resp.headers.get("x-content-type-options") == "nosniff"
         assert resp.headers.get("x-frame-options") == "DENY"
-        assert resp.headers.get("x-xss-protection") == "1; mode=block"
+        # X-XSS-Protection intentionally omitted; CSP provides superior protection
         assert "strict-origin" in resp.headers.get("referrer-policy", "")

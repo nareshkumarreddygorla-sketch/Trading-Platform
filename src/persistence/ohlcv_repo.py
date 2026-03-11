@@ -2,9 +2,9 @@
 OHLCV Repository: store and retrieve historical bar data.
 Supports bulk upsert for nightly data refresh.
 """
+
 import logging
 from datetime import datetime
-from typing import List, Optional
 
 from sqlalchemy import and_, text
 
@@ -22,7 +22,7 @@ def _is_sqlite() -> bool:
 class OHLCVRepository:
     """CRUD operations for OHLCV bars with conflict-free upsert."""
 
-    def upsert_bars(self, bars: List[Bar]) -> int:
+    def upsert_bars(self, bars: list[Bar]) -> int:
         """
         Insert or update bars. Uses PostgreSQL ON CONFLICT or SQLite INSERT OR REPLACE.
         Returns number of rows affected.
@@ -33,17 +33,19 @@ class OHLCVRepository:
         with session_scope() as session:
             rows = []
             for bar in bars:
-                rows.append({
-                    "symbol": bar.symbol,
-                    "exchange": bar.exchange.value if hasattr(bar.exchange, "value") else str(bar.exchange),
-                    "interval": bar.interval,
-                    "timestamp": bar.ts,
-                    "open": bar.open,
-                    "high": bar.high,
-                    "low": bar.low,
-                    "close": bar.close,
-                    "volume": bar.volume,
-                })
+                rows.append(
+                    {
+                        "symbol": bar.symbol,
+                        "exchange": bar.exchange.value if hasattr(bar.exchange, "value") else str(bar.exchange),
+                        "interval": bar.interval,
+                        "timestamp": bar.ts,
+                        "open": bar.open,
+                        "high": bar.high,
+                        "low": bar.low,
+                        "close": bar.close,
+                        "volume": bar.volume,
+                    }
+                )
 
             if _is_sqlite():
                 # SQLite: use INSERT OR REPLACE (must include created_at for NOT NULL constraint)
@@ -61,6 +63,7 @@ class OHLCVRepository:
             else:
                 # PostgreSQL: batch upsert
                 from sqlalchemy.dialects.postgresql import insert as pg_insert
+
                 stmt = pg_insert(OHLCVBarModel).values(rows)
                 stmt = stmt.on_conflict_do_update(
                     constraint="uq_ohlcv_symbol_exchange_interval_ts",
@@ -84,10 +87,10 @@ class OHLCVRepository:
         symbol: str,
         interval: str = "1d",
         exchange: str = "NSE",
-        from_date: Optional[datetime] = None,
-        to_date: Optional[datetime] = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
         limit: int = 500,
-    ) -> List[Bar]:
+    ) -> list[Bar]:
         """Retrieve bars for a symbol, sorted by timestamp ascending."""
         with session_scope() as session:
             query = session.query(OHLCVBarModel).filter(
@@ -120,7 +123,7 @@ class OHLCVRepository:
                 for r in rows
             ]
 
-    def get_symbols_with_data(self, interval: str = "1d", exchange: str = "NSE", min_bars: int = 50) -> List[str]:
+    def get_symbols_with_data(self, interval: str = "1d", exchange: str = "NSE", min_bars: int = 50) -> list[str]:
         """Return symbols that have at least min_bars of data."""
         with session_scope() as session:
             result = session.execute(
@@ -136,7 +139,7 @@ class OHLCVRepository:
             )
             return [row[0] for row in result]
 
-    def get_latest_timestamp(self, symbol: str, interval: str = "1d", exchange: str = "NSE") -> Optional[datetime]:
+    def get_latest_timestamp(self, symbol: str, interval: str = "1d", exchange: str = "NSE") -> datetime | None:
         """Get the most recent bar timestamp for a symbol."""
         with session_scope() as session:
             row = (

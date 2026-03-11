@@ -20,10 +20,11 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -32,22 +33,24 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 # ---------------------------------------------------------------------------
 
-OTR_WARNING_THRESHOLD = 8.0   # P2-2: 8:1 triggers warning (was 25:1)
-OTR_HALT_THRESHOLD = 10.0    # P2-2: 10:1 triggers halt per NSE limit (was 50:1)
-WINDOW_1MIN = 60              # seconds
+OTR_WARNING_THRESHOLD = 8.0  # P2-2: 8:1 triggers warning (was 25:1)
+OTR_HALT_THRESHOLD = 10.0  # P2-2: 10:1 triggers halt per NSE limit (was 50:1)
+WINDOW_1MIN = 60  # seconds
 WINDOW_5MIN = 300
 WINDOW_1HR = 3600
 
 
 class OTRStatus(str, Enum):
     """Status levels for OTR monitoring."""
+
     NORMAL = "NORMAL"
-    WARNING = "WARNING"       # OTR > 25:1
-    HALTED = "HALTED"         # OTR > 50:1
+    WARNING = "WARNING"  # OTR > 25:1
+    HALTED = "HALTED"  # OTR > 50:1
 
 
 class OTREventType(str, Enum):
     """Types of OTR events."""
+
     ORDER_SUBMITTED = "ORDER_SUBMITTED"
     ORDER_FILLED = "ORDER_FILLED"
     ORDER_CANCELLED = "ORDER_CANCELLED"
@@ -57,6 +60,7 @@ class OTREventType(str, Enum):
 @dataclass
 class OTRAlert:
     """Alert generated when OTR thresholds are breached."""
+
     alert_id: str
     algo_id: str
     timestamp: datetime
@@ -71,6 +75,7 @@ class OTRAlert:
 @dataclass
 class _TimestampedEvent:
     """Internal record of an order/trade event with timestamp for windowing."""
+
     timestamp: float  # time.monotonic() for window calculations
     utc_time: datetime
     event_type: OTREventType
@@ -100,7 +105,7 @@ class OTRMonitor:
         self,
         warning_threshold: float = OTR_WARNING_THRESHOLD,
         halt_threshold: float = OTR_HALT_THRESHOLD,
-        on_alert: Optional[Callable[[OTRAlert], None]] = None,
+        on_alert: Callable[[OTRAlert], None] | None = None,
     ) -> None:
         self._warning_threshold = warning_threshold
         self._halt_threshold = halt_threshold
@@ -108,18 +113,18 @@ class OTRMonitor:
         self._lock = threading.Lock()
 
         # Per-algo deques of timestamped events
-        self._order_events: Dict[str, Deque[_TimestampedEvent]] = defaultdict(deque)
-        self._trade_events: Dict[str, Deque[_TimestampedEvent]] = defaultdict(deque)
+        self._order_events: dict[str, deque[_TimestampedEvent]] = defaultdict(deque)
+        self._trade_events: dict[str, deque[_TimestampedEvent]] = defaultdict(deque)
 
         # Current status per algo
-        self._algo_status: Dict[str, OTRStatus] = defaultdict(lambda: OTRStatus.NORMAL)
+        self._algo_status: dict[str, OTRStatus] = defaultdict(lambda: OTRStatus.NORMAL)
 
         # Alert history
-        self._alerts: List[OTRAlert] = []
+        self._alerts: list[OTRAlert] = []
 
         # Cumulative counters (lifetime)
-        self._total_orders: Dict[str, int] = defaultdict(int)
-        self._total_trades: Dict[str, int] = defaultdict(int)
+        self._total_orders: dict[str, int] = defaultdict(int)
+        self._total_trades: dict[str, int] = defaultdict(int)
 
     # ------------------------------------------------------------------
     # Public API: record events
@@ -149,7 +154,7 @@ class OTRMonitor:
             Current status after recording this order.
         """
         now_mono = time.monotonic()
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
 
         event = _TimestampedEvent(
             timestamp=now_mono,
@@ -189,7 +194,7 @@ class OTRMonitor:
             Current status after recording this trade.
         """
         now_mono = time.monotonic()
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
 
         event = _TimestampedEvent(
             timestamp=now_mono,
@@ -227,7 +232,7 @@ class OTRMonitor:
         with self._lock:
             return self._compute_otr(algo_id, window_seconds, now_mono)
 
-    def get_all_otr_reports(self) -> List[Dict[str, Any]]:
+    def get_all_otr_reports(self) -> list[dict[str, Any]]:
         """
         Get OTR reports for all tracked algorithms across all windows.
 
@@ -245,30 +250,40 @@ class OTRMonitor:
                 otr_5m = self._compute_otr(algo_id, WINDOW_5MIN, now_mono)
                 otr_1h = self._compute_otr(algo_id, WINDOW_1HR, now_mono)
 
-                orders_1m = self._count_events_in_window(self._order_events.get(algo_id, deque()), WINDOW_1MIN, now_mono)
-                trades_1m = self._count_events_in_window(self._trade_events.get(algo_id, deque()), WINDOW_1MIN, now_mono)
-                orders_5m = self._count_events_in_window(self._order_events.get(algo_id, deque()), WINDOW_5MIN, now_mono)
-                trades_5m = self._count_events_in_window(self._trade_events.get(algo_id, deque()), WINDOW_5MIN, now_mono)
+                orders_1m = self._count_events_in_window(
+                    self._order_events.get(algo_id, deque()), WINDOW_1MIN, now_mono
+                )
+                trades_1m = self._count_events_in_window(
+                    self._trade_events.get(algo_id, deque()), WINDOW_1MIN, now_mono
+                )
+                orders_5m = self._count_events_in_window(
+                    self._order_events.get(algo_id, deque()), WINDOW_5MIN, now_mono
+                )
+                trades_5m = self._count_events_in_window(
+                    self._trade_events.get(algo_id, deque()), WINDOW_5MIN, now_mono
+                )
                 orders_1h = self._count_events_in_window(self._order_events.get(algo_id, deque()), WINDOW_1HR, now_mono)
                 trades_1h = self._count_events_in_window(self._trade_events.get(algo_id, deque()), WINDOW_1HR, now_mono)
 
-                reports.append({
-                    "algo_id": algo_id,
-                    "status": self._algo_status[algo_id].value,
-                    "otr_1min": otr_1m if otr_1m != float("inf") else -1,
-                    "otr_5min": otr_5m if otr_5m != float("inf") else -1,
-                    "otr_1hr": otr_1h if otr_1h != float("inf") else -1,
-                    "orders_1min": orders_1m,
-                    "trades_1min": trades_1m,
-                    "orders_5min": orders_5m,
-                    "trades_5min": trades_5m,
-                    "orders_1hr": orders_1h,
-                    "trades_1hr": trades_1h,
-                    "total_orders_lifetime": self._total_orders.get(algo_id, 0),
-                    "total_trades_lifetime": self._total_trades.get(algo_id, 0),
-                    "warning_threshold": self._warning_threshold,
-                    "halt_threshold": self._halt_threshold,
-                })
+                reports.append(
+                    {
+                        "algo_id": algo_id,
+                        "status": self._algo_status[algo_id].value,
+                        "otr_1min": otr_1m if otr_1m != float("inf") else -1,
+                        "otr_5min": otr_5m if otr_5m != float("inf") else -1,
+                        "otr_1hr": otr_1h if otr_1h != float("inf") else -1,
+                        "orders_1min": orders_1m,
+                        "trades_1min": trades_1m,
+                        "orders_5min": orders_5m,
+                        "trades_5min": trades_5m,
+                        "orders_1hr": orders_1h,
+                        "trades_1hr": trades_1h,
+                        "total_orders_lifetime": self._total_orders.get(algo_id, 0),
+                        "total_trades_lifetime": self._total_trades.get(algo_id, 0),
+                        "warning_threshold": self._warning_threshold,
+                        "halt_threshold": self._halt_threshold,
+                    }
+                )
 
         return reports
 
@@ -297,9 +312,9 @@ class OTRMonitor:
 
     def get_alerts(
         self,
-        algo_id: Optional[str] = None,
+        algo_id: str | None = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get recent OTR alerts, optionally filtered by algo ID.
 
@@ -343,12 +358,8 @@ class OTRMonitor:
         now_mono: float,
     ) -> float:
         """Compute OTR within a time window. Must be called under lock."""
-        orders = self._count_events_in_window(
-            self._order_events.get(algo_id, deque()), window_seconds, now_mono
-        )
-        trades = self._count_events_in_window(
-            self._trade_events.get(algo_id, deque()), window_seconds, now_mono
-        )
+        orders = self._count_events_in_window(self._order_events.get(algo_id, deque()), window_seconds, now_mono)
+        trades = self._count_events_in_window(self._trade_events.get(algo_id, deque()), window_seconds, now_mono)
 
         if orders == 0:
             return 0.0
@@ -364,7 +375,7 @@ class OTRMonitor:
 
     def _count_events_in_window(
         self,
-        events: Deque[_TimestampedEvent],
+        events: deque[_TimestampedEvent],
         window_seconds: int,
         now_mono: float,
     ) -> int:

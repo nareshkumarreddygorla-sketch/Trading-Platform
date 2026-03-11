@@ -2,8 +2,10 @@
 Strategy Selector Agent: uses regime detection to dynamically
 enable/disable strategies based on market conditions.
 """
+
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -50,7 +52,7 @@ class StrategySelectorAgent(BaseAgent):
         self,
         strategy_registry=None,
         regime_classifier=None,
-        get_bars: Optional[Callable] = None,
+        get_bars: Callable | None = None,
         index_symbol: str = "NIFTY",
         selection_interval: float = 120.0,  # 2 minutes
     ):
@@ -61,19 +63,20 @@ class StrategySelectorAgent(BaseAgent):
         self._index_symbol = index_symbol
         self._selection_interval = selection_interval
         self._current_regime: str = "unknown"
-        self._regime_history: List[str] = []
+        self._regime_history: list[str] = []
 
     @property
     def interval_seconds(self) -> float:
         return self._selection_interval
 
-    def _detect_regime(self) -> Optional[str]:
+    def _detect_regime(self) -> str | None:
         """Detect current market regime from index bars."""
         if not self._regime_classifier or not self._get_bars:
             return None
 
         try:
             from src.core.events import Exchange
+
             bars = self._get_bars(self._index_symbol, Exchange.NSE, "1m", 100)
             if not bars or len(bars) < 30:
                 # Try with a common index name
@@ -152,7 +155,7 @@ class StrategySelectorAgent(BaseAgent):
             },
         )
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         status = super().get_status()
         status["current_regime"] = self._current_regime
         status["regime_history"] = self._regime_history[-10:]

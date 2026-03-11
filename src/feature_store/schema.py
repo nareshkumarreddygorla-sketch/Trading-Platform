@@ -1,12 +1,14 @@
 """Feature store schema: time-series features for ML, versioned."""
+
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, List
+from typing import Any
 
 
 @dataclass
 class FeatureSpec:
     """Spec for one feature: name, dtype, version."""
+
     name: str
     dtype: str  # float, int, category
     version: str = "v1"
@@ -16,12 +18,13 @@ class FeatureSpec:
 @dataclass
 class FeatureVector:
     """Single timestamp feature vector."""
+
     symbol: str
     ts: datetime
     features: dict[str, Any]
 
 
-def default_feature_specs() -> List[FeatureSpec]:
+def default_feature_specs() -> list[FeatureSpec]:
     """Common technical features for ML strategies."""
     return [
         FeatureSpec("returns_1d", "float", "v1", "1-day return"),

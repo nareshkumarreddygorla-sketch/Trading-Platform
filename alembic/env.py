@@ -1,4 +1,5 @@
 """Alembic environment. Uses DATABASE_URL from env when set."""
+
 import os
 from logging.config import fileConfig
 
@@ -12,6 +13,7 @@ if config.config_file_name is not None:
 
 # Model metadata for autogenerate
 from src.persistence.models import Base
+
 target_metadata = Base.metadata
 
 db_url = os.environ.get("DATABASE_URL")

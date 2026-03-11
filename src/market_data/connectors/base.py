@@ -1,6 +1,7 @@
 """Base contract for exchange/market data connectors. Resilient: auto-reconnect, backpressure."""
+
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 from src.core.events import Bar, Exchange, Tick
 
@@ -40,8 +41,6 @@ class BaseMarketDataConnector(ABC):
         """Async generator of normalized bars."""
         ...
 
-    async def get_historical_bars(
-        self, symbol: str, interval: str, start: str, end: str
-    ) -> list[Bar]:
+    async def get_historical_bars(self, symbol: str, interval: str, start: str, end: str) -> list[Bar]:
         """Fetch historical bars (REST). Return empty list if not supported."""
         return []

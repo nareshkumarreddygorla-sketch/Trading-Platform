@@ -15,6 +15,7 @@ Usage:
     PYTHONPATH=. python scripts/train_rl.py --quick              # fast sanity run
     PYTHONPATH=. python scripts/train_rl.py --symbols RELIANCE.NS,TCS.NS
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,16 +45,56 @@ MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
 # NIFTY50 representative tickers (Yahoo Finance format)
 NIFTY50_TICKERS = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS", "ITC.NS",
-    "LT.NS", "AXISBANK.NS", "BAJFINANCE.NS", "ASIANPAINT.NS", "MARUTI.NS",
-    "HCLTECH.NS", "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS", "WIPRO.NS",
-    "NESTLEIND.NS", "NTPC.NS", "TATAMOTORS.NS", "POWERGRID.NS", "M&M.NS",
-    "TATASTEEL.NS", "ONGC.NS", "JSWSTEEL.NS", "ADANIPORTS.NS", "COALINDIA.NS",
-    "BAJAJFINSV.NS", "TECHM.NS", "LTIM.NS", "INDUSINDBK.NS", "HINDALCO.NS",
-    "GRASIM.NS", "CIPLA.NS", "DRREDDY.NS", "DIVISLAB.NS", "EICHERMOT.NS",
-    "BPCL.NS", "BRITANNIA.NS", "HEROMOTOCO.NS", "APOLLOHOSP.NS", "TATACONSUM.NS",
-    "SBILIFE.NS", "HDFCLIFE.NS", "BAJAJ-AUTO.NS", "UPL.NS", "SHRIRAMFIN.NS",
+    "RELIANCE.NS",
+    "TCS.NS",
+    "HDFCBANK.NS",
+    "INFY.NS",
+    "ICICIBANK.NS",
+    "HINDUNILVR.NS",
+    "SBIN.NS",
+    "BHARTIARTL.NS",
+    "KOTAKBANK.NS",
+    "ITC.NS",
+    "LT.NS",
+    "AXISBANK.NS",
+    "BAJFINANCE.NS",
+    "ASIANPAINT.NS",
+    "MARUTI.NS",
+    "HCLTECH.NS",
+    "SUNPHARMA.NS",
+    "TITAN.NS",
+    "ULTRACEMCO.NS",
+    "WIPRO.NS",
+    "NESTLEIND.NS",
+    "NTPC.NS",
+    "TATAMOTORS.NS",
+    "POWERGRID.NS",
+    "M&M.NS",
+    "TATASTEEL.NS",
+    "ONGC.NS",
+    "JSWSTEEL.NS",
+    "ADANIPORTS.NS",
+    "COALINDIA.NS",
+    "BAJAJFINSV.NS",
+    "TECHM.NS",
+    "LTIM.NS",
+    "INDUSINDBK.NS",
+    "HINDALCO.NS",
+    "GRASIM.NS",
+    "CIPLA.NS",
+    "DRREDDY.NS",
+    "DIVISLAB.NS",
+    "EICHERMOT.NS",
+    "BPCL.NS",
+    "BRITANNIA.NS",
+    "HEROMOTOCO.NS",
+    "APOLLOHOSP.NS",
+    "TATACONSUM.NS",
+    "SBILIFE.NS",
+    "HDFCLIFE.NS",
+    "BAJAJ-AUTO.NS",
+    "UPL.NS",
+    "SHRIRAMFIN.NS",
 ]
 
 
@@ -118,23 +159,25 @@ def build_features_from_df(df: pd.DataFrame, symbol: str = "UNKNOWN") -> Tuple[n
     # Build Bar objects
     bars: List[Bar] = []
     for idx, row in df.iterrows():
-        bars.append(Bar(
-            symbol=symbol,
-            exchange="NSE",
-            interval="1d",
-            open=float(row["open"]),
-            high=float(row["high"]),
-            low=float(row["low"]),
-            close=float(row["close"]),
-            volume=float(row["volume"]),
-            ts=idx if isinstance(idx, datetime) else datetime.now(),
-        ))
+        bars.append(
+            Bar(
+                symbol=symbol,
+                exchange="NSE",
+                interval="1d",
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                volume=float(row["volume"]),
+                ts=idx if isinstance(idx, datetime) else datetime.now(),
+            )
+        )
 
     # Compute features starting from index 20 (need history for indicators)
     warmup = 20
     feature_rows = []
     for i in range(warmup, len(bars)):
-        window = bars[max(0, i - lookback): i + 1]
+        window = bars[max(0, i - lookback) : i + 1]
         feat_dict = fe.build_features(window)
         row_feats = [feat_dict.get(k, 0.0) for k in FEATURE_KEYS]
         feature_rows.append(row_feats)
@@ -283,8 +326,7 @@ def train(
         from stable_baselines3 import PPO
     except ImportError:
         logger.error(
-            "stable-baselines3 is required.  Install with:\n"
-            "  pip install 'stable-baselines3[extra]' gymnasium"
+            "stable-baselines3 is required.  Install with:\n  pip install 'stable-baselines3[extra]' gymnasium"
         )
         sys.exit(1)
 
@@ -297,8 +339,7 @@ def train(
     if quick:
         total_timesteps = min(total_timesteps, 50_000)
         n_envs = 2
-        logger.info("=== QUICK MODE: %d timesteps, %d envs, %d tickers ===",
-                     total_timesteps, n_envs, len(tickers))
+        logger.info("=== QUICK MODE: %d timesteps, %d envs, %d tickers ===", total_timesteps, n_envs, len(tickers))
 
     # ----- 1. Fetch data -----
     end_date = datetime.now().strftime("%Y-%m-%d")
@@ -321,7 +362,7 @@ def train(
         stock_bars[ticker] = bars_arr
         stock_features[ticker] = feats_arr
         # Keep aligned DF for walk-forward splitting
-        stock_dfs[ticker] = df.iloc[20: 20 + len(bars_arr)]
+        stock_dfs[ticker] = df.iloc[20 : 20 + len(bars_arr)]
 
     logger.info("Features built for %d stocks", len(stock_bars))
     if not stock_bars:
@@ -342,20 +383,26 @@ def train(
     logger.info("Walk-forward folds for %s: %d folds", wf_ticker, len(folds))
 
     for fold_idx, (train_df, test_df) in enumerate(folds):
-        logger.info("--- Fold %d: train %s -> %s  |  test %s -> %s ---",
-                     fold_idx + 1,
-                     train_df.index[0].strftime("%Y-%m-%d"),
-                     train_df.index[-1].strftime("%Y-%m-%d"),
-                     test_df.index[0].strftime("%Y-%m-%d"),
-                     test_df.index[-1].strftime("%Y-%m-%d"))
+        logger.info(
+            "--- Fold %d: train %s -> %s  |  test %s -> %s ---",
+            fold_idx + 1,
+            train_df.index[0].strftime("%Y-%m-%d"),
+            train_df.index[-1].strftime("%Y-%m-%d"),
+            test_df.index[0].strftime("%Y-%m-%d"),
+            test_df.index[-1].strftime("%Y-%m-%d"),
+        )
 
         # Build features for this fold
         train_bars, train_feats = build_features_from_df(train_df, symbol=wf_ticker)
         test_bars, test_feats = build_features_from_df(test_df, symbol=wf_ticker)
 
         if len(train_bars) < 60 or len(test_bars) < 20:
-            logger.warning("  Fold %d skipped: insufficient data (train=%d, test=%d)",
-                           fold_idx + 1, len(train_bars), len(test_bars))
+            logger.warning(
+                "  Fold %d skipped: insufficient data (train=%d, test=%d)",
+                fold_idx + 1,
+                len(train_bars),
+                len(test_bars),
+            )
             continue
 
         # Normalise using training stats
@@ -388,26 +435,31 @@ def train(
         metrics = evaluate_agent(fold_model, test_bars, test_feats_n)
         all_oos_sharpes.append(metrics["sharpe_ratio"])
 
-        logger.info("  Fold %d OOS:  Sharpe=%.3f  Return=%.2f%%  MaxDD=%.2f%%  Trades=%d",
-                     fold_idx + 1,
-                     metrics["sharpe_ratio"],
-                     metrics["total_return_pct"],
-                     metrics["max_drawdown_pct"],
-                     metrics["n_trades"])
+        logger.info(
+            "  Fold %d OOS:  Sharpe=%.3f  Return=%.2f%%  MaxDD=%.2f%%  Trades=%d",
+            fold_idx + 1,
+            metrics["sharpe_ratio"],
+            metrics["total_return_pct"],
+            metrics["max_drawdown_pct"],
+            metrics["n_trades"],
+        )
 
     if all_oos_sharpes:
         avg_sharpe = np.mean(all_oos_sharpes)
         std_sharpe = np.std(all_oos_sharpes)
         logger.info("=" * 60)
-        logger.info("WALK-FORWARD SUMMARY:  Mean OOS Sharpe = %.3f (+/- %.3f)  over %d folds",
-                     avg_sharpe, std_sharpe, len(all_oos_sharpes))
+        logger.info(
+            "WALK-FORWARD SUMMARY:  Mean OOS Sharpe = %.3f (+/- %.3f)  over %d folds",
+            avg_sharpe,
+            std_sharpe,
+            len(all_oos_sharpes),
+        )
         logger.info("=" * 60)
     else:
         logger.warning("No walk-forward folds completed.")
 
     # ----- 4. Final model: train on ALL data -----
-    logger.info("Training FINAL model on all %d stocks for %d timesteps ...",
-                len(stock_bars), total_timesteps)
+    logger.info("Training FINAL model on all %d stocks for %d timesteps ...", len(stock_bars), total_timesteps)
 
     all_bars_list = list(stock_bars.values())
     all_feats_list = list(stock_features.values())
@@ -439,8 +491,9 @@ def train(
     t0 = time.time()
     final_model.learn(total_timesteps=total_timesteps)
     elapsed = time.time() - t0
-    logger.info("Final training completed in %.1f seconds (%.0f steps/sec)",
-                elapsed, total_timesteps / (elapsed + 1e-6))
+    logger.info(
+        "Final training completed in %.1f seconds (%.0f steps/sec)", elapsed, total_timesteps / (elapsed + 1e-6)
+    )
 
     # ----- 5. Save -----
     os.makedirs(MODELS_DIR, exist_ok=True)
@@ -462,9 +515,14 @@ def train(
         feats_n = (stock_features[ticker] - feat_means) / feat_stds
         metrics = evaluate_agent(final_model, bars_arr, feats_n)
         all_sharpes.append(metrics["sharpe_ratio"])
-        logger.info("  %-15s  Sharpe=%.3f  Return=%.2f%%  MaxDD=%.2f%%  Trades=%d",
-                     ticker, metrics["sharpe_ratio"], metrics["total_return_pct"],
-                     metrics["max_drawdown_pct"], metrics["n_trades"])
+        logger.info(
+            "  %-15s  Sharpe=%.3f  Return=%.2f%%  MaxDD=%.2f%%  Trades=%d",
+            ticker,
+            metrics["sharpe_ratio"],
+            metrics["total_return_pct"],
+            metrics["max_drawdown_pct"],
+            metrics["n_trades"],
+        )
 
     logger.info("-" * 60)
     logger.info("Mean in-sample Sharpe: %.3f", np.mean(all_sharpes))
@@ -488,31 +546,44 @@ Examples:
         """,
     )
     parser.add_argument(
-        "--timesteps", type=int, default=500_000,
+        "--timesteps",
+        type=int,
+        default=500_000,
         help="Total training timesteps for the final model (default: 500000)",
     )
     parser.add_argument(
-        "--symbols", type=str, default=None,
+        "--symbols",
+        type=str,
+        default=None,
         help="Comma-separated Yahoo Finance tickers (default: NIFTY50 top 30)",
     )
     parser.add_argument(
-        "--train-months", type=int, default=6,
+        "--train-months",
+        type=int,
+        default=6,
         help="Walk-forward training window in months (default: 6)",
     )
     parser.add_argument(
-        "--test-months", type=int, default=2,
+        "--test-months",
+        type=int,
+        default=2,
         help="Walk-forward test window in months (default: 2)",
     )
     parser.add_argument(
-        "--n-envs", type=int, default=4,
+        "--n-envs",
+        type=int,
+        default=4,
         help="Number of parallel environments (default: 4)",
     )
     parser.add_argument(
-        "--lr", type=float, default=3e-4,
+        "--lr",
+        type=float,
+        default=3e-4,
         help="PPO learning rate (default: 3e-4)",
     )
     parser.add_argument(
-        "--quick", action="store_true",
+        "--quick",
+        action="store_true",
         help="Quick sanity run: 50K steps, 2 envs, 10 tickers",
     )
 

@@ -9,10 +9,12 @@ Auto-heal logic:
   - If quantity difference >= threshold: arm kill switch (critical mismatch).
     Fire CRITICAL alert.
 """
+
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from src.core.events import Position
 
@@ -22,11 +24,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ReconciliationResult:
     in_sync: bool
-    broker_positions: List[Any] = field(default_factory=list)
-    local_positions: List[Position] = field(default_factory=list)
-    mismatches: List[str] = field(default_factory=list)
-    auto_healed: List[str] = field(default_factory=list)
-    ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    broker_positions: list[Any] = field(default_factory=list)
+    local_positions: list[Position] = field(default_factory=list)
+    mismatches: list[str] = field(default_factory=list)
+    auto_healed: list[str] = field(default_factory=list)
+    ts: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class ReconciliationJob:
@@ -39,10 +41,10 @@ class ReconciliationJob:
         self,
         fetch_broker_positions: Callable,
         get_local_positions: Callable,
-        on_mismatch: Optional[Callable[[ReconciliationResult], None]] = None,
+        on_mismatch: Callable[[ReconciliationResult], None] | None = None,
         trigger_freeze_on_mismatch: bool = True,
         auto_heal_threshold_pct: float = 5.0,
-        adjust_local_position_fn: Optional[Callable[[str, str, int], None]] = None,
+        adjust_local_position_fn: Callable[[str, str, int], None] | None = None,
         # adjust_local_position_fn(symbol, exchange, broker_quantity) — adjust RiskManager
     ):
         self.fetch_broker_positions = fetch_broker_positions
@@ -51,9 +53,9 @@ class ReconciliationJob:
         self.trigger_freeze_on_mismatch = trigger_freeze_on_mismatch
         self.auto_heal_threshold_pct = auto_heal_threshold_pct
         self.adjust_local_position_fn = adjust_local_position_fn
-        self._audit_log: List[dict] = []
+        self._audit_log: list[dict] = []
 
-    def get_audit_log(self) -> List[dict]:
+    def get_audit_log(self) -> list[dict]:
         """Return reconciliation audit trail."""
         return list(self._audit_log)
 
@@ -69,8 +71,8 @@ class ReconciliationJob:
             )
 
         local_positions = self.get_local_positions()
-        mismatches: List[str] = []
-        auto_healed: List[str] = []
+        mismatches: list[str] = []
+        auto_healed: list[str] = []
 
         # Normalize: broker may return list of dicts or objects; local is List[Position]
         broker_by_key = {}
@@ -86,7 +88,10 @@ class ReconciliationJob:
             exch = exch_raw.value if hasattr(exch_raw, "value") else str(exch_raw)
             broker_by_key[(sym, exch)] = (p, b_qty or 0)
 
-        local_by_key = {(p.symbol, p.exchange.value if hasattr(p.exchange, "value") else str(p.exchange)): p for p in local_positions}
+        local_by_key = {
+            (p.symbol, p.exchange.value if hasattr(p.exchange, "value") else str(p.exchange)): p
+            for p in local_positions
+        }
 
         all_keys = set(broker_by_key) | set(local_by_key)
         for key in all_keys:
@@ -113,40 +118,42 @@ class ReconciliationJob:
                     try:
                         self.adjust_local_position_fn(key[0], key[1], int(b_qty))
                         heal_msg = (
-                            f"auto_healed:{key[0]}_{key[1]} "
-                            f"local={local_qty}->broker={b_qty} (diff={diff_pct:.1f}%)"
+                            f"auto_healed:{key[0]}_{key[1]} local={local_qty}->broker={b_qty} (diff={diff_pct:.1f}%)"
                         )
                         auto_healed.append(heal_msg)
                         logger.info("Reconciliation AUTO-HEALED: %s", heal_msg)
-                        self._audit_log.append({
-                            "ts": datetime.now(timezone.utc).isoformat(),
-                            "action": "auto_heal",
-                            "symbol": key[0],
-                            "exchange": key[1],
-                            "local_qty": local_qty,
-                            "broker_qty": int(b_qty),
-                            "diff_pct": round(diff_pct, 2),
-                        })
+                        self._audit_log.append(
+                            {
+                                "ts": datetime.now(UTC).isoformat(),
+                                "action": "auto_heal",
+                                "symbol": key[0],
+                                "exchange": key[1],
+                                "local_qty": local_qty,
+                                "broker_qty": int(b_qty),
+                                "diff_pct": round(diff_pct, 2),
+                            }
+                        )
                     except Exception as e:
                         logger.warning("Auto-heal failed for %s: %s", key[0], e)
                         mismatches.append(f"qty_mismatch:{key[0]}_{key[1]} local={local_qty} broker={b_qty}")
                 else:
                     # Large mismatch: flag for kill switch
                     mismatch_msg = (
-                        f"qty_mismatch:{key[0]}_{key[1]} "
-                        f"local={local_qty} broker={b_qty} (diff={diff_pct:.1f}%)"
+                        f"qty_mismatch:{key[0]}_{key[1]} local={local_qty} broker={b_qty} (diff={diff_pct:.1f}%)"
                     )
                     mismatches.append(mismatch_msg)
-                    self._audit_log.append({
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "action": "mismatch_detected",
-                        "symbol": key[0],
-                        "exchange": key[1],
-                        "local_qty": local_qty,
-                        "broker_qty": int(b_qty),
-                        "diff_pct": round(diff_pct, 2),
-                        "severity": "CRITICAL",
-                    })
+                    self._audit_log.append(
+                        {
+                            "ts": datetime.now(UTC).isoformat(),
+                            "action": "mismatch_detected",
+                            "symbol": key[0],
+                            "exchange": key[1],
+                            "local_qty": local_qty,
+                            "broker_qty": int(b_qty),
+                            "diff_pct": round(diff_pct, 2),
+                            "severity": "CRITICAL",
+                        }
+                    )
 
         # Keep audit log bounded
         if len(self._audit_log) > 500:

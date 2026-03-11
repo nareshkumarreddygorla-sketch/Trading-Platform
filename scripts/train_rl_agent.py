@@ -14,6 +14,7 @@ Usage:
     PYTHONPATH=. python scripts/train_rl_agent.py
     PYTHONPATH=. python scripts/train_rl_agent.py --timesteps 200000 --symbols-count 50
 """
+
 import argparse
 import logging
 import os
@@ -51,8 +52,11 @@ def build_training_data(symbols=None, symbols_count=DEFAULT_SYMBOLS_COUNT):
     fe = FeatureEngine()
 
     if symbols is None:
-        parquet_files = [f for f in os.listdir(DATA_DIR)
-                         if f.endswith(".parquet") and f not in ("all_stocks.parquet", "NIFTY50.parquet")]
+        parquet_files = [
+            f
+            for f in os.listdir(DATA_DIR)
+            if f.endswith(".parquet") and f not in ("all_stocks.parquet", "NIFTY50.parquet")
+        ]
         symbols = [f.replace(".parquet", "") for f in parquet_files[:symbols_count]]
 
     logger.info("Training with %d symbols: %s", len(symbols), symbols[:10])
@@ -75,17 +79,23 @@ def build_training_data(symbols=None, symbols_count=DEFAULT_SYMBOLS_COUNT):
         # Build features
         bars = []
         for idx, row in df.iterrows():
-            bars.append(Bar(
-                symbol=symbol, exchange="NSE", interval="1d",
-                open=float(row["open"]), high=float(row["high"]),
-                low=float(row["low"]), close=float(row["close"]),
-                volume=float(row["volume"]),
-                ts=idx if hasattr(idx, 'tzinfo') else datetime.now(timezone.utc),
-            ))
+            bars.append(
+                Bar(
+                    symbol=symbol,
+                    exchange="NSE",
+                    interval="1d",
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=float(row["volume"]),
+                    ts=idx if hasattr(idx, "tzinfo") else datetime.now(timezone.utc),
+                )
+            )
 
         feature_list = []
         for i in range(20, len(bars)):
-            features = fe.build_features(bars[max(0, i - 100):i + 1])
+            features = fe.build_features(bars[max(0, i - 100) : i + 1])
             row_feats = [features.get(k, 0.0) for k in FEATURE_KEYS]
             feature_list.append(row_feats)
 
@@ -143,8 +153,14 @@ def _evaluate_model(model, env, num_episodes=30):
             steps += 1
         episode_rewards.append(total_reward)
         episode_actions.append(actions)
-        logger.info("Eval episode %d/%d: reward=%.4f, steps=%d, balance=%.2f",
-                     ep + 1, num_episodes, total_reward, steps, info.get("balance", 0))
+        logger.info(
+            "Eval episode %d/%d: reward=%.4f, steps=%d, balance=%.2f",
+            ep + 1,
+            num_episodes,
+            total_reward,
+            steps,
+            info.get("balance", 0),
+        )
     return episode_rewards, episode_actions
 
 
@@ -253,7 +269,9 @@ def train(total_timesteps=DEFAULT_TIMESTEPS, symbols=None, symbols_count=DEFAULT
     features_oos = features[-oos_size:]
     logger.info(
         "Data split: train=%d bars, out-of-sample=%d bars (%.0f%%)",
-        len(bars_train), len(bars_oos), oos_fraction * 100,
+        len(bars_train),
+        len(bars_oos),
+        oos_fraction * 100,
     )
 
     env = GymTradingEnv.create(bars_train, features_train)
@@ -271,9 +289,10 @@ def train(total_timesteps=DEFAULT_TIMESTEPS, symbols=None, symbols_count=DEFAULT
         return ent_coef_final + (ent_coef_start - ent_coef_final) * progress_remaining
 
     logger.info(
-        "Training PPO agent for %d timesteps (max_grad_norm=0.5, "
-        "ent_coef=%.4f->%.4f)...",
-        total_timesteps, ent_coef_start, ent_coef_final,
+        "Training PPO agent for %d timesteps (max_grad_norm=0.5, ent_coef=%.4f->%.4f)...",
+        total_timesteps,
+        ent_coef_start,
+        ent_coef_final,
     )
     model = PPO(
         "MlpPolicy",
@@ -285,8 +304,8 @@ def train(total_timesteps=DEFAULT_TIMESTEPS, symbols=None, symbols_count=DEFAULT
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        max_grad_norm=0.5,              # Gradient clipping for training stability
-        ent_coef=_ent_coef_schedule,     # Entropy scheduling: explore early, exploit late
+        max_grad_norm=0.5,  # Gradient clipping for training stability
+        ent_coef=_ent_coef_schedule,  # Entropy scheduling: explore early, exploit late
         verbose=1,
     )
 
@@ -301,14 +320,20 @@ def train(total_timesteps=DEFAULT_TIMESTEPS, symbols=None, symbols_count=DEFAULT
     episode_rewards, episode_actions = _evaluate_model(model, env, num_episodes=NUM_EVAL_EPISODES)
     mean_reward = np.mean(episode_rewards)
     std_reward = np.std(episode_rewards)
-    logger.info("In-sample eval: mean_reward=%.4f, std=%.4f, min=%.4f, max=%.4f",
-                mean_reward, std_reward, np.min(episode_rewards), np.max(episode_rewards))
+    logger.info(
+        "In-sample eval: mean_reward=%.4f, std=%.4f, min=%.4f, max=%.4f",
+        mean_reward,
+        std_reward,
+        np.min(episode_rewards),
+        np.max(episode_rewards),
+    )
 
     # Gate 1a: Mean reward must be positive
     if mean_reward < 0:
         logger.error(
             "VALIDATION FAILED: mean reward %.4f < 0 over %d episodes. Model NOT saved.",
-            mean_reward, NUM_EVAL_EPISODES,
+            mean_reward,
+            NUM_EVAL_EPISODES,
         )
         return
 
@@ -318,7 +343,9 @@ def train(total_timesteps=DEFAULT_TIMESTEPS, symbols=None, symbols_count=DEFAULT
     if sharpe < MIN_SHARPE:
         logger.error(
             "VALIDATION FAILED: Sharpe ratio %.4f < %.2f minimum. Model NOT saved. "
-            "Consider more timesteps or reward shaping tuning.", sharpe, MIN_SHARPE,
+            "Consider more timesteps or reward shaping tuning.",
+            sharpe,
+            MIN_SHARPE,
         )
         return
 
@@ -329,7 +356,9 @@ def train(total_timesteps=DEFAULT_TIMESTEPS, symbols=None, symbols_count=DEFAULT
     if ic_train < MIN_IC:
         logger.error(
             "VALIDATION FAILED: in-sample IC %.4f < %.2f minimum. Model NOT saved. "
-            "Agent predictions lack directional accuracy.", ic_train, MIN_IC,
+            "Agent predictions lack directional accuracy.",
+            ic_train,
+            MIN_IC,
         )
         return
 
@@ -344,8 +373,8 @@ def train(total_timesteps=DEFAULT_TIMESTEPS, symbols=None, symbols_count=DEFAULT
 
         if oos_mean < 0:
             logger.error(
-                "VALIDATION FAILED: out-of-sample mean reward %.4f < 0. "
-                "Model overfits training data. NOT saved.", oos_mean,
+                "VALIDATION FAILED: out-of-sample mean reward %.4f < 0. Model overfits training data. NOT saved.",
+                oos_mean,
             )
             return
 
@@ -354,25 +383,29 @@ def train(total_timesteps=DEFAULT_TIMESTEPS, symbols=None, symbols_count=DEFAULT
         logger.info("Out-of-sample IC: %.4f (minimum: %.2f)", ic_oos, MIN_IC)
         if ic_oos < MIN_IC:
             logger.error(
-                "VALIDATION FAILED: out-of-sample IC %.4f < %.2f. "
-                "Model does not generalize. NOT saved.", ic_oos, MIN_IC,
+                "VALIDATION FAILED: out-of-sample IC %.4f < %.2f. Model does not generalize. NOT saved.",
+                ic_oos,
+                MIN_IC,
             )
             return
     else:
         logger.warning("Could not create OOS environment — skipping OOS validation")
 
     logger.info(
-        "ALL VALIDATION GATES PASSED: mean_reward=%.4f, Sharpe=%.4f, "
-        "IC_train=%.4f, IC_oos=%.4f",
-        mean_reward, sharpe, ic_train, ic_oos if oos_env else float('nan'),
+        "ALL VALIDATION GATES PASSED: mean_reward=%.4f, Sharpe=%.4f, IC_train=%.4f, IC_oos=%.4f",
+        mean_reward,
+        sharpe,
+        ic_train,
+        ic_oos if oos_env else float("nan"),
     )
 
     # Save
     os.makedirs(MODELS_DIR, exist_ok=True)
     model_path = os.path.join(MODELS_DIR, "rl_agent")
     model.save(model_path)
-    logger.info("RL agent saved to %s.zip (mean_reward=%.4f, Sharpe=%.4f, IC=%.4f)",
-                model_path, mean_reward, sharpe, ic_train)
+    logger.info(
+        "RL agent saved to %s.zip (mean_reward=%.4f, Sharpe=%.4f, IC=%.4f)", model_path, mean_reward, sharpe, ic_train
+    )
 
 
 def main():
@@ -380,16 +413,22 @@ def main():
         description="Train RL (PPO) trading agent with improved reward shaping and validation."
     )
     parser.add_argument(
-        "--timesteps", type=int, default=DEFAULT_TIMESTEPS,
-        help=f"Total PPO training timesteps (default: {DEFAULT_TIMESTEPS})"
+        "--timesteps",
+        type=int,
+        default=DEFAULT_TIMESTEPS,
+        help=f"Total PPO training timesteps (default: {DEFAULT_TIMESTEPS})",
     )
     parser.add_argument(
-        "--symbols-count", type=int, default=DEFAULT_SYMBOLS_COUNT,
-        help=f"Number of symbols to auto-discover for training (default: {DEFAULT_SYMBOLS_COUNT})"
+        "--symbols-count",
+        type=int,
+        default=DEFAULT_SYMBOLS_COUNT,
+        help=f"Number of symbols to auto-discover for training (default: {DEFAULT_SYMBOLS_COUNT})",
     )
     parser.add_argument(
-        "--symbols", type=str, default=None,
-        help="Comma-separated list of symbols to train on (overrides --symbols-count)"
+        "--symbols",
+        type=str,
+        default=None,
+        help="Comma-separated list of symbols to train on (overrides --symbols-count)",
     )
     args = parser.parse_args()
     symbols = args.symbols.split(",") if args.symbols else None

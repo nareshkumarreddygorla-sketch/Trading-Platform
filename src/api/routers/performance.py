@@ -3,20 +3,21 @@ Performance API: equity curve, drawdown, monthly returns, and summary metrics.
 Uses risk_manager + performance_tracker when available; returns empty data with
 explicit no_data flag when no real trades have been recorded.
 """
+
 import logging
 from collections import OrderedDict
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
 from src.api.auth import get_current_user
 
-
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
+
 
 class EquityCurvePoint(BaseModel):
     date: str
@@ -25,9 +26,9 @@ class EquityCurvePoint(BaseModel):
 
 
 class EquityCurveResponse(BaseModel):
-    equity_curve: List[EquityCurvePoint]
+    equity_curve: list[EquityCurvePoint]
     source: str
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class DrawdownPoint(BaseModel):
@@ -37,9 +38,9 @@ class DrawdownPoint(BaseModel):
 
 
 class DrawdownResponse(BaseModel):
-    drawdown: List[DrawdownPoint]
+    drawdown: list[DrawdownPoint]
     source: str
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class MonthlyReturnPoint(BaseModel):
@@ -48,9 +49,9 @@ class MonthlyReturnPoint(BaseModel):
 
 
 class MonthlyReturnsResponse(BaseModel):
-    monthly_returns: List[MonthlyReturnPoint]
+    monthly_returns: list[MonthlyReturnPoint]
     source: str
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class PerformanceSummaryResponse(BaseModel):
@@ -68,13 +69,13 @@ class PerformanceSummaryResponse(BaseModel):
     final_equity: float = 0.0
     daily_pnl: float = 0.0
     source: str = "no_data"
-    message: Optional[str] = None
-    weeks: Optional[int] = None
-    strategies: Optional[Dict[str, Any]] = None
+    message: str | None = None
+    weeks: int | None = None
+    strategies: dict[str, Any] | None = None
 
 
 class PublicPerformanceResponse(BaseModel):
-    equity_curve: List[Any]
+    equity_curve: list[Any]
     sharpe_ratio: float = 0.0
     max_drawdown_pct: float = 0.0
     total_return_pct: float = 0.0
@@ -92,6 +93,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers to retrieve live components from app state
 # ---------------------------------------------------------------------------
+
 
 def _get_tracker(request: Request):
     return getattr(request.app.state, "performance_tracker", None)
@@ -116,7 +118,8 @@ def _has_real_trades(tracker) -> bool:
 # Build REAL data from PerformanceTracker + RiskManager
 # ---------------------------------------------------------------------------
 
-def _real_equity_curve(tracker, rm) -> List[Dict[str, Any]]:
+
+def _real_equity_curve(tracker, rm) -> list[dict[str, Any]]:
     """
     Build a cumulative equity curve from all per-trade P&L values across
     strategies.  Each point represents the portfolio equity after a trade.
@@ -129,7 +132,7 @@ def _real_equity_curve(tracker, rm) -> List[Dict[str, Any]]:
     # Since PerformanceTracker doesn't store timestamps per trade, we
     # interleave them strategy-by-strategy in round-robin, which is a
     # reasonable approximation when timestamps are unavailable.
-    strategy_pnls: Dict[str, list] = {}
+    strategy_pnls: dict[str, list] = {}
     for sid, stats in all_stats.items():
         if stats.pnls:
             strategy_pnls[sid] = list(stats.pnls)
@@ -138,7 +141,7 @@ def _real_equity_curve(tracker, rm) -> List[Dict[str, Any]]:
         return []
 
     # Flatten: round-robin across strategies to approximate interleaving
-    merged_pnls: List[float] = []
+    merged_pnls: list[float] = []
     max_len = max(len(p) for p in strategy_pnls.values())
     for i in range(max_len):
         for sid in strategy_pnls:
@@ -153,7 +156,7 @@ def _real_equity_curve(tracker, rm) -> List[Dict[str, Any]]:
     total_pnl = sum(merged_pnls)
     start_equity = initial_equity - total_pnl
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     n = len(merged_pnls)
     curve = []
     equity = start_equity
@@ -166,16 +169,18 @@ def _real_equity_curve(tracker, rm) -> List[Dict[str, Any]]:
     for idx, pnl in enumerate(merged_pnls):
         equity += pnl
         dt = start_time + timedelta(days=(idx + 1) * span_days / n)
-        curve.append({
-            "date": dt.strftime("%Y-%m-%d"),
-            "label": f"T{idx + 1}",
-            "equity": round(equity, 2),
-        })
+        curve.append(
+            {
+                "date": dt.strftime("%Y-%m-%d"),
+                "label": f"T{idx + 1}",
+                "equity": round(equity, 2),
+            }
+        )
 
     return curve
 
 
-def _real_drawdown(equity_curve: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _real_drawdown(equity_curve: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Calculate drawdown series from an equity curve."""
     dd = []
     peak = 0.0
@@ -183,15 +188,17 @@ def _real_drawdown(equity_curve: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         eq = pt["equity"]
         peak = max(peak, eq)
         drawdown_pct = ((eq - peak) / peak * 100) if peak > 0 else 0.0
-        dd.append({
-            "date": pt["date"],
-            "label": pt["label"],
-            "drawdown": round(drawdown_pct, 2),
-        })
+        dd.append(
+            {
+                "date": pt["date"],
+                "label": pt["label"],
+                "drawdown": round(drawdown_pct, 2),
+            }
+        )
     return dd
 
 
-def _real_monthly_returns(equity_curve: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _real_monthly_returns(equity_curve: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Aggregate equity curve points into monthly return percentages."""
     months: OrderedDict = OrderedDict()
     for pt in equity_curve:
@@ -204,14 +211,16 @@ def _real_monthly_returns(equity_curve: List[Dict[str, Any]]) -> List[Dict[str, 
     result = []
     for month, vals in months.items():
         ret = ((vals["end"] - vals["start"]) / vals["start"] * 100) if vals["start"] > 0 else 0
-        result.append({
-            "month": month,
-            "return_pct": round(ret, 2),
-        })
+        result.append(
+            {
+                "month": month,
+                "return_pct": round(ret, 2),
+            }
+        )
     return result
 
 
-def _real_summary(tracker, rm) -> Dict[str, Any]:
+def _real_summary(tracker, rm) -> dict[str, Any]:
     """
     Build summary entirely from PerformanceTracker.summary() and RiskManager.
     """
@@ -232,7 +241,7 @@ def _real_summary(tracker, rm) -> Dict[str, Any]:
 
     # Profit factor: sum of winning trades / abs(sum of losing trades)
     all_stats = tracker.get_all_stats()
-    all_pnls: List[float] = []
+    all_pnls: list[float] = []
     for s in all_stats.values():
         all_pnls.extend(s.pnls)
     gross_profit = sum(p for p in all_pnls if p > 0)
@@ -257,10 +266,10 @@ def _real_summary(tracker, rm) -> Dict[str, Any]:
     }
 
 
-
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/equity-curve", response_model=EquityCurveResponse)
 async def get_equity_curve(
@@ -281,7 +290,11 @@ async def get_equity_curve(
             logger.exception("Failed to build real equity curve")
 
     # No real trade data available — return empty with explicit flag
-    return {"equity_curve": [], "source": "no_data", "message": "No trades recorded yet. Equity curve will appear after the first completed trade."}
+    return {
+        "equity_curve": [],
+        "source": "no_data",
+        "message": "No trades recorded yet. Equity curve will appear after the first completed trade.",
+    }
 
 
 @router.get("/drawdown", response_model=DrawdownResponse)
@@ -304,7 +317,11 @@ async def get_drawdown(
             logger.exception("Failed to build real drawdown")
 
     # No real trade data available — return empty with explicit flag
-    return {"drawdown": [], "source": "no_data", "message": "No trades recorded yet. Drawdown data will appear after the first completed trade."}
+    return {
+        "drawdown": [],
+        "source": "no_data",
+        "message": "No trades recorded yet. Drawdown data will appear after the first completed trade.",
+    }
 
 
 @router.get("/monthly-returns", response_model=MonthlyReturnsResponse)
@@ -327,7 +344,11 @@ async def get_monthly_returns(
             logger.exception("Failed to build real monthly returns")
 
     # No real trade data available — return empty with explicit flag
-    return {"monthly_returns": [], "source": "no_data", "message": "No trades recorded yet. Monthly returns will appear after the first completed trade."}
+    return {
+        "monthly_returns": [],
+        "source": "no_data",
+        "message": "No trades recorded yet. Monthly returns will appear after the first completed trade.",
+    }
 
 
 @router.get("/summary", response_model=PerformanceSummaryResponse)
@@ -373,6 +394,7 @@ async def get_summary(
 # Public performance endpoint (no auth required)
 # ---------------------------------------------------------------------------
 
+
 @router.get("/public", response_model=PublicPerformanceResponse)
 async def get_public_performance(request: Request):
     """
@@ -417,22 +439,24 @@ async def get_public_performance(request: Request):
 @router.get("/daily-report")
 async def get_daily_report(
     request: Request,
-    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
+    date: str | None = Query(None, description="Date in YYYY-MM-DD format"),
     current_user: dict = Depends(get_current_user),
 ):
     """Get daily performance report for a specific date."""
     from fastapi import HTTPException as _HTTPException
+
     drg = getattr(request.app.state, "daily_report_generator", None)
     if drg is None:
         raise _HTTPException(status_code=503, detail="Daily report generator not configured")
     try:
-        report = drg.get_report(date or datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        report = drg.get_report(date or datetime.now(UTC).strftime("%Y-%m-%d"))
         if report is None:
             raise _HTTPException(status_code=404, detail="No report found for this date")
         from src.reporting.daily_report import DailyReportGenerator
+
         return DailyReportGenerator.to_dict(report)
     except _HTTPException:
         raise
     except Exception as e:
         logger.exception("Error generating daily report: %s", e)
-        raise _HTTPException(status_code=500, detail="Internal error generating report")
+        raise _HTTPException(status_code=500, detail="Internal error generating report") from e

@@ -5,9 +5,9 @@ End-to-end trading flow tests covering the full lifecycle:
 Uses the FastAPI TestClient (via httpx AsyncClient + ASGITransport) so
 no external services (Redis, Postgres, broker) are required.
 """
+
 import os
 import time
-from typing import Optional
 
 import jwt
 import pytest
@@ -20,10 +20,12 @@ from httpx import ASGITransport, AsyncClient
 os.environ["JWT_SECRET"] = "test-secret-minimum-32-characters-long!!"
 os.environ["AUTH_USERNAME"] = "testadmin"
 os.environ["AUTH_PASSWORD"] = "TestP@ss2026!!"
+os.environ["AUTH_ADMIN"] = "1"  # Grant admin role so admin-protected endpoints work
 os.environ["EXEC_PAPER"] = "true"
 os.environ["ENV"] = "development"
 
 from src.api.app import create_app  # noqa: E402
+from src.risk_engine.manager import RiskManager  # noqa: E402
 
 API = "/api/v1"
 
@@ -32,10 +34,14 @@ API = "/api/v1"
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def app():
     """Create a fresh FastAPI app for each test function."""
-    return create_app()
+    _app = create_app()
+    # Inject RiskManager so /risk/* endpoints don't return 503 in CI.
+    _app.state.risk_manager = RiskManager(equity=1_000_000, load_persisted_state=False)
+    return _app
 
 
 @pytest.fixture
@@ -70,9 +76,10 @@ async def auth_headers(auth_token) -> dict:
 # Helper: create a valid JWT directly (for cases where login is not tested)
 # ---------------------------------------------------------------------------
 
+
 def _make_token(
     sub: str = "testadmin",
-    roles: Optional[list] = None,
+    roles: list | None = None,
     token_type: str = "access",
     exp_delta: int = 1800,
 ) -> str:
@@ -92,6 +99,7 @@ def _make_token(
 # =========================================================================
 # 1. Login returns tokens
 # =========================================================================
+
 
 class TestLoginFlow:
     @pytest.mark.asyncio
@@ -122,6 +130,7 @@ class TestLoginFlow:
 # 2. Protected endpoint requires auth
 # =========================================================================
 
+
 class TestAuthProtection:
     @pytest.mark.asyncio
     async def test_protected_endpoint_requires_auth(self, client):
@@ -141,6 +150,7 @@ class TestAuthProtection:
 # =========================================================================
 # 3. Strategies
 # =========================================================================
+
 
 class TestStrategies:
     @pytest.mark.asyncio
@@ -162,6 +172,7 @@ class TestStrategies:
 # 4. Positions
 # =========================================================================
 
+
 class TestPositions:
     @pytest.mark.asyncio
     async def test_get_positions(self, client, auth_headers):
@@ -176,6 +187,7 @@ class TestPositions:
 # =========================================================================
 # 5. Risk state
 # =========================================================================
+
 
 class TestRiskState:
     @pytest.mark.asyncio
@@ -193,6 +205,7 @@ class TestRiskState:
 # 6. Trading mode
 # =========================================================================
 
+
 class TestTradingMode:
     @pytest.mark.asyncio
     async def test_trading_mode_shows_paper(self, client, auth_headers):
@@ -207,6 +220,7 @@ class TestTradingMode:
 # =========================================================================
 # 7. Autonomous toggle
 # =========================================================================
+
 
 class TestAutonomousToggle:
     @pytest.mark.asyncio
@@ -229,6 +243,7 @@ class TestAutonomousToggle:
 # 8. Health endpoint
 # =========================================================================
 
+
 class TestHealth:
     @pytest.mark.asyncio
     async def test_health_endpoint(self, client):
@@ -241,6 +256,7 @@ class TestHealth:
 # =========================================================================
 # 9. Ready endpoint
 # =========================================================================
+
 
 class TestReady:
     @pytest.mark.asyncio
@@ -256,6 +272,7 @@ class TestReady:
 # 10. Metrics endpoint
 # =========================================================================
 
+
 class TestMetrics:
     @pytest.mark.asyncio
     async def test_metrics_endpoint(self, client):
@@ -270,6 +287,7 @@ class TestMetrics:
 # =========================================================================
 # 11. Refresh token flow
 # =========================================================================
+
 
 class TestRefreshTokenFlow:
     @pytest.mark.asyncio
@@ -308,6 +326,7 @@ class TestRefreshTokenFlow:
 # =========================================================================
 # 12. Order submission (paper mode)
 # =========================================================================
+
 
 class TestOrderSubmission:
     @pytest.mark.asyncio

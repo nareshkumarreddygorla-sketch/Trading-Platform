@@ -1,19 +1,18 @@
 """Reconciliation: broker vs DB positions. Log discrepancies; no auto-correct."""
+
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
 
 from src.api.auth import require_roles
-from pydantic import BaseModel
-from typing import List
-
-from src.persistence.reconciliation import reconcile_positions, ReconciliationResult
 from src.monitoring.metrics import track_reconciliation_mismatches_total
+from src.persistence.reconciliation import ReconciliationResult, reconcile_positions
 
 router = APIRouter()
 
 
 class ReconciliationResponse(BaseModel):
     in_sync: bool
-    mismatches: List[str]
+    mismatches: list[str]
     ts: str
 
 

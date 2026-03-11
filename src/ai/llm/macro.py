@@ -2,9 +2,9 @@
 Macro Risk Assessment via LLM: systemic risk, recommend risk reduction.
 Output is advisory; risk engine still enforces hard limits.
 """
+
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
 
 from .client import LLMClient
 
@@ -24,7 +24,7 @@ No other text."""
 class MacroRiskResult:
     systemic_risk_level: str
     recommendation: str
-    max_position_pct_suggestion: Optional[float]
+    max_position_pct_suggestion: float | None
     reason: str
 
 
@@ -34,13 +34,14 @@ class MacroRiskService:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    async def assess(self, indicators: str, headlines: List[str]) -> Optional[MacroRiskResult]:
+    async def assess(self, indicators: str, headlines: list[str]) -> MacroRiskResult | None:
         user = f"Indicators:\n{indicators}\n\nHeadlines:\n" + "\n".join(headlines[:10])
         raw = await self.llm.complete(SYSTEM_MACRO, user, max_tokens=256)
         if not raw:
             return None
         try:
             import json
+
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
             d = json.loads(raw)

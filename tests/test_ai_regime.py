@@ -1,5 +1,5 @@
 """Tests for regime classifier."""
-import pytest
+
 import numpy as np
 
 from src.ai.regime import RegimeClassifier, RegimeLabel

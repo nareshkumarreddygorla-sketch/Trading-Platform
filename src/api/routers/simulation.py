@@ -1,6 +1,7 @@
 """
 Simulation API: nightly simulation control and results.
 """
+
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
@@ -17,6 +18,7 @@ def get_orchestrator():
     global _orchestrator
     if _orchestrator is None:
         from src.simulation.orchestrator import SimulationOrchestrator
+
         _orchestrator = SimulationOrchestrator()
     return _orchestrator
 
@@ -40,7 +42,7 @@ async def trigger_simulation(
 
         background_tasks.add_task(_run)
         return {"status": "started", "intervals": interval_list}
-    except Exception as e:
+    except Exception:
         logger.exception("Simulation run error")
         return {"status": "error", "message": "Simulation failed to start"}
 
@@ -55,7 +57,7 @@ async def simulation_status(_user=Depends(require_auth)):
             "last_run": orch.last_results[0].strategy_id if orch.last_results else None,
             "total_permutations": len(orch.last_results) if orch.last_results else 0,
         }
-    except Exception as e:
+    except Exception:
         return {"running": False, "last_run": None, "total_permutations": 0}
 
 
@@ -94,7 +96,7 @@ async def get_results(
                 }
                 for r in results
             ],
-            "total_tested": len(orch.simulator.get_all_results()) if hasattr(orch, 'simulator') else 0,
+            "total_tested": len(orch.simulator.get_all_results()) if hasattr(orch, "simulator") else 0,
             "qualified": len(selected),
             "top_sharpe": top_sharpe,
             "top_win_rate": top_wr,
@@ -111,11 +113,12 @@ async def get_permutation_count(_user=Depends(require_auth)):
         orch = get_orchestrator()
         # Use first symbol from dynamic universe for preview
         from src.scanner.dynamic_universe import get_dynamic_universe
+
         preview_symbols = get_dynamic_universe().get_tradeable_stocks(count=1) or ["SAMPLE"]
         perms = orch.simulator.generate_permutations(
             symbols=preview_symbols,
             intervals=["15m"],
         )
         return {"permutation_count": len(perms)}
-    except Exception as e:
+    except Exception:
         return {"permutation_count": 0}

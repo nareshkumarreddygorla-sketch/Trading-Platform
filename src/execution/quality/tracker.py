@@ -10,13 +10,12 @@ Comprehensive execution quality measurement:
 
 Rolling window metrics for position sizing feedback and strategy disable decisions.
 """
+
 import collections
 import logging
 import statistics
-import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Deque, Dict, List, Optional
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +23,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class QualityMetrics:
     """Aggregate execution quality metrics."""
+
     slippage_ratio: float  # realized / expected (e.g. > 1.5 -> bad)
     rejection_rate: float
     partial_fill_rate: float
@@ -36,73 +36,78 @@ class QualityMetrics:
 @dataclass
 class SlippageMeasurement:
     """Single fill slippage measurement."""
+
     symbol: str
-    side: str                     # BUY or SELL
-    arrival_price: float          # Price when decision was made (signal price)
-    fill_price: float             # Actual execution price
+    side: str  # BUY or SELL
+    arrival_price: float  # Price when decision was made (signal price)
+    fill_price: float  # Actual execution price
     quantity: int
-    slippage_bps: float           # Signed: positive = adverse, negative = favorable
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    algo: str = "direct"          # Algorithm used: direct, twap, vwap, iceberg
+    slippage_bps: float  # Signed: positive = adverse, negative = favorable
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    algo: str = "direct"  # Algorithm used: direct, twap, vwap, iceberg
     order_id: str = ""
 
 
 @dataclass
 class ImplementationShortfallResult:
     """Implementation shortfall breakdown for a single order."""
+
     symbol: str
     side: str
-    decision_price: float         # Price at signal/decision time
-    arrival_price: float          # Price when order entered the market
-    fill_price: float             # Actual fill price
+    decision_price: float  # Price at signal/decision time
+    arrival_price: float  # Price when order entered the market
+    fill_price: float  # Actual fill price
     quantity: int
     # Components (all in bps)
-    delay_cost_bps: float         # (arrival - decision) / decision * 10000
-    execution_cost_bps: float     # (fill - arrival) / arrival * 10000
-    total_shortfall_bps: float    # (fill - decision) / decision * 10000
+    delay_cost_bps: float  # (arrival - decision) / decision * 10000
+    execution_cost_bps: float  # (fill - arrival) / arrival * 10000
+    total_shortfall_bps: float  # (fill - decision) / decision * 10000
     # Dollar values
-    paper_return: float           # What we'd have if filled at decision price
-    actual_return: float          # What we actually got
-    shortfall_value: float        # paper_return - actual_return
+    paper_return: float  # What we'd have if filled at decision price
+    actual_return: float  # What we actually got
+    shortfall_value: float  # paper_return - actual_return
     algo: str = "direct"
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
 class BenchmarkComparison:
     """Comparison of execution vs TWAP/VWAP benchmark."""
+
     exec_id: str
     symbol: str
     side: str
     algo: str
-    benchmark_type: str           # "TWAP" or "VWAP"
-    benchmark_price: float        # Theoretical benchmark price
-    achieved_price: float         # Actual weighted average fill price
-    deviation_bps: float          # Signed: positive = worse than benchmark
+    benchmark_type: str  # "TWAP" or "VWAP"
+    benchmark_price: float  # Theoretical benchmark price
+    achieved_price: float  # Actual weighted average fill price
+    deviation_bps: float  # Signed: positive = worse than benchmark
     total_quantity: int
     filled_quantity: int
-    fill_rate: float              # filled / total
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    fill_rate: float  # filled / total
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
 class AlgoQualityScore:
     """Per-algorithm execution quality score."""
+
     algo: str
     n_executions: int
     mean_slippage_bps: float
     median_slippage_bps: float
     p95_slippage_bps: float
     mean_shortfall_bps: float
-    fill_rate: float              # Average fill rate (1.0 = all filled)
+    fill_rate: float  # Average fill rate (1.0 = all filled)
     benchmark_deviation_bps: float
-    score: float                  # 0-100 composite score (higher = better)
+    score: float  # 0-100 composite score (higher = better)
 
 
 @dataclass
 class DailyExecutionReport:
     """Daily execution quality summary."""
-    date: str                     # YYYY-MM-DD
+
+    date: str  # YYYY-MM-DD
     total_orders: int
     total_fills: int
     total_rejections: int
@@ -112,9 +117,9 @@ class DailyExecutionReport:
     median_slippage_bps: float
     mean_shortfall_bps: float
     mean_latency_ms: float
-    algo_scores: Dict[str, AlgoQualityScore] = field(default_factory=dict)
-    worst_slippage: Optional[SlippageMeasurement] = None
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    algo_scores: dict[str, AlgoQualityScore] = field(default_factory=dict)
+    worst_slippage: SlippageMeasurement | None = None
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class ExecutionQualityTracker:
@@ -133,11 +138,11 @@ class ExecutionQualityTracker:
         self.window = window
 
         # --- Original rolling metrics ---
-        self._expected_slip: Deque[float] = collections.deque(maxlen=window)
-        self._realized_slip: Deque[float] = collections.deque(maxlen=window)
-        self._partial_fill: Deque[bool] = collections.deque(maxlen=window)
-        self._order_outcomes: Deque[int] = collections.deque(maxlen=window)
-        self._latency_ms: Deque[float] = collections.deque(maxlen=window)
+        self._expected_slip: collections.deque[float] = collections.deque(maxlen=window)
+        self._realized_slip: collections.deque[float] = collections.deque(maxlen=window)
+        self._partial_fill: collections.deque[bool] = collections.deque(maxlen=window)
+        self._order_outcomes: collections.deque[int] = collections.deque(maxlen=window)
+        self._latency_ms: collections.deque[float] = collections.deque(maxlen=window)
         self._slippage_ratio_threshold: float = 1.5
         self._rejection_rate_threshold: float = 0.2
         self._partial_fill_rate_threshold: float = 0.3
@@ -145,19 +150,19 @@ class ExecutionQualityTracker:
 
         # --- Enhanced tracking ---
         # Slippage measurements (bounded)
-        self._slippage_records: Deque[SlippageMeasurement] = collections.deque(maxlen=window * 5)
+        self._slippage_records: collections.deque[SlippageMeasurement] = collections.deque(maxlen=window * 5)
 
         # Implementation shortfall records
-        self._shortfall_records: Deque[ImplementationShortfallResult] = collections.deque(maxlen=window * 5)
+        self._shortfall_records: collections.deque[ImplementationShortfallResult] = collections.deque(maxlen=window * 5)
 
         # Benchmark comparisons
-        self._benchmark_records: Deque[BenchmarkComparison] = collections.deque(maxlen=window * 2)
+        self._benchmark_records: collections.deque[BenchmarkComparison] = collections.deque(maxlen=window * 2)
 
         # Per-algo tracking
-        self._algo_slippage: Dict[str, Deque[float]] = {}
-        self._algo_fill_rates: Dict[str, Deque[float]] = {}
-        self._algo_shortfalls: Dict[str, Deque[float]] = {}
-        self._algo_counts: Dict[str, int] = {}
+        self._algo_slippage: dict[str, collections.deque[float]] = {}
+        self._algo_fill_rates: dict[str, collections.deque[float]] = {}
+        self._algo_shortfalls: dict[str, collections.deque[float]] = {}
+        self._algo_counts: dict[str, int] = {}
 
     # --- Original Methods (preserved) ---
 
@@ -166,7 +171,7 @@ class ExecutionQualityTracker:
         expected_slippage_bps: float,
         realized_slippage_bps: float,
         partial_fill: bool = False,
-        latency_ms: Optional[float] = None,
+        latency_ms: float | None = None,
     ) -> None:
         self._order_outcomes.append(0)  # 0 = non-rejection
         self._expected_slip.append(expected_slippage_bps)
@@ -390,7 +395,7 @@ class ExecutionQualityTracker:
             self._algo_counts[algo] = 0
         self._algo_counts[algo] = self._algo_counts.get(algo, 0) + 1
 
-    def get_algo_quality_score(self, algo: str) -> Optional[AlgoQualityScore]:
+    def get_algo_quality_score(self, algo: str) -> AlgoQualityScore | None:
         """
         Calculate quality score for a specific algorithm.
 
@@ -442,7 +447,7 @@ class ExecutionQualityTracker:
 
     # --- Enhanced: Daily Report ---
 
-    def generate_daily_report(self, date_str: Optional[str] = None) -> DailyExecutionReport:
+    def generate_daily_report(self, date_str: str | None = None) -> DailyExecutionReport:
         """
         Generate daily execution quality report.
 
@@ -450,7 +455,7 @@ class ExecutionQualityTracker:
             date_str: Date string (YYYY-MM-DD). Defaults to today UTC.
         """
         if date_str is None:
-            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            date_str = datetime.now(UTC).strftime("%Y-%m-%d")
 
         metrics = self.get_metrics()
 
@@ -493,8 +498,12 @@ class ExecutionQualityTracker:
         logger.info(
             "Daily execution report [%s]: orders=%d fills=%d rejections=%d "
             "mean_slip=%.1fbps mean_shortfall=%.1fbps algos=%s",
-            date_str, report.total_orders, report.total_fills,
-            report.total_rejections, mean_slip, mean_shortfall,
+            date_str,
+            report.total_orders,
+            report.total_fills,
+            report.total_rejections,
+            mean_slip,
+            mean_shortfall,
             list(algo_scores.keys()),
         )
 
@@ -502,17 +511,17 @@ class ExecutionQualityTracker:
 
     # --- Utility ---
 
-    def get_recent_slippages(self, n: int = 20) -> List[SlippageMeasurement]:
+    def get_recent_slippages(self, n: int = 20) -> list[SlippageMeasurement]:
         """Return the N most recent slippage measurements."""
         records = list(self._slippage_records)
         return records[-n:]
 
-    def get_recent_shortfalls(self, n: int = 20) -> List[ImplementationShortfallResult]:
+    def get_recent_shortfalls(self, n: int = 20) -> list[ImplementationShortfallResult]:
         """Return the N most recent implementation shortfall records."""
         records = list(self._shortfall_records)
         return records[-n:]
 
-    def get_benchmark_comparisons(self, n: int = 20) -> List[BenchmarkComparison]:
+    def get_benchmark_comparisons(self, n: int = 20) -> list[BenchmarkComparison]:
         """Return the N most recent benchmark comparisons."""
         records = list(self._benchmark_records)
         return records[-n:]

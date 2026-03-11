@@ -8,30 +8,31 @@ to halt trading on degraded data quality.
 
 import logging
 import threading
-import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Set
 
-from .tick_validator import TickValidator, TickValidationResult
-from .ohlc_validator import OHLCValidator, OHLCValidationResult
+from .ohlc_validator import OHLCValidationResult, OHLCValidator
+from .tick_validator import TickValidationResult, TickValidator
 
 logger = logging.getLogger(__name__)
 
 
 class DataQualityLevel(str, Enum):
     """Overall data quality classification."""
+
     EXCELLENT = "EXCELLENT"  # 90-100
-    GOOD = "GOOD"            # 80-89
-    DEGRADED = "DEGRADED"    # 60-79
-    POOR = "POOR"            # 40-59
-    CRITICAL = "CRITICAL"    # 0-39
+    GOOD = "GOOD"  # 80-89
+    DEGRADED = "DEGRADED"  # 60-79
+    POOR = "POOR"  # 40-59
+    CRITICAL = "CRITICAL"  # 0-39
 
 
 class AlertSeverity(str, Enum):
     """Alert severity levels."""
+
     INFO = "INFO"
     WARNING = "WARNING"
     CRITICAL = "CRITICAL"
@@ -40,10 +41,11 @@ class AlertSeverity(str, Enum):
 @dataclass
 class DataQualityAlert:
     """A data quality alert event."""
+
     severity: AlertSeverity
     symbol: str
     message: str
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     quality_score: float = 0.0
 
     def to_dict(self) -> dict:
@@ -59,6 +61,7 @@ class DataQualityAlert:
 @dataclass
 class SymbolQualityState:
     """Per-symbol data quality tracking state."""
+
     # Tick metrics
     tick_total: int = 0
     tick_valid: int = 0
@@ -72,9 +75,9 @@ class SymbolQualityState:
     bar_gap_count: int = 0
 
     # Freshness
-    last_tick_time: Optional[datetime] = None
-    last_bar_time: Optional[datetime] = None
-    last_update_time: Optional[datetime] = None
+    last_tick_time: datetime | None = None
+    last_bar_time: datetime | None = None
+    last_update_time: datetime | None = None
 
     # Scoring
     quality_score: float = 100.0
@@ -106,8 +109,8 @@ class DataQualityMonitor:
         *,
         quality_threshold: float = 80.0,
         stale_feed_seconds: float = 120.0,
-        on_quality_degraded: Optional[Callable] = None,
-        on_halt_trading: Optional[Callable] = None,
+        on_quality_degraded: Callable | None = None,
+        on_halt_trading: Callable | None = None,
         halt_quality_threshold: float = 40.0,
         max_alerts: int = 1000,
     ):
@@ -118,10 +121,10 @@ class DataQualityMonitor:
         self._halt_quality_threshold = halt_quality_threshold
         self._max_alerts = max_alerts
 
-        self._symbol_states: Dict[str, SymbolQualityState] = defaultdict(SymbolQualityState)
-        self._alerts: List[DataQualityAlert] = []
-        self._halted_symbols: Set[str] = set()
-        self._source_freshness: Dict[str, datetime] = {}
+        self._symbol_states: dict[str, SymbolQualityState] = defaultdict(SymbolQualityState)
+        self._alerts: list[DataQualityAlert] = []
+        self._halted_symbols: set[str] = set()
+        self._source_freshness: dict[str, datetime] = {}
         self._lock = threading.RLock()
 
         # Validators (owned by monitor for centralized access)
@@ -133,7 +136,7 @@ class DataQualityMonitor:
         with self._lock:
             state = self._symbol_states[result.symbol]
             state.tick_total += 1
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             state.last_update_time = now
 
             if result.is_valid:
@@ -149,7 +152,7 @@ class DataQualityMonitor:
         with self._lock:
             state = self._symbol_states[result.symbol]
             state.bar_total += 1
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             state.last_update_time = now
 
             if result.is_valid:
@@ -167,7 +170,7 @@ class DataQualityMonitor:
     def record_source_update(self, source_name: str) -> None:
         """Record a data update from a named source for freshness tracking."""
         with self._lock:
-            self._source_freshness[source_name] = datetime.now(timezone.utc)
+            self._source_freshness[source_name] = datetime.now(UTC)
 
     def _recalculate_quality(self, symbol: str, state: SymbolQualityState) -> None:
         """
@@ -192,7 +195,7 @@ class DataQualityMonitor:
             score -= (1.0 - bar_rate) * 30.0
 
         # Data freshness (20 points)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         latest_data = state.last_tick_time or state.last_bar_time
         if latest_data is not None:
             staleness_secs = (now - latest_data).total_seconds()
@@ -237,7 +240,9 @@ class DataQualityMonitor:
             self._add_alert(alert)
             logger.warning(
                 "Data quality alert for %s: score=%.1f level=%s",
-                symbol, score, state.quality_level.value,
+                symbol,
+                score,
+                state.quality_level.value,
             )
             if self._on_quality_degraded:
                 try:
@@ -250,7 +255,9 @@ class DataQualityMonitor:
             self._halted_symbols.add(symbol)
             logger.critical(
                 "HALTING TRADING for %s: data quality score=%.1f below threshold=%.1f",
-                symbol, score, self._halt_quality_threshold,
+                symbol,
+                score,
+                self._halt_quality_threshold,
             )
             if self._on_halt_trading:
                 try:
@@ -267,7 +274,7 @@ class DataQualityMonitor:
         """Add an alert, enforcing max capacity."""
         self._alerts.append(alert)
         if len(self._alerts) > self._max_alerts:
-            self._alerts = self._alerts[-self._max_alerts:]
+            self._alerts = self._alerts[-self._max_alerts :]
 
     def get_quality_score(self, symbol: str) -> float:
         """Get current quality score for a symbol (0-100)."""
@@ -305,15 +312,15 @@ class DataQualityMonitor:
                 "tick_total": state.tick_total,
                 "tick_valid": state.tick_valid,
                 "tick_rejected": state.tick_rejected,
-                "tick_acceptance_rate": round(
-                    state.tick_valid / state.tick_total * 100, 2
-                ) if state.tick_total > 0 else 100.0,
+                "tick_acceptance_rate": round(state.tick_valid / state.tick_total * 100, 2)
+                if state.tick_total > 0
+                else 100.0,
                 "bar_total": state.bar_total,
                 "bar_valid": state.bar_valid,
                 "bar_rejected": state.bar_rejected,
-                "bar_acceptance_rate": round(
-                    state.bar_valid / state.bar_total * 100, 2
-                ) if state.bar_total > 0 else 100.0,
+                "bar_acceptance_rate": round(state.bar_valid / state.bar_total * 100, 2)
+                if state.bar_total > 0
+                else 100.0,
                 "bar_missing_count": state.bar_missing_count,
                 "bar_gap_count": state.bar_gap_count,
                 "last_tick_time": state.last_tick_time.isoformat() if state.last_tick_time else None,
@@ -322,7 +329,7 @@ class DataQualityMonitor:
                 "trading_halted": symbol in self._halted_symbols,
             }
 
-    def get_all_quality_scores(self) -> Dict[str, dict]:
+    def get_all_quality_scores(self) -> dict[str, dict]:
         """Get quality scores for all tracked symbols."""
         with self._lock:
             return {
@@ -337,7 +344,7 @@ class DataQualityMonitor:
     def get_staleness_report(self) -> dict:
         """Get data freshness/staleness report for all symbols and sources."""
         with self._lock:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             symbol_staleness = {}
             stale_symbols = []
 
@@ -377,7 +384,7 @@ class DataQualityMonitor:
                 "sources": source_staleness,
             }
 
-    def get_alerts(self, limit: int = 50) -> List[dict]:
+    def get_alerts(self, limit: int = 50) -> list[dict]:
         """Get recent alerts."""
         with self._lock:
             return [a.to_dict() for a in self._alerts[-limit:]]
@@ -387,7 +394,7 @@ class DataQualityMonitor:
         with self._lock:
             scores = [s.quality_score for s in self._symbol_states.values()]
             avg_score = sum(scores) / len(scores) if scores else 100.0
-            level_counts: Dict[str, int] = defaultdict(int)
+            level_counts: dict[str, int] = defaultdict(int)
             for s in self._symbol_states.values():
                 level_counts[s.quality_level.value] += 1
 
@@ -415,10 +422,7 @@ class DataQualityMonitor:
                         "tick": self.tick_validator.get_stats(symbol),
                         "ohlc": self.ohlc_validator.get_stats(symbol),
                     }
-                    for symbol in set(
-                        list(self.tick_validator._stats.keys())
-                        + list(self.ohlc_validator._stats.keys())
-                    )
+                    for symbol in set(list(self.tick_validator._stats.keys()) + list(self.ohlc_validator._stats.keys()))
                 },
             }
 
@@ -442,9 +446,7 @@ class DataQualityMonitor:
         interval: str = "1m",
     ) -> OHLCValidationResult:
         """Convenience: validate a bar and record the result in one call."""
-        result = self.ohlc_validator.validate_bar(
-            symbol, open_, high, low, close, volume, timestamp, interval
-        )
+        result = self.ohlc_validator.validate_bar(symbol, open_, high, low, close, volume, timestamp, interval)
         self.record_bar_validation(result)
         return result
 

@@ -8,12 +8,12 @@ This module:
   - Checks orders against limits
   - Splits large orders into compliant child orders
 """
+
 from __future__ import annotations
 
 import logging
 import time as _time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ DEFAULT_FREEZE_QTY = 100
 
 # Well-known NSE freeze quantities (updated periodically from NSE circular)
 # These are approximate — actual values should be fetched from NSE
-KNOWN_FREEZE_QTY: Dict[str, int] = {
+KNOWN_FREEZE_QTY: dict[str, int] = {
     "RELIANCE": 1800,
     "TCS": 1500,
     "HDFCBANK": 1800,
@@ -73,6 +73,7 @@ KNOWN_FREEZE_QTY: Dict[str, int] = {
 @dataclass
 class SplitOrder:
     """A child order from splitting a large order."""
+
     symbol: str
     side: str
     quantity: int
@@ -98,7 +99,7 @@ class FreezeQuantityManager:
         cache_ttl_hours: float = 24.0,
         inter_order_delay_seconds: float = 1.0,
     ):
-        self._cache: Dict[str, int] = dict(KNOWN_FREEZE_QTY)
+        self._cache: dict[str, int] = dict(KNOWN_FREEZE_QTY)
         self._cache_ts: float = _time.time()
         self._cache_ttl = cache_ttl_hours * 3600
         self._inter_order_delay = inter_order_delay_seconds
@@ -114,7 +115,7 @@ class FreezeQuantityManager:
         """Manually set freeze quantity for a symbol (e.g., from NSE data)."""
         self._cache[symbol.upper().strip()] = qty
 
-    def update_from_dict(self, data: Dict[str, int]) -> None:
+    def update_from_dict(self, data: dict[str, int]) -> None:
         """Bulk update freeze quantities from a dict."""
         for sym, qty in data.items():
             self._cache[sym.upper().strip()] = qty
@@ -131,7 +132,7 @@ class FreezeQuantityManager:
         side: str,
         quantity: int,
         parent_order_id: str,
-    ) -> List[SplitOrder]:
+    ) -> list[SplitOrder]:
         """
         Split a large order into compliant child orders.
 
@@ -146,30 +147,34 @@ class FreezeQuantityManager:
         """
         freeze_qty = self.get_freeze_qty(symbol)
         if quantity <= freeze_qty:
-            return [SplitOrder(
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                parent_order_id=parent_order_id,
-                child_index=0,
-                total_children=1,
-                delay_seconds=0,
-            )]
+            return [
+                SplitOrder(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    parent_order_id=parent_order_id,
+                    child_index=0,
+                    total_children=1,
+                    delay_seconds=0,
+                )
+            ]
 
         children = []
         remaining = quantity
         idx = 0
         while remaining > 0:
             child_qty = min(remaining, freeze_qty)
-            children.append(SplitOrder(
-                symbol=symbol,
-                side=side,
-                quantity=child_qty,
-                parent_order_id=parent_order_id,
-                child_index=idx,
-                total_children=0,  # updated below
-                delay_seconds=self._inter_order_delay * idx,
-            ))
+            children.append(
+                SplitOrder(
+                    symbol=symbol,
+                    side=side,
+                    quantity=child_qty,
+                    parent_order_id=parent_order_id,
+                    child_index=idx,
+                    total_children=0,  # updated below
+                    delay_seconds=self._inter_order_delay * idx,
+                )
+            )
             remaining -= child_qty
             idx += 1
 
@@ -179,7 +184,11 @@ class FreezeQuantityManager:
 
         logger.info(
             "Order split: %s %s %d → %d child orders (freeze_qty=%d)",
-            side, symbol, quantity, len(children), freeze_qty,
+            side,
+            symbol,
+            quantity,
+            len(children),
+            freeze_qty,
         )
         return children
 
@@ -189,7 +198,7 @@ class FreezeQuantityManager:
         side: str,
         quantity: int,
         parent_order_id: str,
-    ) -> Tuple[bool, List[SplitOrder]]:
+    ) -> tuple[bool, list[SplitOrder]]:
         """
         Validate order against freeze qty; split if needed.
 
@@ -197,11 +206,17 @@ class FreezeQuantityManager:
             (needs_split, children)
         """
         if not self.exceeds_limit(symbol, quantity):
-            return False, [SplitOrder(
-                symbol=symbol, side=side, quantity=quantity,
-                parent_order_id=parent_order_id,
-                child_index=0, total_children=1, delay_seconds=0,
-            )]
+            return False, [
+                SplitOrder(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    parent_order_id=parent_order_id,
+                    child_index=0,
+                    total_children=1,
+                    delay_seconds=0,
+                )
+            ]
         return True, self.split_order(symbol, side, quantity, parent_order_id)
 
     def is_cache_stale(self) -> bool:

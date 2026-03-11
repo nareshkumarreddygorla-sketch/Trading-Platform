@@ -1,4 +1,4 @@
-from .engine import BacktestEngine, BacktestConfig, BacktestResult
+from .engine import BacktestConfig, BacktestEngine, BacktestResult
 from .metrics import BacktestMetrics
 from .slippage import SlippageModel
 

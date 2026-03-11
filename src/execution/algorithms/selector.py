@@ -8,12 +8,14 @@ Routing rules:
   5-10% ADV -> VWAP (volume-weighted)
   > 10% ADV -> Iceberg + VWAP hybrid
 """
-import logging
-from typing import Any, Callable, Coroutine, Dict, Optional
 
+import logging
+from collections.abc import Callable, Coroutine
+from typing import Any
+
+from src.execution.algorithms.iceberg import IcebergAlgorithm, IcebergConfig
 from src.execution.algorithms.twap import TWAPAlgorithm, TWAPConfig
 from src.execution.algorithms.vwap import VWAPAlgorithm, VWAPConfig
-from src.execution.algorithms.iceberg import IcebergAlgorithm, IcebergConfig
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +28,8 @@ class AlgorithmSelector:
     def __init__(
         self,
         submit_order_fn: Callable[..., Coroutine],
-        get_adv_fn: Optional[Callable] = None,
-        get_price_fn: Optional[Callable] = None,
+        get_adv_fn: Callable | None = None,
+        get_price_fn: Callable | None = None,
     ):
         """
         Args:
@@ -46,7 +48,7 @@ class AlgorithmSelector:
         self,
         symbol: str,
         quantity: int,
-        adv: Optional[int] = None,
+        adv: int | None = None,
     ) -> str:
         """
         Select the best algorithm for an order.
@@ -82,9 +84,9 @@ class AlgorithmSelector:
         side: str,
         quantity: int,
         exchange: str = "NSE",
-        adv: Optional[int] = None,
-        force_algorithm: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        adv: int | None = None,
+        force_algorithm: str | None = None,
+    ) -> dict[str, Any]:
         """
         Smart execution: auto-select algorithm and execute.
 
@@ -103,7 +105,11 @@ class AlgorithmSelector:
 
         logger.info(
             "Smart execution: %s %s x%d -> algorithm=%s (ADV=%s)",
-            side, symbol, quantity, algo, adv or "unknown",
+            side,
+            symbol,
+            quantity,
+            algo,
+            adv or "unknown",
         )
 
         if algo == "direct":

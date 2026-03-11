@@ -1,3 +1,3 @@
-from .quality import AlphaQualityScorer, AlphaQualityScoreConfig
+from .quality import AlphaQualityScoreConfig, AlphaQualityScorer
 
 __all__ = ["AlphaQualityScorer", "AlphaQualityScoreConfig"]

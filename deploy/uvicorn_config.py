@@ -23,6 +23,7 @@ import os
 # Worker configuration
 # ---------------------------------------------------------------------------
 
+
 def _worker_count() -> int:
     """Calculate worker count: 2*CPU + 1, capped at 8 for trading systems.
 
@@ -97,6 +98,7 @@ proc_name = "alphaforge-api"
 # Server hooks
 # ---------------------------------------------------------------------------
 
+
 def on_starting(server):
     """Log startup configuration."""
     server.log.info(
@@ -110,6 +112,7 @@ def on_starting(server):
 def post_fork(server, worker):
     """After fork: re-seed random and reset per-worker state."""
     import random
+
     random.seed()
     server.log.info("Worker %s spawned (pid=%s)", worker.age, worker.pid)
 

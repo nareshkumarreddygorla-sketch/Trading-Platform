@@ -1,6 +1,6 @@
 """Hidden Markov Model for regime detection. Optional dependency: hmmlearn."""
+
 import logging
-from typing import List, Optional
 
 import numpy as np
 
@@ -16,9 +16,9 @@ class HMMRegimeDetector:
     def __init__(self, n_states: int = 3):
         self.n_states = n_states
         self._model = None
-        self._state_map: List[str] = []  # state index -> label hint
+        self._state_map: list[str] = []  # state index -> label hint
 
-    def fit(self, returns: np.ndarray, volatility: Optional[np.ndarray] = None) -> None:
+    def fit(self, returns: np.ndarray, volatility: np.ndarray | None = None) -> None:
         """Fit HMM on returns. Optionally include vol as second feature."""
         try:
             from hmmlearn import hmm
@@ -31,7 +31,7 @@ class HMMRegimeDetector:
         self._model = hmm.GaussianHMM(n_components=self.n_states, covariance_type="full", n_iter=100)
         self._model.fit(X)
 
-    def predict_state(self, returns: np.ndarray, volatility: Optional[np.ndarray] = None) -> Optional[int]:
+    def predict_state(self, returns: np.ndarray, volatility: np.ndarray | None = None) -> int | None:
         """Return most likely state for last observation."""
         if self._model is None:
             return None

@@ -1,9 +1,9 @@
 """Tests for meta-allocator and decay detection."""
-import pytest
+
 import numpy as np
 
-from src.ai.meta_allocator import MetaAllocator, StrategyAllocation, DecayDetector
-from src.ai.meta_allocator.weights import compute_risk_parity_weights, compute_kelly_weights
+from src.ai.meta_allocator import DecayDetector, MetaAllocator
+from src.ai.meta_allocator.weights import compute_kelly_weights, compute_risk_parity_weights
 
 
 def test_decay_detector():

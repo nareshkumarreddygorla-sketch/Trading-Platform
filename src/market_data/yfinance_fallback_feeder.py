@@ -4,19 +4,20 @@ when no Angel One WebSocket is configured (paper trading without broker keys).
 Fetches 1-minute OHLCV bars from yfinance and pushes them into the bar cache
 so the autonomous loop, strategies, and agents can generate real signals.
 """
+
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import List, Optional
 
 from src.market_data.timestamp import normalize_ts
 
 logger = logging.getLogger(__name__)
 
-def _discover_symbols(count: int = 10) -> List[str]:
+
+def _discover_symbols(count: int = 10) -> list[str]:
     """Dynamically discover top liquid NSE symbols for paper trading feed."""
     try:
         from src.scanner.dynamic_universe import get_dynamic_universe
+
         symbols = get_dynamic_universe().get_tradeable_stocks(count=count)
         if symbols:
             return [f"{s}.NS" for s in symbols]
@@ -24,6 +25,7 @@ def _discover_symbols(count: int = 10) -> List[str]:
         pass
     try:
         from src.market_data.symbol_token_map import get_symbol_token_map
+
         stm = get_symbol_token_map()
         if stm.is_loaded:
             nse = stm.get_all_nse_equity_symbols()
@@ -42,14 +44,14 @@ class YFinanceFallbackFeeder:
     def __init__(
         self,
         bar_cache,
-        symbols: Optional[List[str]] = None,
+        symbols: list[str] | None = None,
         poll_interval_seconds: float = 60.0,
     ):
         self._bar_cache = bar_cache
         self._symbols = symbols or _discover_symbols(count=10)
         self._poll_interval = poll_interval_seconds
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._last_bar_ts = {}  # symbol -> last bar timestamp to avoid duplicates
         self._initial_load_done = False
 
@@ -60,7 +62,8 @@ class YFinanceFallbackFeeder:
         self._task = asyncio.create_task(self._poll_loop())
         logger.info(
             "YFinance fallback feeder started: %d symbols, poll every %.0fs",
-            len(self._symbols), self._poll_interval,
+            len(self._symbols),
+            self._poll_interval,
         )
 
     async def stop(self) -> None:
@@ -114,14 +117,17 @@ class YFinanceFallbackFeeder:
         for symbol in self._symbols:
             try:
                 data = yf.download(
-                    symbol, period=period, interval="1m",
-                    progress=False, threads=False,
+                    symbol,
+                    period=period,
+                    interval="1m",
+                    progress=False,
+                    threads=False,
                 )
                 if data is None or data.empty:
                     continue
 
                 # Handle multi-level columns from yfinance
-                if hasattr(data.columns, 'levels') and len(data.columns.levels) > 1:
+                if hasattr(data.columns, "levels") and len(data.columns.levels) > 1:
                     data.columns = data.columns.droplevel(1)
 
                 # Strip .NS suffix for internal symbol name

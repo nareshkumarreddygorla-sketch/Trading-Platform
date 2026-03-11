@@ -2,8 +2,9 @@
 Capital deployment gate: GET /capital/validate.
 If validate() fails, autonomous live mode must not be enabled; manual paper still allowed.
 """
+
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
@@ -17,10 +18,11 @@ logger = logging.getLogger(__name__)
 # Response models
 # ---------------------------------------------------------------------------
 
+
 class CapitalValidateResponse(BaseModel):
     ok: bool
-    checks: Dict[str, Any]
-    message: Optional[str] = None
+    checks: dict[str, Any]
+    message: str | None = None
 
 
 router = APIRouter()
@@ -40,8 +42,10 @@ async def capital_validate(request: Request, current_user: dict = Depends(get_cu
 
         # Redis
         try:
-            import redis.asyncio as aioredis
             import os
+
+            import redis.asyncio as aioredis
+
             redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
             r = aioredis.from_url(redis_url, decode_responses=True)
             await r.ping()

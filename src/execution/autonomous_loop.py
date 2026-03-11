@@ -3,27 +3,28 @@ Autonomous execution loop: bar-based cycle, stable idempotency key, drift/regime
 Closed loop: pull bars → strategy runner → allocator → risk → OrderEntryService only.
 No direct gateway calls. Idempotency key: {bar_ts}-{strategy_id}-{symbol}-{side}.
 """
+
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
 
 import numpy as np
 
-from src.core.events import Bar, Exchange, Position, Signal, SignalSide
-from src.execution.order_entry.idempotency import IdempotencyStore
-from src.execution.order_entry.request import OrderEntryRequest, OrderEntryResult
-from src.core.events import OrderType
+from src.core.events import Bar, Exchange, OrderType, Position, Signal, SignalSide
 from src.execution.algorithms.twap import TWAPAlgorithm, TWAPConfig
 from src.execution.algorithms.vwap import VWAPAlgorithm, VWAPConfig
+from src.execution.order_entry.idempotency import IdempotencyStore
+from src.execution.order_entry.request import OrderEntryRequest, OrderEntryResult
 
 logger = logging.getLogger(__name__)
 
 # ADV thresholds for algorithm selection
-_ADV_DIRECT_MAX_PCT = 1.0    # < 1% ADV → direct market order
-_ADV_TWAP_MAX_PCT = 5.0      # 1-5% ADV → TWAP (30 min)
-_ADV_VWAP_MAX_PCT = 10.0     # 5-10% ADV → VWAP (standard)
+_ADV_DIRECT_MAX_PCT = 1.0  # < 1% ADV → direct market order
+_ADV_TWAP_MAX_PCT = 5.0  # 1-5% ADV → TWAP (30 min)
+_ADV_VWAP_MAX_PCT = 10.0  # 5-10% ADV → VWAP (standard)
 # > 10% ADV → VWAP with extended duration + alert
 
 # NSE market hours: 9:15 AM - 3:30 PM IST (UTC+5:30)
@@ -46,6 +47,7 @@ def _load_nse_holidays() -> set:
         return _NSE_HOLIDAYS
 
     import os
+
     holidays_set: set = set()
 
     # Try multiple paths for the holidays JSON file
@@ -60,7 +62,7 @@ def _load_nse_holidays() -> set:
         if not path or not os.path.exists(path):
             continue
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 data = json.load(f)
             holiday_map = data.get("holidays", {})
             for year_str, dates in holiday_map.items():
@@ -70,7 +72,9 @@ def _load_nse_holidays() -> set:
                         holidays_set.add((int(parts[0]), int(parts[1]), int(parts[2])))
             logger.info(
                 "Loaded %d NSE holidays from %s (last_updated=%s)",
-                len(holidays_set), path, data.get("last_updated", "unknown"),
+                len(holidays_set),
+                path,
+                data.get("last_updated", "unknown"),
             )
             _NSE_HOLIDAYS = holidays_set
             _NSE_HOLIDAYS_LOADED = True
@@ -81,12 +85,14 @@ def _load_nse_holidays() -> set:
     # Fallback: minimal hardcoded holidays (fixed national holidays only)
     current_year = datetime.now(_IST).year
     for year in range(current_year, current_year + 2):
-        holidays_set.update({
-            (year, 1, 26),   # Republic Day
-            (year, 8, 15),   # Independence Day
-            (year, 10, 2),   # Gandhi Jayanti
-            (year, 12, 25),  # Christmas
-        })
+        holidays_set.update(
+            {
+                (year, 1, 26),  # Republic Day
+                (year, 8, 15),  # Independence Day
+                (year, 10, 2),  # Gandhi Jayanti
+                (year, 12, 25),  # Christmas
+            }
+        )
     logger.warning(
         "NSE holidays JSON not found — using minimal fallback (%d holidays). "
         "Create deploy/nse_holidays.json for full holiday calendar.",
@@ -132,31 +138,31 @@ class AutonomousLoop:
         submit_order_fn: Callable[..., Awaitable[OrderEntryResult]],
         *,
         get_safe_mode: Callable[[], bool],
-        get_bar_ts: Optional[Callable[[], str]] = None,
-        get_bars: Optional[Callable[[str, Exchange, str, int], List[Bar]]] = None,
-        get_symbols: Optional[Callable[[], List[Tuple[str, Exchange]]]] = None,
+        get_bar_ts: Callable[[], str] | None = None,
+        get_bars: Callable[[str, Exchange, str, int], list[Bar]] | None = None,
+        get_symbols: Callable[[], list[tuple[str, Exchange]]] | None = None,
         strategy_runner=None,
         allocator=None,
-        get_risk_state: Optional[Callable[[], dict]] = None,
-        get_positions: Optional[Callable[[], List[Position]]] = None,
-        drift_gate: Optional[Callable[[], bool]] = None,
-        regime_gate: Optional[Callable[[], bool]] = None,
-        get_market_feed_healthy: Optional[Callable[[], bool]] = None,
+        get_risk_state: Callable[[], dict] | None = None,
+        get_positions: Callable[[], list[Position]] | None = None,
+        drift_gate: Callable[[], bool] | None = None,
+        regime_gate: Callable[[], bool] | None = None,
+        get_market_feed_healthy: Callable[[], bool] | None = None,
         feature_engine=None,
         regime_classifier=None,
         market_scanner=None,
         performance_tracker=None,
-        ws_broadcast: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
-        on_daily_reset: Optional[Callable[[], None]] = None,
+        ws_broadcast: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        on_daily_reset: Callable[[], None] | None = None,
         poll_interval_seconds: float = 60.0,
         paper_mode: bool = False,
         adv_cache=None,
-        get_market_price: Optional[Callable] = None,
+        get_market_price: Callable | None = None,
         daily_loss_limit: float = -0.02,
     ):
         self.submit_order_fn = submit_order_fn
         self.get_safe_mode = get_safe_mode
-        self.get_bar_ts = get_bar_ts or (lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self.get_bar_ts = get_bar_ts or (lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
         self.get_bars = get_bars
         self.get_symbols = get_symbols
         self.strategy_runner = strategy_runner
@@ -175,8 +181,8 @@ class AutonomousLoop:
         self.poll_interval = poll_interval_seconds
         self.paper_mode = paper_mode
         self._running = False
-        self._task: Optional[asyncio.Task] = None
-        self._last_bar_ts: Optional[str] = None
+        self._task: asyncio.Task | None = None
+        self._last_bar_ts: str | None = None
 
         # ── Smart trade management ──
         # Track open positions for stop-loss/take-profit management
@@ -188,15 +194,15 @@ class AutonomousLoop:
         self._daily_pnl: float = 0.0
         self._daily_loss_limit: float = daily_loss_limit
         self._tick_count: int = 0
-        self._current_trading_date: Optional[str] = None  # track date for daily P&L reset
+        self._current_trading_date: str | None = None  # track date for daily P&L reset
 
         # ── Persistence (write-ahead for open trades) ──
         self._open_trade_repo = None  # set via set_open_trade_repo()
 
         # ── Kill switch auto-close tracking ──
-        self._kill_switch_fn: Optional[Callable[[], Awaitable[bool]]] = None  # async callable returns True if armed
+        self._kill_switch_fn: Callable[[], Awaitable[bool]] | None = None  # async callable returns True if armed
         self._last_kill_switch_armed: bool = False
-        self._close_attempts: Dict[str, int] = {}  # trade_key -> retry count
+        self._close_attempts: dict[str, int] = {}  # trade_key -> retry count
 
         # ── Feature normalization (P0-3: z-score before model inference) ──
         self._feature_normalizer = None  # set via set_feature_normalizer()
@@ -205,27 +211,27 @@ class AutonomousLoop:
         self._sentiment_service = None  # set via set_sentiment_service()
         self._sentiment_predictor = None  # FinBERT fallback (no API key needed)
         self._last_sentiment_score: float = 0.5  # neutral default
-        self._last_sentiment_ts: Optional[float] = None
+        self._last_sentiment_ts: float | None = None
 
         # ── Trade outcome recording (self-learning feedback loop) ──
         self._trade_outcome_repo = None  # set via set_trade_outcome_repo()
         self._current_regime: str = "unknown"
         self._sentiment_cache_ttl: float = 300.0  # refresh sentiment every 5 min
-        self._last_sentiment_detail: Optional[Dict[str, float]] = None  # {positive, negative, neutral}
+        self._last_sentiment_detail: dict[str, float] | None = None  # {positive, negative, neutral}
 
         # ── Dynamic universe fallback (when BarCache is empty) ──
-        self._dynamic_universe_cache: List[Tuple[str, Exchange]] = []
-        self._dynamic_universe_ts: Optional[float] = None
+        self._dynamic_universe_cache: list[tuple[str, Exchange]] = []
+        self._dynamic_universe_ts: float | None = None
         self._dynamic_universe_ttl: float = 1800.0  # refresh every 30 min
 
         # ── Startup reconciliation ──
-        self._broker_get_positions: Optional[Callable] = None
+        self._broker_get_positions: Callable | None = None
         self._startup_reconciled: bool = False
 
         # ── Stuck order detection ──
-        self._pending_order_tracker: Dict[str, float] = {}  # idem_key -> submit_timestamp
+        self._pending_order_tracker: dict[str, float] = {}  # idem_key -> submit_timestamp
         self._STUCK_ORDER_TIMEOUT_SECONDS: float = 300.0  # 5 minutes
-        self._cancel_order_fn: Optional[Callable] = None
+        self._cancel_order_fn: Callable | None = None
 
         # ── Broker submission timeout ──
         self._BROKER_SUBMIT_TIMEOUT_SECONDS: float = 30.0
@@ -248,8 +254,8 @@ class AutonomousLoop:
         self._signal_generation_paused: bool = False
 
         # ── Signal cache: last tick's signals for API exposure ──
-        self._last_signals: List[Signal] = []
-        self._last_signals_ts: Optional[str] = None
+        self._last_signals: list[Signal] = []
+        self._last_signals_ts: str | None = None
 
         # ── Market feed health: consecutive unhealthy tick tracking ──
         self._consecutive_unhealthy_ticks: int = 0
@@ -258,7 +264,7 @@ class AutonomousLoop:
         # ── Algo execution (TWAP/VWAP) ──
         self._adv_cache = adv_cache
         self._get_market_price = get_market_price
-        self._algo_tasks: Dict[str, asyncio.Task] = {}  # idem_key -> background task
+        self._algo_tasks: dict[str, asyncio.Task] = {}  # idem_key -> background task
 
     def set_feature_normalizer(self, normalizer) -> None:
         """Wire FeatureNormalizer for z-score normalization of features before model inference."""
@@ -288,6 +294,7 @@ class AutonomousLoop:
         2. FinBERT SentimentPredictor fallback (no API key needed)
         """
         import time as _time
+
         now = _time.time()
 
         # Cache: only refresh every 5 minutes
@@ -310,8 +317,13 @@ class AutonomousLoop:
                         "source": "llm",
                     }
                     mult = self._sentiment_to_multiplier(result.score)
-                    logger.info("Sentiment update (LLM): %s (score=%.2f, multiplier=%.2f, suggestion=%s)",
-                               result.sentiment, result.score, mult, result.risk_reduction_suggestion)
+                    logger.info(
+                        "Sentiment update (LLM): %s (score=%.2f, multiplier=%.2f, suggestion=%s)",
+                        result.sentiment,
+                        result.score,
+                        mult,
+                        result.risk_reduction_suggestion,
+                    )
                     return mult
             except Exception as e:
                 logger.debug("LLM sentiment fetch failed: %s — falling back to FinBERT", e)
@@ -337,9 +349,13 @@ class AutonomousLoop:
                         "headlines_count": meta.get("headlines_count", 0),
                     }
                     mult = self._sentiment_to_multiplier(prediction.prob_up)
-                    logger.info("Sentiment update (FinBERT): score=%.2f, multiplier=%.2f, headlines=%d, breakdown=%s",
-                               prediction.prob_up, mult,
-                               meta.get("headlines_count", 0), sentiment_breakdown)
+                    logger.info(
+                        "Sentiment update (FinBERT): score=%.2f, multiplier=%.2f, headlines=%d, breakdown=%s",
+                        prediction.prob_up,
+                        mult,
+                        meta.get("headlines_count", 0),
+                        sentiment_breakdown,
+                    )
                     return mult
             except Exception as e:
                 logger.debug("FinBERT sentiment fetch failed: %s", e)
@@ -369,23 +385,27 @@ class AutonomousLoop:
         else:
             return 1.2  # Very bullish: max increase
 
-    def _get_dynamic_universe_fallback(self) -> List[Tuple[str, Exchange]]:
+    def _get_dynamic_universe_fallback(self) -> list[tuple[str, Exchange]]:
         """Fallback: build trading universe from DynamicUniverse or YFinance feeder symbols
         when BarCache has no symbols yet."""
         import time as _time
+
         now = _time.time()
 
         # Return cached universe if fresh
-        if (self._dynamic_universe_cache
-                and self._dynamic_universe_ts
-                and (now - self._dynamic_universe_ts) < self._dynamic_universe_ttl):
+        if (
+            self._dynamic_universe_cache
+            and self._dynamic_universe_ts
+            and (now - self._dynamic_universe_ts) < self._dynamic_universe_ttl
+        ):
             return self._dynamic_universe_cache
 
-        universe: List[Tuple[str, Exchange]] = []
+        universe: list[tuple[str, Exchange]] = []
 
         # Strategy 1: DynamicUniverse (scans full NSE market)
         try:
             from src.scanner.dynamic_universe import get_dynamic_universe
+
             du = get_dynamic_universe()
             symbols = du.get_trading_stocks(count=50)
             if symbols:
@@ -398,10 +418,8 @@ class AutonomousLoop:
         if not universe:
             try:
                 from src.market_data.yfinance_fallback_feeder import DEFAULT_NSE_SYMBOLS
-                universe = [
-                    (s.replace(".NS", "").replace(".BO", ""), Exchange.NSE)
-                    for s in DEFAULT_NSE_SYMBOLS
-                ]
+
+                universe = [(s.replace(".NS", "").replace(".BO", ""), Exchange.NSE) for s in DEFAULT_NSE_SYMBOLS]
                 logger.info("YFinance feeder fallback: %d default symbols", len(universe))
             except Exception as e:
                 logger.debug("YFinance feeder fallback failed: %s", e)
@@ -430,7 +448,7 @@ class AutonomousLoop:
             return True
         return self.get_market_feed_healthy()
 
-    async def _broadcast(self, message: Dict[str, Any]) -> None:
+    async def _broadcast(self, message: dict[str, Any]) -> None:
         """Broadcast a message via WebSocket if callback is set."""
         if self.ws_broadcast:
             try:
@@ -467,10 +485,10 @@ class AutonomousLoop:
                 if bar_time is None:
                     return True  # cannot determine freshness, allow tick
 
-                now_utc = datetime.now(timezone.utc)
+                now_utc = datetime.now(UTC)
                 # Normalise bar_time to offset-aware UTC
                 if bar_time.tzinfo is None:
-                    bar_time = bar_time.replace(tzinfo=timezone.utc)
+                    bar_time = bar_time.replace(tzinfo=UTC)
                 age_seconds = (now_utc - bar_time).total_seconds()
 
                 if age_seconds <= self._BAR_FRESHNESS_SECONDS:
@@ -479,10 +497,12 @@ class AutonomousLoop:
                 else:
                     self._consecutive_stale_ticks += 1
                     logger.warning(
-                        "Stale bar data: %s latest bar is %.0fs old (limit %.0fs), "
-                        "consecutive stale ticks: %d/%d",
-                        symbol, age_seconds, self._BAR_FRESHNESS_SECONDS,
-                        self._consecutive_stale_ticks, self._MAX_STALE_TICKS,
+                        "Stale bar data: %s latest bar is %.0fs old (limit %.0fs), consecutive stale ticks: %d/%d",
+                        symbol,
+                        age_seconds,
+                        self._BAR_FRESHNESS_SECONDS,
+                        self._consecutive_stale_ticks,
+                        self._MAX_STALE_TICKS,
                     )
                     if self._consecutive_stale_ticks >= self._MAX_STALE_TICKS:
                         logger.critical(
@@ -495,13 +515,15 @@ class AutonomousLoop:
                         safe_mode_setter = getattr(self, "_set_safe_mode", None)
                         if safe_mode_setter is not None:
                             safe_mode_setter(True)
-                        await self._broadcast({
-                            "type": "circuit_breaker",
-                            "reason": "stale_bar_data",
-                            "consecutive_stale_ticks": self._consecutive_stale_ticks,
-                            "last_bar_age_seconds": round(age_seconds, 1),
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        })
+                        await self._broadcast(
+                            {
+                                "type": "circuit_breaker",
+                                "reason": "stale_bar_data",
+                                "consecutive_stale_ticks": self._consecutive_stale_ticks,
+                                "last_bar_age_seconds": round(age_seconds, 1),
+                                "timestamp": datetime.now(UTC).isoformat(),
+                            }
+                        )
                     return False
             except Exception as e:
                 logger.debug("Bar freshness check failed for %s: %s", symbol, e)
@@ -532,7 +554,7 @@ class AutonomousLoop:
     def _get_daily_pnl(self) -> float:
         """Get daily P&L from RiskManager (single source of truth).
         Falls back to local _daily_pnl mirror if RiskManager is unavailable."""
-        _rm = getattr(self, '_risk_manager', None)
+        _rm = getattr(self, "_risk_manager", None)
         if _rm is not None:
             return _rm.daily_pnl
         # Fallback: try get_risk_state
@@ -548,13 +570,14 @@ class AutonomousLoop:
         """Register realised P&L through RiskManager (single source of truth).
         Also updates the local _daily_pnl mirror for backwards compatibility."""
         self._daily_pnl += pnl  # keep fallback mirror in sync
-        _rm = getattr(self, '_risk_manager', None)
+        _rm = getattr(self, "_risk_manager", None)
         if _rm is not None:
             _rm.register_pnl(pnl)
         else:
             logger.debug(
                 "PnL registered locally only (no RiskManager ref): pnl=%.2f total=%.2f",
-                pnl, self._daily_pnl,
+                pnl,
+                self._daily_pnl,
             )
 
     def _select_algo(self, symbol: str, qty: int, exchange: str = "NSE") -> str:
@@ -582,7 +605,9 @@ class AutonomousLoop:
             else:
                 logger.warning(
                     "Algo select: %s qty=%d is %.1f%% ADV (>10%%) → VWAP extended + ALERT",
-                    symbol, qty, pct_adv,
+                    symbol,
+                    qty,
+                    pct_adv,
                 )
                 return "vwap_extended"
         except Exception as e:
@@ -596,7 +621,7 @@ class AutonomousLoop:
         idem_key: str,
         algo_type: str,
         source: str = "autonomous",
-        order_metadata: Optional[Dict[str, Any]] = None,
+        order_metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Launch a TWAP or VWAP algo as a background task.
@@ -615,10 +640,13 @@ class AutonomousLoop:
         _algo_child_seq = 0  # BUG 30: deterministic child sequence counter
 
         async def _algo_submit_child(
-            symbol: str, side: str, quantity: int,
-            order_type: str = "LIMIT", limit_price: float = None,
+            symbol: str,
+            side: str,
+            quantity: int,
+            order_type: str = "LIMIT",
+            limit_price: float = None,
             exchange: str = "NSE",
-        ) -> Optional[str]:
+        ) -> str | None:
             """Adapter: convert algo child order into OrderEntryRequest through submit_order_fn."""
             nonlocal _algo_child_seq
             child_signal = Signal(
@@ -631,7 +659,7 @@ class AutonomousLoop:
                 risk_level=signal.risk_level,
                 reason=f"algo_child:{algo_type}:{idem_key[:24]}",
                 price=limit_price or signal.price,
-                ts=datetime.now(timezone.utc),
+                ts=datetime.now(UTC),
             )
             ot = OrderType.LIMIT if order_type == "LIMIT" and limit_price else OrderType.MARKET
             # BUG 30 FIX: Replace non-deterministic id() with deterministic values
@@ -660,6 +688,7 @@ class AutonomousLoop:
                 return None
 
         async def _run_algo():
+            nonlocal algo_type
             try:
                 if algo_type == "twap":
                     algo = TWAPAlgorithm(submit_order_fn=_algo_submit_child)
@@ -688,28 +717,38 @@ class AutonomousLoop:
                         end_min = now_ist.minute if end_hour < 15 else 15
                         end_hhmm = f"{end_hour:02d}:{end_min:02d}"
                     if end_hhmm <= start_hhmm:
+                        # Market window too small for VWAP — fall back to direct
                         algo_type = "direct"
-                    config = VWAPConfig(
-                        total_quantity=qty,
-                        symbol=signal.symbol,
-                        side=signal.side.value,
-                        exchange=exchange_str,
-                        start_time=start_hhmm,
-                        end_time=end_hhmm,
-                    )
-                    execution = algo.create_schedule(config)
-                    await algo.execute(execution, get_market_price=self._get_market_price)
+                        logger.info(
+                            "VWAP schedule invalid (end=%s <= start=%s) — falling back to direct for %s",
+                            end_hhmm,
+                            start_hhmm,
+                            signal.symbol,
+                        )
+                    else:
+                        config = VWAPConfig(
+                            total_quantity=qty,
+                            symbol=signal.symbol,
+                            side=signal.side.value,
+                            exchange=exchange_str,
+                            start_time=start_hhmm,
+                            end_time=end_hhmm,
+                        )
+                        execution = algo.create_schedule(config)
+                        await algo.execute(execution, get_market_price=self._get_market_price)
 
                 # Broadcast algo completion
-                await self._broadcast({
-                    "type": "algo_execution_complete",
-                    "algo": algo_type,
-                    "symbol": signal.symbol,
-                    "side": signal.side.value,
-                    "total_qty": qty,
-                    "idem_key": idem_key,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                await self._broadcast(
+                    {
+                        "type": "algo_execution_complete",
+                        "algo": algo_type,
+                        "symbol": signal.symbol,
+                        "side": signal.side.value,
+                        "total_qty": qty,
+                        "idem_key": idem_key,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
             except Exception as e:
                 logger.exception("Algo %s execution failed for %s: %s", algo_type, signal.symbol, e)
             finally:
@@ -719,7 +758,11 @@ class AutonomousLoop:
         self._algo_tasks[idem_key] = task
         logger.info(
             "Algo %s launched: %s %s qty=%d idem_key=%s",
-            algo_type, signal.side.value, signal.symbol, qty, idem_key,
+            algo_type,
+            signal.side.value,
+            signal.symbol,
+            qty,
+            idem_key,
         )
 
     async def _tick(self) -> None:
@@ -733,7 +776,7 @@ class AutonomousLoop:
             logger.debug("Stuck order detection error: %s", e)
 
         # ── Forced close: per-position hard stop loss (Sprint 7.9) ──
-        _rm = getattr(self, '_risk_manager', None)
+        _rm = getattr(self, "_risk_manager", None)
         if _rm is not None:
             try:
                 forced_closes = _rm.get_forced_close_symbols()
@@ -768,8 +811,7 @@ class AutonomousLoop:
             if self._consecutive_unhealthy_ticks >= self._UNHEALTHY_PAUSE_THRESHOLD:
                 if not self._signal_generation_paused:
                     logger.critical(
-                        "Market feed unhealthy for %d consecutive ticks — "
-                        "pausing signal generation",
+                        "Market feed unhealthy for %d consecutive ticks — pausing signal generation",
                         self._consecutive_unhealthy_ticks,
                     )
                     self._signal_generation_paused = True
@@ -806,19 +848,24 @@ class AutonomousLoop:
             logger.critical(
                 "DAILY LOSS CIRCUIT BREAKER: daily P&L %.2f (%.2f%% of equity %.0f) "
                 "breaches limit %.1f%% — pausing signal generation for remainder of day",
-                risk_daily_pnl, loss_pct, equity, self._daily_loss_limit * 100,
+                risk_daily_pnl,
+                loss_pct,
+                equity,
+                self._daily_loss_limit * 100,
             )
             self._signal_generation_paused = True
-            await self._broadcast({
-                "type": "circuit_breaker",
-                "reason": "daily_loss_limit",
-                "daily_pnl": round(risk_daily_pnl, 2),
-                "loss_pct": round(loss_pct, 2),
-                "limit_pct": self._daily_loss_limit * 100,
-                "equity": round(equity, 2),
-                "message": f"Daily loss {loss_pct:.2f}% exceeds {self._daily_loss_limit * 100:.1f}% limit — trading halted",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            await self._broadcast(
+                {
+                    "type": "circuit_breaker",
+                    "reason": "daily_loss_limit",
+                    "daily_pnl": round(risk_daily_pnl, 2),
+                    "loss_pct": round(loss_pct, 2),
+                    "limit_pct": self._daily_loss_limit * 100,
+                    "equity": round(equity, 2),
+                    "message": f"Daily loss {loss_pct:.2f}% exceeds {self._daily_loss_limit * 100:.1f}% limit — trading halted",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
             return
 
         bar_ts = self._bar_ts()
@@ -826,7 +873,16 @@ class AutonomousLoop:
             return
         self._tick_count += 1
 
-        if not all([self.get_bars, self.get_symbols, self.strategy_runner, self.allocator, self.get_risk_state, self.get_positions]):
+        if not all(
+            [
+                self.get_bars,
+                self.get_symbols,
+                self.strategy_runner,
+                self.allocator,
+                self.get_risk_state,
+                self.get_positions,
+            ]
+        ):
             # Even without BarCache, if we have a market_scanner, use it
             if self.market_scanner is None:
                 self._last_bar_ts = bar_ts
@@ -842,18 +898,22 @@ class AutonomousLoop:
                     "Circuit breaker CLOSED — tick succeeded after %d prior failures",
                     self._MAX_CONSECUTIVE_FAILURES,
                 )
-                await self._broadcast({
-                    "type": "circuit_breaker",
-                    "reason": "circuit_closed",
-                    "message": "Autonomous loop recovered — circuit breaker closed",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                await self._broadcast(
+                    {
+                        "type": "circuit_breaker",
+                        "reason": "circuit_closed",
+                        "message": "Autonomous loop recovered — circuit breaker closed",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
             self._loop_circuit_open = False
         except Exception as e:
             self._consecutive_tick_failures += 1
             logger.exception(
                 "Tick failed (consecutive failures: %d/%d): %s",
-                self._consecutive_tick_failures, self._MAX_CONSECUTIVE_FAILURES, e,
+                self._consecutive_tick_failures,
+                self._MAX_CONSECUTIVE_FAILURES,
+                e,
             )
             if self._consecutive_tick_failures >= self._MAX_CONSECUTIVE_FAILURES and not self._loop_circuit_open:
                 self._loop_circuit_open = True
@@ -863,14 +923,16 @@ class AutonomousLoop:
                     self._consecutive_tick_failures,
                     self._CIRCUIT_OPEN_POLL_SECONDS,
                 )
-                await self._broadcast({
-                    "type": "circuit_breaker",
-                    "reason": "consecutive_failures",
-                    "consecutive_failures": self._consecutive_tick_failures,
-                    "max_failures": self._MAX_CONSECUTIVE_FAILURES,
-                    "message": "Autonomous loop circuit breaker OPEN — repeated tick failures",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                await self._broadcast(
+                    {
+                        "type": "circuit_breaker",
+                        "reason": "consecutive_failures",
+                        "consecutive_failures": self._consecutive_tick_failures,
+                        "max_failures": self._MAX_CONSECUTIVE_FAILURES,
+                        "message": "Autonomous loop circuit breaker OPEN — repeated tick failures",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
             # Backoff sleep on failure (in addition to normal poll interval)
             await asyncio.sleep(self._failure_backoff_seconds)
 
@@ -889,8 +951,11 @@ class AutonomousLoop:
             symbols_exchanges = self._get_dynamic_universe_fallback()
             if symbols_exchanges:
                 used_fallback_universe = True
-                logger.info("Tick %d: BarCache empty, using fallback universe (%d symbols)",
-                           self._tick_count, len(symbols_exchanges))
+                logger.info(
+                    "Tick %d: BarCache empty, using fallback universe (%d symbols)",
+                    self._tick_count,
+                    len(symbols_exchanges),
+                )
             else:
                 # Last resort: jump straight to market scanner if available
                 if self.market_scanner is not None:
@@ -899,9 +964,9 @@ class AutonomousLoop:
                 else:
                     logger.info("Tick %d: empty universe and no fallback available, skipping", self._tick_count)
                     return
-        all_signals: List[Signal] = []
-        regime_scale_from_classifier: Optional[float] = None
-        symbol_metadata: Dict[str, dict] = {}
+        all_signals: list[Signal] = []
+        regime_scale_from_classifier: float | None = None
+        symbol_metadata: dict[str, dict] = {}
         if self.get_bars is None:
             symbols_exchanges = []
         for symbol, exchange in symbols_exchanges:
@@ -934,7 +999,11 @@ class AutonomousLoop:
                     elif res.label.value in ("low_volatility", "trending_up", "trending_down"):
                         _sym_regime_scale = 1.0
                     if _sym_regime_scale is not None:
-                        regime_scale_from_classifier = min(regime_scale_from_classifier, _sym_regime_scale) if regime_scale_from_classifier is not None else _sym_regime_scale
+                        regime_scale_from_classifier = (
+                            min(regime_scale_from_classifier, _sym_regime_scale)
+                            if regime_scale_from_classifier is not None
+                            else _sym_regime_scale
+                        )
                 except Exception as e:
                     logger.debug("Regime classify failed: %s", e)
             state = MarketState(
@@ -946,13 +1015,15 @@ class AutonomousLoop:
                 metadata=metadata,
             )
             # Strategy runner: exceptions propagate to circuit breaker
-            if hasattr(self.strategy_runner, 'run_with_multi_timeframe') and self.get_bars:
+            if hasattr(self.strategy_runner, "run_with_multi_timeframe") and self.get_bars:
                 sigs = self.strategy_runner.run_with_multi_timeframe(state, self.get_bars)
             else:
                 sigs = self.strategy_runner.run(state)
             all_signals.extend(sigs)
 
-        logger.info("Tick %d: %d raw signals from %d symbols", self._tick_count, len(all_signals), len(symbols_exchanges))
+        logger.info(
+            "Tick %d: %d raw signals from %d symbols", self._tick_count, len(all_signals), len(symbols_exchanges)
+        )
 
         # ── Ensemble AI Enhancement ──────────────────────────────────────
         # If the ensemble engine is available, use its multi-model consensus
@@ -960,11 +1031,11 @@ class AutonomousLoop:
         # signals. Signals aligned with ensemble direction get boosted; signals
         # contradicting ensemble direction get suppressed. This prevents
         # classical strategies from trading against the AI consensus.
-        _ensemble = getattr(self, '_ensemble_engine', None)
+        _ensemble = getattr(self, "_ensemble_engine", None)
         if _ensemble is not None and all_signals:
-            enhanced_signals: List[Signal] = []
+            enhanced_signals: list[Signal] = []
             # Group signals by symbol so we call predict() once per symbol
-            _signals_by_symbol: Dict[str, List[Signal]] = {}
+            _signals_by_symbol: dict[str, list[Signal]] = {}
             for sig in all_signals:
                 _signals_by_symbol.setdefault(sig.symbol, []).append(sig)
 
@@ -994,7 +1065,8 @@ class AutonomousLoop:
                     # not trade than to trade on potentially conflicting signals.
                     logger.info(
                         "Ensemble halt for %s — suppressing %d signals (no model consensus)",
-                        sym, len(sym_signals),
+                        sym,
+                        len(sym_signals),
                     )
                     continue
 
@@ -1020,16 +1092,18 @@ class AutonomousLoop:
                         # to ensemble confidence (max +20% boost, capped at 1.0)
                         boost = min(0.20, ensemble_confidence * 0.25)
                         new_score = min(1.0, sig.score + boost)
-                        enhanced_sig = sig.model_copy(update={
-                            "score": round(new_score, 4),
-                            "metadata": {
-                                **sig.metadata,
-                                "ensemble_aligned": True,
-                                "ensemble_prob_up": round(prediction.prob_up, 4),
-                                "ensemble_confidence": round(ensemble_confidence, 4),
-                                "original_score": sig.score,
-                            },
-                        })
+                        enhanced_sig = sig.model_copy(
+                            update={
+                                "score": round(new_score, 4),
+                                "metadata": {
+                                    **sig.metadata,
+                                    "ensemble_aligned": True,
+                                    "ensemble_prob_up": round(prediction.prob_up, 4),
+                                    "ensemble_confidence": round(ensemble_confidence, 4),
+                                    "original_score": sig.score,
+                                },
+                            }
+                        )
                         enhanced_signals.append(enhanced_sig)
                     elif contradicts:
                         # Signal contradicts ensemble consensus -- suppress score proportionally
@@ -1040,31 +1114,39 @@ class AutonomousLoop:
                             # Score too low after penalty -- drop the signal entirely
                             logger.debug(
                                 "Ensemble suppressed %s %s %s: score %.2f→%.2f (dropped)",
-                                sig.strategy_id, sig.side.value, sym, sig.score, new_score,
+                                sig.strategy_id,
+                                sig.side.value,
+                                sym,
+                                sig.score,
+                                new_score,
                             )
                             continue
-                        enhanced_sig = sig.model_copy(update={
-                            "score": round(new_score, 4),
-                            "metadata": {
-                                **sig.metadata,
-                                "ensemble_aligned": False,
-                                "ensemble_prob_up": round(prediction.prob_up, 4),
-                                "ensemble_confidence": round(ensemble_confidence, 4),
-                                "original_score": sig.score,
-                            },
-                        })
+                        enhanced_sig = sig.model_copy(
+                            update={
+                                "score": round(new_score, 4),
+                                "metadata": {
+                                    **sig.metadata,
+                                    "ensemble_aligned": False,
+                                    "ensemble_prob_up": round(prediction.prob_up, 4),
+                                    "ensemble_confidence": round(ensemble_confidence, 4),
+                                    "original_score": sig.score,
+                                },
+                            }
+                        )
                         enhanced_signals.append(enhanced_sig)
                     else:
                         # Ensemble is neutral (prob_up between 0.45-0.55) -- pass through
                         # with metadata annotation but no score adjustment
-                        enhanced_sig = sig.model_copy(update={
-                            "metadata": {
-                                **sig.metadata,
-                                "ensemble_aligned": None,
-                                "ensemble_prob_up": round(prediction.prob_up, 4),
-                                "ensemble_confidence": round(ensemble_confidence, 4),
-                            },
-                        })
+                        enhanced_sig = sig.model_copy(
+                            update={
+                                "metadata": {
+                                    **sig.metadata,
+                                    "ensemble_aligned": None,
+                                    "ensemble_prob_up": round(prediction.prob_up, 4),
+                                    "ensemble_confidence": round(ensemble_confidence, 4),
+                                },
+                            }
+                        )
                         enhanced_signals.append(enhanced_sig)
 
             pre_enhance = len(all_signals)
@@ -1073,7 +1155,9 @@ class AutonomousLoop:
             all_signals.sort(key=lambda s: s.score, reverse=True)
             logger.info(
                 "Ensemble enhancement: %d→%d signals (suppressed %d)",
-                pre_enhance, len(all_signals), pre_enhance - len(all_signals),
+                pre_enhance,
+                len(all_signals),
+                pre_enhance - len(all_signals),
             )
 
         risk_state = self.get_risk_state()
@@ -1094,9 +1178,11 @@ class AutonomousLoop:
             all_signals = [s for s in all_signals if s.side != SignalSide.BUY]
             filtered_out = pre_filter - len(all_signals)
             if filtered_out > 0:
-                logger.info("Sentiment filter: blocked %d BUY signals (negative sentiment %.0f%%)",
-                           filtered_out,
-                           (self._last_sentiment_detail or {}).get("negative", 0) * 100)
+                logger.info(
+                    "Sentiment filter: blocked %d BUY signals (negative sentiment %.0f%%)",
+                    filtered_out,
+                    (self._last_sentiment_detail or {}).get("negative", 0) * 100,
+                )
 
         # Cache signals for API exposure (strategies/signals endpoint)
         self._last_signals = list(all_signals)
@@ -1116,7 +1202,7 @@ class AutonomousLoop:
             regime_scale=regime_scale,
             max_position_pct=max_position_pct,
         )
-        allocated: List[Tuple[Signal, int]] = []
+        allocated: list[tuple[Signal, int]] = []
         for item in raw_allocated:
             if hasattr(item, "signal") and hasattr(item, "quantity"):
                 allocated.append((item.signal, item.quantity))
@@ -1131,7 +1217,14 @@ class AutonomousLoop:
             if signal.price and signal.price > 0 and equity > 0:
                 max_qty_cap = int(equity * (max_position_pct / 100.0) / signal.price)
                 if qty > max_qty_cap:
-                    logger.info("Position cap: %s qty %d→%d (%.1f%%→%.1f%%)", signal.symbol, qty, max_qty_cap, qty * signal.price / equity * 100, max_qty_cap * signal.price / equity * 100)
+                    logger.info(
+                        "Position cap: %s qty %d→%d (%.1f%%→%.1f%%)",
+                        signal.symbol,
+                        qty,
+                        max_qty_cap,
+                        qty * signal.price / equity * 100,
+                        max_qty_cap * signal.price / equity * 100,
+                    )
                     qty = max_qty_cap
                 if qty <= 0:
                     continue
@@ -1141,20 +1234,23 @@ class AutonomousLoop:
             # the loop variable which only holds the last iteration's value.
             _sig_metadata = symbol_metadata.get(signal.symbol, {})
             order_metadata = dict(_sig_metadata) if _sig_metadata else {}
-            order_metadata.update({
-                "predicted_direction": signal.side.value,
-                "predicted_confidence": signal.score,
-                "signal_source": signal.strategy_id,
-                "entry_price": signal.price,
-            })
+            order_metadata.update(
+                {
+                    "predicted_direction": signal.side.value,
+                    "predicted_confidence": signal.score,
+                    "signal_source": signal.strategy_id,
+                    "entry_price": signal.price,
+                }
+            )
             # Attach ensemble weights if available
-            _ensemble = getattr(self, '_ensemble_engine', None)
-            if _ensemble and hasattr(_ensemble, 'weights'):
+            _ensemble = getattr(self, "_ensemble_engine", None)
+            if _ensemble and hasattr(_ensemble, "weights"):
                 order_metadata["model_weights"] = {k: round(v, 4) for k, v in _ensemble.weights.items()}
 
             # Select execution algorithm based on order size vs ADV
             algo_type = self._select_algo(
-                signal.symbol, qty,
+                signal.symbol,
+                qty,
                 getattr(signal.exchange, "value", str(signal.exchange)),
             )
             order_metadata["algo_type"] = algo_type
@@ -1166,7 +1262,7 @@ class AutonomousLoop:
 
             # SEBI-compliant decision logging: log WHY we're placing this order
             decision_log = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "symbol": signal.symbol,
                 "side": signal.side.value,
                 "quantity": qty,
@@ -1183,8 +1279,12 @@ class AutonomousLoop:
             if algo_type != "direct":
                 # Launch algo as background task; idempotency is checked inside _submit_via_algo
                 await self._submit_via_algo(
-                    signal, qty, idem_key, algo_type,
-                    source="autonomous", order_metadata=order_metadata,
+                    signal,
+                    qty,
+                    idem_key,
+                    algo_type,
+                    source="autonomous",
+                    order_metadata=order_metadata,
                 )
                 await self._track_open_trade(signal, qty)
             else:
@@ -1200,24 +1300,35 @@ class AutonomousLoop:
                 )
                 result = await self.submit_order_fn(req)
                 if result.success:
-                    logger.info("Autonomous order submitted order_id=%s strategy=%s symbol=%s side=%s qty=%s", result.order_id, signal.strategy_id, signal.symbol, signal.side.value, qty)
+                    logger.info(
+                        "Autonomous order submitted order_id=%s strategy=%s symbol=%s side=%s qty=%s",
+                        result.order_id,
+                        signal.strategy_id,
+                        signal.symbol,
+                        signal.side.value,
+                        qty,
+                    )
                     await self._track_open_trade(signal, qty)
                 else:
-                    logger.warning("Autonomous order rejected reason=%s detail=%s", result.reject_reason, result.reject_detail)
+                    logger.warning(
+                        "Autonomous order rejected reason=%s detail=%s", result.reject_reason, result.reject_detail
+                    )
 
         # Broadcast signal_generated events for each signal to WebSocket (dashboard SignalFeed)
         for signal in all_signals:
-            await self._broadcast({
-                "type": "signal_generated",
-                "strategy_id": signal.strategy_id,
-                "symbol": signal.symbol,
-                "exchange": getattr(signal.exchange, "value", str(signal.exchange)),
-                "side": signal.side.value,
-                "score": signal.score,
-                "price": signal.price,
-                "reason": signal.reason,
-                "timestamp": signal.ts.isoformat() if signal.ts else datetime.now(timezone.utc).isoformat(),
-            })
+            await self._broadcast(
+                {
+                    "type": "signal_generated",
+                    "strategy_id": signal.strategy_id,
+                    "symbol": signal.symbol,
+                    "exchange": getattr(signal.exchange, "value", str(signal.exchange)),
+                    "side": signal.side.value,
+                    "score": signal.score,
+                    "price": signal.price,
+                    "reason": signal.reason,
+                    "timestamp": signal.ts.isoformat() if signal.ts else datetime.now(UTC).isoformat(),
+                }
+            )
 
         self._last_bar_ts = bar_ts
 
@@ -1236,9 +1347,7 @@ class AutonomousLoop:
                     _scanner_universe = [f"{s}.NS" for s, _ex in symbols_exchanges]
 
                 scanner_signals = await _loop.run_in_executor(
-                    None, lambda: self.market_scanner.scan_to_signals(
-                        universe=_scanner_universe, bar_cache=None
-                    )
+                    None, lambda: self.market_scanner.scan_to_signals(universe=_scanner_universe, bar_cache=None)
                 )
 
                 # Apply sentiment filter to scanner signals too
@@ -1248,7 +1357,7 @@ class AutonomousLoop:
                     if len(scanner_signals) < _pre:
                         logger.info("Sentiment filter: blocked %d scanner BUY signals", _pre - len(scanner_signals))
 
-                existing_symbols = {signal.symbol for signal, qty in allocated}
+                _existing_symbols = {signal.symbol for signal, qty in allocated}
                 submitted_symbols = set()
                 for signal, qty in allocated:
                     submitted_symbols.add(signal.symbol)
@@ -1282,12 +1391,14 @@ class AutonomousLoop:
 
                     # Feed staleness gate: reject if bar data is stale during market hours
                     if _is_nse_market_hours() and self._signal_generation_paused:
-                        logger.warning("Scanner order blocked: signal generation paused due to stale data (symbol=%s)", sig.symbol)
+                        logger.warning(
+                            "Scanner order blocked: signal generation paused due to stale data (symbol=%s)", sig.symbol
+                        )
                         continue
 
                     # SEBI-compliant decision logging for scanner orders
                     scanner_decision_log = {
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                         "symbol": sig.symbol,
                         "side": sig.side.value,
                         "quantity": qty,
@@ -1303,12 +1414,17 @@ class AutonomousLoop:
 
                     # Select execution algorithm for scanner orders too
                     scanner_algo = self._select_algo(
-                        sig.symbol, qty,
+                        sig.symbol,
+                        qty,
                         getattr(sig.exchange, "value", str(sig.exchange)),
                     )
                     if scanner_algo != "direct":
                         await self._submit_via_algo(
-                            sig, qty, idem_key, scanner_algo, source="scanner",
+                            sig,
+                            qty,
+                            idem_key,
+                            scanner_algo,
+                            source="scanner",
                         )
                         await self._track_open_trade(sig, qty)
                     else:
@@ -1323,12 +1439,19 @@ class AutonomousLoop:
                         try:
                             result = await asyncio.wait_for(self.submit_order_fn(req), timeout=10.0)
                             if result.success:
-                                logger.info("Scanner order submitted order_id=%s symbol=%s side=%s qty=%s",
-                                            result.order_id, sig.symbol, sig.side.value, qty)
+                                logger.info(
+                                    "Scanner order submitted order_id=%s symbol=%s side=%s qty=%s",
+                                    result.order_id,
+                                    sig.symbol,
+                                    sig.side.value,
+                                    qty,
+                                )
                                 await self._track_open_trade(sig, qty)
                             else:
-                                logger.debug("Scanner order rejected: %s %s", result.reject_reason, result.reject_detail)
-                        except asyncio.TimeoutError:
+                                logger.debug(
+                                    "Scanner order rejected: %s %s", result.reject_reason, result.reject_detail
+                                )
+                        except TimeoutError:
                             logger.warning("Scanner order timeout for %s (10s) — skipping", sig.symbol)
                         except Exception as e:
                             logger.exception("Scanner submit failed: %s", e)
@@ -1338,8 +1461,14 @@ class AutonomousLoop:
         # Mark-to-market: update unrealized P&L and broadcast
         await self._mark_to_market()
 
-        logger.debug("Autonomous loop tick bar_ts=%s signals=%s allocated=%s open_trades=%s daily_pnl=%.2f",
-                     bar_ts, len(all_signals), len(allocated), len(self._open_trades), self._get_daily_pnl())
+        logger.debug(
+            "Autonomous loop tick bar_ts=%s signals=%s allocated=%s open_trades=%s daily_pnl=%.2f",
+            bar_ts,
+            len(all_signals),
+            len(allocated),
+            len(self._open_trades),
+            self._get_daily_pnl(),
+        )
 
     def set_kill_switch(self, kill_switch_fn: Callable[[], Awaitable[bool]]) -> None:
         """Set async callable that returns True if kill switch is armed."""
@@ -1379,7 +1508,11 @@ class AutonomousLoop:
 
             try:
                 # Resolve trade exchange; fall back to NSE if not stored
-                trade_exchange = trade.get("exchange", Exchange.NSE) if isinstance(trade, dict) else getattr(trade, 'exchange', Exchange.NSE)
+                trade_exchange = (
+                    trade.get("exchange", Exchange.NSE)
+                    if isinstance(trade, dict)
+                    else getattr(trade, "exchange", Exchange.NSE)
+                )
                 # Get current price for limit order with buffer
                 exit_price = trade["entry_price"]  # fallback
                 if self.get_bars:
@@ -1400,19 +1533,19 @@ class AutonomousLoop:
                 close_signal = Signal(
                     strategy_id=_strat_id,
                     symbol=symbol,
-                    exchange=trade.get("exchange", Exchange.NSE) if isinstance(trade, dict) else getattr(trade, 'exchange', Exchange.NSE),
+                    exchange=trade.get("exchange", Exchange.NSE)
+                    if isinstance(trade, dict)
+                    else getattr(trade, "exchange", Exchange.NSE),
                     side=close_side,
                     score=1.0,
                     portfolio_weight=0.0,
                     risk_level="EMERGENCY",
                     reason=f"KILL_SWITCH_AUTO_CLOSE: {trade['side']} {symbol} entry={trade['entry_price']:.2f}",
                     price=limit_price,
-                    ts=datetime.now(timezone.utc),
+                    ts=datetime.now(UTC),
                 )
                 bar_ts = self._bar_ts()
-                idem_key = stable_idempotency_key(
-                    bar_ts, f"{_strat_id}_kill_close", symbol, close_side.value
-                )
+                idem_key = stable_idempotency_key(bar_ts, f"{_strat_id}_kill_close", symbol, close_side.value)
                 req = OrderEntryRequest(
                     signal=close_signal,
                     quantity=trade["qty"],
@@ -1424,8 +1557,14 @@ class AutonomousLoop:
                 )
                 result = await self.submit_order_fn(req)
                 if result.success:
-                    logger.info("Kill switch auto-close submitted: order_id=%s %s %s qty=%d limit=%.2f",
-                                result.order_id, close_side.value, symbol, trade["qty"], limit_price)
+                    logger.info(
+                        "Kill switch auto-close submitted: order_id=%s %s %s qty=%d limit=%.2f",
+                        result.order_id,
+                        close_side.value,
+                        symbol,
+                        trade["qty"],
+                        limit_price,
+                    )
                     async with self._open_trades_lock:
                         if self._open_trade_repo:
                             self._open_trade_repo.delete_trade(trade_key)
@@ -1435,8 +1574,12 @@ class AutonomousLoop:
                 else:
                     retries = self._close_attempts.get(trade_key, 0)
                     self._close_attempts[trade_key] = retries + 1
-                    logger.warning("Kill switch auto-close rejected for %s: %s (attempt %d)",
-                                   symbol, result.reject_reason, retries + 1)
+                    logger.warning(
+                        "Kill switch auto-close rejected for %s: %s (attempt %d)",
+                        symbol,
+                        result.reject_reason,
+                        retries + 1,
+                    )
             except Exception as e:
                 retries = self._close_attempts.get(trade_key, 0)
                 self._close_attempts[trade_key] = retries + 1
@@ -1444,8 +1587,7 @@ class AutonomousLoop:
 
         async with self._open_trades_lock:
             remaining = len(self._open_trades)
-        logger.info("Kill switch auto-close completed: %d orders submitted, %d remaining",
-                     close_count, remaining)
+        logger.info("Kill switch auto-close completed: %d orders submitted, %d remaining", close_count, remaining)
 
     async def _emergency_close_symbol(self, symbol: str, reason: str = "forced_close") -> None:
         """Emergency close a single symbol's position from _open_trades. Used for per-position hard stops."""
@@ -1462,7 +1604,11 @@ class AutonomousLoop:
                     continue  # already closed by another coroutine
                 trade = dict(trade)
             try:
-                trade_exchange = trade.get("exchange", Exchange.NSE) if isinstance(trade, dict) else getattr(trade, 'exchange', Exchange.NSE)
+                trade_exchange = (
+                    trade.get("exchange", Exchange.NSE)
+                    if isinstance(trade, dict)
+                    else getattr(trade, "exchange", Exchange.NSE)
+                )
                 exit_price = trade["entry_price"]
                 if self.get_bars:
                     bars = self.get_bars(symbol, trade_exchange, "1m", 2)
@@ -1478,14 +1624,16 @@ class AutonomousLoop:
                 close_signal = Signal(
                     strategy_id=trade["strategy_id"],
                     symbol=symbol,
-                    exchange=trade.get("exchange", Exchange.NSE) if isinstance(trade, dict) else getattr(trade, 'exchange', Exchange.NSE),
+                    exchange=trade.get("exchange", Exchange.NSE)
+                    if isinstance(trade, dict)
+                    else getattr(trade, "exchange", Exchange.NSE),
                     side=close_side,
                     score=1.0,
                     portfolio_weight=0.0,
                     risk_level="EMERGENCY",
                     reason=f"{reason}: {trade['side']} {symbol} entry={trade['entry_price']:.2f}",
                     price=limit_price,
-                    ts=datetime.now(timezone.utc),
+                    ts=datetime.now(UTC),
                 )
                 bar_ts = self._bar_ts()
                 idem_key = stable_idempotency_key(bar_ts, f"{trade['strategy_id']}_{reason}", symbol, close_side.value)
@@ -1500,8 +1648,14 @@ class AutonomousLoop:
                 )
                 result = await self.submit_order_fn(req)
                 if result.success:
-                    logger.warning("Forced close submitted: order_id=%s %s %s qty=%d reason=%s",
-                                   result.order_id, close_side.value, symbol, trade["qty"], reason)
+                    logger.warning(
+                        "Forced close submitted: order_id=%s %s %s qty=%d reason=%s",
+                        result.order_id,
+                        close_side.value,
+                        symbol,
+                        trade["qty"],
+                        reason,
+                    )
                     async with self._open_trades_lock:
                         if self._open_trade_repo:
                             self._open_trade_repo.delete_trade(trade_key)
@@ -1562,14 +1716,14 @@ class AutonomousLoop:
         self._cancel_order_fn = fn
         logger.info("Cancel order function wired for stuck order detection")
 
-    async def startup_reconciliation(self) -> Dict[str, Any]:
+    async def startup_reconciliation(self) -> dict[str, Any]:
         """
         On boot, query broker for open positions and sync with local state.
         Must be called after set_broker_get_positions() and load_open_trades_from_db().
 
         Returns reconciliation report.
         """
-        report: Dict[str, Any] = {
+        report: dict[str, Any] = {
             "success": True,
             "broker_positions": 0,
             "local_trades": len(self._open_trades),
@@ -1593,10 +1747,14 @@ class AutonomousLoop:
             report["broker_positions"] = len(broker_positions)
 
             # Build broker position map
-            broker_map: Dict[str, Dict[str, Any]] = {}
+            broker_map: dict[str, dict[str, Any]] = {}
             for bp in broker_positions:
                 symbol = getattr(bp, "symbol", bp.get("symbol", "")) if isinstance(bp, dict) else bp.symbol
-                side = getattr(bp, "side", bp.get("side", "BUY")) if isinstance(bp, dict) else getattr(bp.side, "value", str(bp.side))
+                side = (
+                    getattr(bp, "side", bp.get("side", "BUY"))
+                    if isinstance(bp, dict)
+                    else getattr(bp.side, "value", str(bp.side))
+                )
                 if isinstance(side, type) and hasattr(side, "value"):
                     side = side.value
                 qty = getattr(bp, "quantity", bp.get("quantity", 0)) if isinstance(bp, dict) else bp.quantity
@@ -1604,7 +1762,7 @@ class AutonomousLoop:
                 broker_map[key] = {"symbol": symbol, "side": side, "quantity": qty}
 
             # Build local trade map
-            local_map: Dict[str, Dict[str, Any]] = {}
+            local_map: dict[str, dict[str, Any]] = {}
             async with self._open_trades_lock:
                 for trade_key, trade in self._open_trades.items():
                     symbol = trade.get("symbol", trade_key.split(":")[0])
@@ -1615,30 +1773,34 @@ class AutonomousLoop:
             # Find positions on broker but not tracked locally
             for key, bp in broker_map.items():
                 if key not in local_map and bp["quantity"] > 0:
-                    report["mismatches"].append({
-                        "type": "missing_locally",
-                        "key": key,
-                        "broker_qty": bp["quantity"],
-                    })
+                    report["mismatches"].append(
+                        {
+                            "type": "missing_locally",
+                            "key": key,
+                            "broker_qty": bp["quantity"],
+                        }
+                    )
                     logger.warning(
-                        "Startup reconciliation: broker has position %s (qty=%.1f) "
-                        "not tracked locally",
-                        key, bp["quantity"],
+                        "Startup reconciliation: broker has position %s (qty=%.1f) not tracked locally",
+                        key,
+                        bp["quantity"],
                     )
                     report["actions"].append(f"WARNING: untracked broker position {key}")
 
             # Find local trades not on broker (phantom)
             for key, trade in local_map.items():
                 if key not in broker_map:
-                    report["mismatches"].append({
-                        "type": "phantom_local",
-                        "key": key,
-                        "local_qty": trade.get("qty", 0),
-                    })
+                    report["mismatches"].append(
+                        {
+                            "type": "phantom_local",
+                            "key": key,
+                            "local_qty": trade.get("qty", 0),
+                        }
+                    )
                     logger.warning(
-                        "Startup reconciliation: local trade %s (qty=%.1f) "
-                        "NOT found on broker — may need cleanup",
-                        key, trade.get("qty", 0),
+                        "Startup reconciliation: local trade %s (qty=%.1f) NOT found on broker — may need cleanup",
+                        key,
+                        trade.get("qty", 0),
                     )
 
             # Check quantity mismatches
@@ -1646,16 +1808,19 @@ class AutonomousLoop:
                 local_qty = local_map[key].get("qty", 0)
                 broker_qty = broker_map[key]["quantity"]
                 if abs(local_qty - broker_qty) > 0.01:
-                    report["mismatches"].append({
-                        "type": "quantity_mismatch",
-                        "key": key,
-                        "local_qty": local_qty,
-                        "broker_qty": broker_qty,
-                    })
+                    report["mismatches"].append(
+                        {
+                            "type": "quantity_mismatch",
+                            "key": key,
+                            "local_qty": local_qty,
+                            "broker_qty": broker_qty,
+                        }
+                    )
                     logger.warning(
-                        "Startup reconciliation: quantity mismatch for %s "
-                        "(local=%.1f, broker=%.1f)",
-                        key, local_qty, broker_qty,
+                        "Startup reconciliation: quantity mismatch for %s (local=%.1f, broker=%.1f)",
+                        key,
+                        local_qty,
+                        broker_qty,
                     )
 
             self._startup_reconciled = True
@@ -1677,20 +1842,22 @@ class AutonomousLoop:
     def track_pending_order(self, idem_key: str) -> None:
         """Track a pending order for stuck detection. Called after order submission."""
         import time as _time
+
         self._pending_order_tracker[idem_key] = _time.time()
 
     def mark_order_complete(self, idem_key: str) -> None:
         """Remove an order from stuck tracking (filled, cancelled, or rejected)."""
         self._pending_order_tracker.pop(idem_key, None)
 
-    async def _detect_stuck_orders(self) -> List[str]:
+    async def _detect_stuck_orders(self) -> list[str]:
         """
         Detect orders stuck in PENDING/SUBMITTED state for > 5 minutes.
         Cancels stuck orders and returns list of cancelled idem_keys.
         """
         import time as _time
+
         now = _time.time()
-        stuck_keys: List[str] = []
+        stuck_keys: list[str] = []
 
         for idem_key, submit_ts in list(self._pending_order_tracker.items()):
             age = now - submit_ts
@@ -1698,10 +1865,12 @@ class AutonomousLoop:
                 stuck_keys.append(idem_key)
                 logger.warning(
                     "Stuck order detected: idem_key=%s age=%.0fs (>%.0fs threshold)",
-                    idem_key[:40], age, self._STUCK_ORDER_TIMEOUT_SECONDS,
+                    idem_key[:40],
+                    age,
+                    self._STUCK_ORDER_TIMEOUT_SECONDS,
                 )
 
-        cancelled: List[str] = []
+        cancelled: list[str] = []
         for idem_key in stuck_keys:
             try:
                 if self._cancel_order_fn is not None:
@@ -1715,18 +1884,20 @@ class AutonomousLoop:
                 logger.warning("Failed to cancel stuck order %s: %s", idem_key[:40], e)
 
         if cancelled:
-            await self._broadcast({
-                "type": "stuck_orders_cancelled",
-                "count": len(cancelled),
-                "idem_keys": [k[:40] for k in cancelled],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            await self._broadcast(
+                {
+                    "type": "stuck_orders_cancelled",
+                    "count": len(cancelled),
+                    "idem_keys": [k[:40] for k in cancelled],
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
 
         return cancelled
 
     # ── Broker Submission with Timeout and Retry ──
 
-    async def _submit_with_timeout(self, req) -> Optional[Any]:
+    async def _submit_with_timeout(self, req) -> Any | None:
         """
         Submit an order with a 30-second timeout on the broker API call.
         Retries up to 3 times on timeout.
@@ -1743,23 +1914,25 @@ class AutonomousLoop:
                 if result.success and hasattr(req, "idempotency_key") and req.idempotency_key:
                     self.track_pending_order(req.idempotency_key)
                 return result
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 last_error = f"Broker API timeout (attempt {attempt}/{self._BROKER_SUBMIT_MAX_RETRIES})"
                 logger.warning(
                     "Broker submit timeout for %s (attempt %d/%d, timeout=%.0fs)",
                     getattr(req, "idempotency_key", "unknown")[:40],
-                    attempt, self._BROKER_SUBMIT_MAX_RETRIES,
+                    attempt,
+                    self._BROKER_SUBMIT_MAX_RETRIES,
                     self._BROKER_SUBMIT_TIMEOUT_SECONDS,
                 )
                 if attempt < self._BROKER_SUBMIT_MAX_RETRIES:
                     # Exponential backoff: 2s, 4s
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
             except Exception as e:
                 last_error = str(e)
                 logger.exception(
                     "Broker submit failed for %s (attempt %d): %s",
                     getattr(req, "idempotency_key", "unknown")[:40],
-                    attempt, e,
+                    attempt,
+                    e,
                 )
                 break  # Non-timeout errors don't retry
 
@@ -1768,12 +1941,14 @@ class AutonomousLoop:
             getattr(req, "idempotency_key", "unknown")[:40],
             last_error,
         )
-        await self._broadcast({
-            "type": "broker_submit_failed",
-            "idem_key": getattr(req, "idempotency_key", "unknown")[:40],
-            "error": last_error,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        await self._broadcast(
+            {
+                "type": "broker_submit_failed",
+                "idem_key": getattr(req, "idempotency_key", "unknown")[:40],
+                "error": last_error,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
         return None
 
     # ── DB-backed Idempotency Key Persistence ──
@@ -1791,16 +1966,15 @@ class AutonomousLoop:
         return False
 
     @staticmethod
-    def _calc_atr(bars: list, period: int = 14) -> Optional[float]:
+    def _calc_atr(bars: list, period: int = 14) -> float | None:
         """Calculate Average True Range from recent bars. Returns None if insufficient data."""
         if len(bars) < period + 1:
             return None
-        highs = np.array([b.high for b in bars[-(period + 1):]], dtype=float)
-        lows = np.array([b.low for b in bars[-(period + 1):]], dtype=float)
-        closes = np.array([b.close for b in bars[-(period + 1):]], dtype=float)
+        highs = np.array([b.high for b in bars[-(period + 1) :]], dtype=float)
+        lows = np.array([b.low for b in bars[-(period + 1) :]], dtype=float)
+        closes = np.array([b.close for b in bars[-(period + 1) :]], dtype=float)
         tr = np.maximum(
-            highs[1:] - lows[1:],
-            np.maximum(np.abs(highs[1:] - closes[:-1]), np.abs(lows[1:] - closes[:-1]))
+            highs[1:] - lows[1:], np.maximum(np.abs(highs[1:] - closes[:-1]), np.abs(lows[1:] - closes[:-1]))
         )
         return float(np.mean(tr[-period:]))
 
@@ -1821,12 +1995,12 @@ class AutonomousLoop:
             except Exception as e:
                 logger.debug("ATR calculation failed for %s, using default estimate: %s", signal.symbol, e)
 
-        if hasattr(signal, 'stop_loss') and signal.stop_loss and signal.stop_loss > 0:
+        if hasattr(signal, "stop_loss") and signal.stop_loss and signal.stop_loss > 0:
             stop_loss = signal.stop_loss
         else:
             stop_loss = entry_price - 2 * atr_estimate if signal.side.value == "BUY" else entry_price + 2 * atr_estimate
 
-        if hasattr(signal, 'target') and signal.target and signal.target > 0:
+        if hasattr(signal, "target") and signal.target and signal.target > 0:
             take_profit = signal.target
         else:
             risk = abs(entry_price - stop_loss)
@@ -1864,8 +2038,15 @@ class AutonomousLoop:
                 "take_profit": tp_rounded,
                 "trailing_stop": None,
             }
-        logger.info("Trade tracked: %s %s entry=%.2f SL=%.2f TP=%.2f qty=%d",
-                    signal.side.value, signal.symbol, entry_price, sl_rounded, tp_rounded, qty)
+        logger.info(
+            "Trade tracked: %s %s entry=%.2f SL=%.2f TP=%.2f qty=%d",
+            signal.side.value,
+            signal.symbol,
+            entry_price,
+            sl_rounded,
+            tp_rounded,
+            qty,
+        )
 
     async def _check_stop_loss_take_profit(self, bar_ts: str) -> None:
         """Check all open trades for stop-loss or take-profit hits."""
@@ -1878,7 +2059,11 @@ class AutonomousLoop:
             for trade_key, trade in list(self._open_trades.items()):
                 symbol = trade.get("symbol") or trade_key.split(":")[0]
                 try:
-                    trade_exchange = trade.get("exchange", Exchange.NSE) if isinstance(trade, dict) else getattr(trade, 'exchange', Exchange.NSE)
+                    trade_exchange = (
+                        trade.get("exchange", Exchange.NSE)
+                        if isinstance(trade, dict)
+                        else getattr(trade, "exchange", Exchange.NSE)
+                    )
                     bars = self.get_bars(symbol, trade_exchange, "1m", 5)
                     if not bars:
                         continue
@@ -1896,7 +2081,9 @@ class AutonomousLoop:
                             trade["stop_loss"] = new_trailing
                             sl = new_trailing  # update local for hit check
                             if self._open_trade_repo:
-                                self._open_trade_repo.update_sl_tp(trade_key, stop_loss=new_trailing, trailing_stop=new_trailing)
+                                self._open_trade_repo.update_sl_tp(
+                                    trade_key, stop_loss=new_trailing, trailing_stop=new_trailing
+                                )
                     elif side == "SELL" and current_price < entry * 0.985:
                         new_trailing = min(sl, entry)
                         if trade.get("trailing_stop") is None or new_trailing < trade["trailing_stop"]:
@@ -1904,25 +2091,33 @@ class AutonomousLoop:
                             trade["stop_loss"] = new_trailing
                             sl = new_trailing  # update local for hit check
                             if self._open_trade_repo:
-                                self._open_trade_repo.update_sl_tp(trade_key, stop_loss=new_trailing, trailing_stop=new_trailing)
+                                self._open_trade_repo.update_sl_tp(
+                                    trade_key, stop_loss=new_trailing, trailing_stop=new_trailing
+                                )
 
                     hit_sl = (side == "BUY" and current_price <= sl) or (side == "SELL" and current_price >= sl)
                     hit_tp = (side == "BUY" and current_price >= tp) or (side == "SELL" and current_price <= tp)
 
                     if hit_sl or hit_tp:
                         reason = "STOP_LOSS" if hit_sl else "TAKE_PROFIT"
-                        pnl = (current_price - entry) * trade["qty"] if side == "BUY" else (entry - current_price) * trade["qty"]
-                        # Delegate PnL to RiskManager (single source of truth)
-                        self._register_pnl(pnl)
+                        pnl = (
+                            (current_price - entry) * trade["qty"]
+                            if side == "BUY"
+                            else (entry - current_price) * trade["qty"]
+                        )
+                        # NOTE: PnL is NOT registered here. It is deferred to Phase 2
+                        # after the close order is confirmed, to prevent counting PnL
+                        # for positions that fail to close.
 
-                        if self.performance_tracker:
-                            try:
-                                self.performance_tracker.record_fill(trade.get("strategy_id") or "unknown", pnl)
-                            except Exception as e:
-                                logger.debug("Performance tracker record_fill failed: %s", e)
-
-                        logger.info("%s hit for %s %s: entry=%.2f exit=%.2f PnL=%.2f daily_total=%.2f",
-                                    reason, side, symbol, entry, current_price, pnl, self._get_daily_pnl())
+                        logger.info(
+                            "%s hit for %s %s: entry=%.2f exit=%.2f estimated_PnL=%.2f",
+                            reason,
+                            side,
+                            symbol,
+                            entry,
+                            current_price,
+                            pnl,
+                        )
                         to_close.append((trade_key, symbol, trade, current_price, reason, pnl))
                 except Exception as e:
                     logger.debug("SL/TP check failed for %s: %s", symbol, e)
@@ -1937,18 +2132,18 @@ class AutonomousLoop:
             close_signal = Signal(
                 strategy_id=_strat_id,
                 symbol=symbol,
-                exchange=trade.get("exchange", Exchange.NSE) if isinstance(trade, dict) else getattr(trade, 'exchange', Exchange.NSE),
+                exchange=trade.get("exchange", Exchange.NSE)
+                if isinstance(trade, dict)
+                else getattr(trade, "exchange", Exchange.NSE),
                 side=close_side,
                 score=1.0,
                 portfolio_weight=0.0,
                 risk_level="NORMAL",
                 reason=f"{reason}: entry={trade['entry_price']:.2f} exit={exit_price:.2f} pnl={pnl:.2f}",
                 price=exit_price,
-                ts=datetime.now(timezone.utc),
+                ts=datetime.now(UTC),
             )
-            idem_key = stable_idempotency_key(
-                bar_ts, f"{_strat_id}_{reason.lower()}", symbol, close_side.value
-            )
+            idem_key = stable_idempotency_key(bar_ts, f"{_strat_id}_{reason.lower()}", symbol, close_side.value)
             # Use LIMIT orders with buffer for SL/TP (avoid market order slippage)
             if reason == "STOP_LOSS":
                 # SL: give 0.3% execution room
@@ -1971,27 +2166,56 @@ class AutonomousLoop:
             try:
                 result = await self.submit_order_fn(req)
                 if result.success:
-                    logger.info("%s close order submitted: order_id=%s %s %s qty=%d exit=%.2f pnl=%.2f",
-                                reason, result.order_id, close_side.value, symbol, trade["qty"], exit_price, pnl)
+                    # Register PnL only after close order is accepted
+                    self._register_pnl(pnl)
+                    if self.performance_tracker:
+                        try:
+                            self.performance_tracker.record_fill(trade.get("strategy_id") or "unknown", pnl)
+                        except Exception as e:
+                            logger.debug("Performance tracker record_fill failed: %s", e)
+                    logger.info(
+                        "%s close order submitted: order_id=%s %s %s qty=%d exit=%.2f pnl=%.2f daily_total=%.2f",
+                        reason,
+                        result.order_id,
+                        close_side.value,
+                        symbol,
+                        trade["qty"],
+                        exit_price,
+                        pnl,
+                        self._get_daily_pnl(),
+                    )
                 else:
-                    logger.warning("%s close order rejected for %s: %s — removing from tracking anyway",
-                                   reason, symbol, result.reject_reason)
+                    logger.warning(
+                        "%s close order rejected for %s: %s — keeping trade open for retry",
+                        reason,
+                        symbol,
+                        result.reject_reason,
+                    )
+                    continue  # Don't remove trade — position is still open
             except Exception as e:
-                logger.exception("%s close order submit failed for %s: %s — removing from tracking", reason, symbol, e)
+                logger.exception(
+                    "%s close order submit failed for %s: %s — keeping trade open for retry",
+                    reason,
+                    symbol,
+                    e,
+                )
+                continue  # Don't remove trade — position is still open
 
             # Broadcast trade closed event
-            await self._broadcast({
-                "type": "trade_closed",
-                "symbol": symbol,
-                "side": trade["side"],
-                "entry_price": trade["entry_price"],
-                "exit_price": exit_price,
-                "quantity": trade["qty"],
-                "pnl": pnl,
-                "reason": reason,
-                "strategy_id": trade["strategy_id"],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            await self._broadcast(
+                {
+                    "type": "trade_closed",
+                    "symbol": symbol,
+                    "side": trade["side"],
+                    "entry_price": trade["entry_price"],
+                    "exit_price": exit_price,
+                    "quantity": trade["qty"],
+                    "pnl": pnl,
+                    "reason": reason,
+                    "strategy_id": trade["strategy_id"],
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
 
             # Record trade outcome for self-learning feedback loop
             if self._trade_outcome_repo:
@@ -2032,12 +2256,20 @@ class AutonomousLoop:
         if not self._open_trades or not self.get_bars:
             return
 
+        # Snapshot under lock to avoid mutation during iteration
+        async with self._open_trades_lock:
+            trades_snapshot = list(self._open_trades.items())
+
         total_unrealized = 0.0
         open_positions = []
-        for trade_key, trade in list(self._open_trades.items()):
+        for trade_key, trade in trades_snapshot:
             symbol = trade.get("symbol") or trade_key.split(":")[0]
             try:
-                trade_exchange = trade.get("exchange", Exchange.NSE) if isinstance(trade, dict) else getattr(trade, 'exchange', Exchange.NSE)
+                trade_exchange = (
+                    trade.get("exchange", Exchange.NSE)
+                    if isinstance(trade, dict)
+                    else getattr(trade, "exchange", Exchange.NSE)
+                )
                 bars = self.get_bars(symbol, trade_exchange, "1m", 2)
                 if not bars:
                     continue
@@ -2047,29 +2279,33 @@ class AutonomousLoop:
                 qty = trade["qty"]
                 unrealized = (current_price - entry) * qty if side == "BUY" else (entry - current_price) * qty
                 total_unrealized += unrealized
-                open_positions.append({
-                    "symbol": symbol,
-                    "side": side,
-                    "entry_price": entry,
-                    "current_price": current_price,
-                    "quantity": qty,
-                    "unrealized_pnl": round(unrealized, 2),
-                    "stop_loss": trade["stop_loss"],
-                    "take_profit": trade["take_profit"],
-                    "strategy_id": trade["strategy_id"],
-                })
+                open_positions.append(
+                    {
+                        "symbol": symbol,
+                        "side": side,
+                        "entry_price": entry,
+                        "current_price": current_price,
+                        "quantity": qty,
+                        "unrealized_pnl": round(unrealized, 2),
+                        "stop_loss": trade["stop_loss"],
+                        "take_profit": trade["take_profit"],
+                        "strategy_id": trade["strategy_id"],
+                    }
+                )
             except Exception as e:
                 logger.debug("Mark-to-market price fetch failed for %s: %s", trade_key, e)
 
         if open_positions:
-            await self._broadcast({
-                "type": "portfolio_mark_to_market",
-                "open_positions": open_positions,
-                "total_unrealized_pnl": round(total_unrealized, 2),
-                "total_realized_pnl": round(self._get_daily_pnl(), 2),
-                "total_pnl": round(self._get_daily_pnl() + total_unrealized, 2),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            await self._broadcast(
+                {
+                    "type": "portfolio_mark_to_market",
+                    "open_positions": open_positions,
+                    "total_unrealized_pnl": round(total_unrealized, 2),
+                    "total_realized_pnl": round(self._get_daily_pnl(), 2),
+                    "total_pnl": round(self._get_daily_pnl() + total_unrealized, 2),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
 
     async def _run_preflight_checks(self) -> bool:
         """Run pre-flight checks before the first tick.
@@ -2077,7 +2313,7 @@ class AutonomousLoop:
         Returns True if all critical checks pass (or paper mode allows degraded start).
         In live mode (paper_mode=False), any critical failure aborts the loop.
         """
-        results: Dict[str, bool] = {}
+        results: dict[str, bool] = {}
         is_live = not self.paper_mode
 
         # 0. NSE holiday calendar staleness check
@@ -2086,8 +2322,7 @@ class AutonomousLoop:
         current_year = datetime.now(_IST).year
         if current_year > max_holiday_year:
             logger.warning(
-                "NSE holiday calendar is stale (last year: %d, current: %d) "
-                "— update from NSE circular",
+                "NSE holiday calendar is stale (last year: %d, current: %d) — update from NSE circular",
                 max_holiday_year,
                 current_year,
             )
@@ -2095,9 +2330,11 @@ class AutonomousLoop:
         # 1. Database connectivity
         try:
             from src.core.config import get_settings
+
             db_url = get_settings().database_url
             if db_url:
                 from sqlalchemy import create_engine, text
+
                 engine = create_engine(db_url, pool_pre_ping=True)
                 with engine.connect() as conn:
                     conn.execute(text("SELECT 1"))
@@ -2169,15 +2406,13 @@ class AutonomousLoop:
         if critical_failures:
             if is_live:
                 logger.critical(
-                    "LIVE MODE PRE-FLIGHT FAILED — refusing to start. "
-                    "Failed checks: %s",
+                    "LIVE MODE PRE-FLIGHT FAILED — refusing to start. Failed checks: %s",
                     ", ".join(critical_failures),
                 )
                 return False
             else:
                 logger.warning(
-                    "Paper mode pre-flight has warnings (continuing anyway). "
-                    "Failed checks: %s",
+                    "Paper mode pre-flight has warnings (continuing anyway). Failed checks: %s",
                     ", ".join(critical_failures),
                 )
                 return True
@@ -2199,16 +2434,17 @@ class AutonomousLoop:
                 recon_report = await self.startup_reconciliation()
                 if recon_report.get("mismatches"):
                     logger.warning(
-                        "Startup reconciliation found %d mismatches — "
-                        "review before trading",
+                        "Startup reconciliation found %d mismatches — review before trading",
                         len(recon_report["mismatches"]),
                     )
-                    await self._broadcast({
-                        "type": "startup_reconciliation",
-                        "mismatches": len(recon_report["mismatches"]),
-                        "broker_positions": recon_report.get("broker_positions", 0),
-                        "local_trades": recon_report.get("local_trades", 0),
-                    })
+                    await self._broadcast(
+                        {
+                            "type": "startup_reconciliation",
+                            "mismatches": len(recon_report["mismatches"]),
+                            "broker_positions": recon_report.get("broker_positions", 0),
+                            "local_trades": recon_report.get("local_trades", 0),
+                        }
+                    )
             except Exception as e:
                 logger.warning("Startup reconciliation error: %s", e)
 

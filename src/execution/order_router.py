@@ -22,8 +22,8 @@ import collections
 import logging
 import math
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from src.core.events import Order, OrderType, Signal
 
@@ -42,17 +42,17 @@ _MAX_PRICE_INR = 100_000.0
 # ---------------------------------------------------------------------------
 # Broker cost constants (bps, round-trip approximations)
 # ---------------------------------------------------------------------------
-_DEFAULT_BROKER_COSTS: Dict[str, float] = {
-    "angel_one": 12.0,   # STT + brokerage + GST + stamp (flat ₹20/order model)
-    "zerodha": 10.0,     # discount broker, slightly lower for equity delivery
+_DEFAULT_BROKER_COSTS: dict[str, float] = {
+    "angel_one": 12.0,  # STT + brokerage + GST + stamp (flat ₹20/order model)
+    "zerodha": 10.0,  # discount broker, slightly lower for equity delivery
 }
 
 # ---------------------------------------------------------------------------
 # Smart-sizing defaults
 # ---------------------------------------------------------------------------
-_DEFAULT_MAX_PARTICIPATION_RATE = 0.05   # 5 % of ADV per child slice
-_DEFAULT_MIN_ADV_FOR_SIZING = 50_000     # ignore ADV sizing below this
-_DEFAULT_BROKER_TIMEOUT = 10.0           # 10s default timeout for external calls
+_DEFAULT_MAX_PARTICIPATION_RATE = 0.05  # 5 % of ADV per child slice
+_DEFAULT_MIN_ADV_FOR_SIZING = 50_000  # ignore ADV sizing below this
+_DEFAULT_BROKER_TIMEOUT = 10.0  # 10s default timeout for external calls
 
 
 def validate_tick_size(price: float) -> float:
@@ -78,6 +78,7 @@ def validate_price_sanity(price: float) -> bool:
 # ===================================================================
 # BrokerHealth – per-broker health / latency tracker
 # ===================================================================
+
 
 class BrokerHealth:
     """
@@ -106,7 +107,7 @@ class BrokerHealth:
         self.name = name
         self.max_consecutive_failures = max_consecutive_failures
         self.consecutive_failures: int = 0
-        self.last_success_ts: Optional[float] = None
+        self.last_success_ts: float | None = None
         self.latencies: collections.deque = collections.deque(maxlen=window_size)
         self.healthy: bool = True
         self._total_orders: int = 0
@@ -159,7 +160,7 @@ class BrokerHealth:
         self._total_orders = 0
         self._total_failures = 0
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "healthy": self.healthy,
@@ -173,13 +174,14 @@ class BrokerHealth:
     def __repr__(self) -> str:
         return (
             f"BrokerHealth({self.name!r}, healthy={self.healthy}, "
-            f"fails={self.consecutive_failures}, avg_lat={self.avg_latency*1000:.1f}ms)"
+            f"fails={self.consecutive_failures}, avg_lat={self.avg_latency * 1000:.1f}ms)"
         )
 
 
 # ===================================================================
 # SmartOrderRouter (enhanced OrderRouter)
 # ===================================================================
+
 
 class OrderRouter:
     """
@@ -220,24 +222,24 @@ class OrderRouter:
         default_gateway: BaseExecutionGateway,
         freeze_qty_manager=None,
         *,
-        brokers: Optional[Dict[str, BaseExecutionGateway]] = None,
-        broker_costs_bps: Optional[Dict[str, float]] = None,
-        market_impact_model: Optional[MarketImpactModel] = None,
-        market_data_fn: Optional[Callable] = None,
+        brokers: dict[str, BaseExecutionGateway] | None = None,
+        broker_costs_bps: dict[str, float] | None = None,
+        market_impact_model: MarketImpactModel | None = None,
+        market_data_fn: Callable | None = None,
         improvement_bps: float = 2.0,
         max_participation_rate: float = _DEFAULT_MAX_PARTICIPATION_RATE,
     ):
         self.default_gateway = default_gateway
-        self._gateways: Dict[str, BaseExecutionGateway] = {
+        self._gateways: dict[str, BaseExecutionGateway] = {
             "NSE": default_gateway,
             "BSE": default_gateway,
         }
         self._freeze_qty_manager = freeze_qty_manager
 
         # -- multi-broker setup ------------------------------------------------
-        self._brokers: Dict[str, BaseExecutionGateway] = brokers or {}
-        self._broker_health: Dict[str, BrokerHealth] = {}
-        self._broker_costs: Dict[str, float] = {
+        self._brokers: dict[str, BaseExecutionGateway] = brokers or {}
+        self._broker_health: dict[str, BrokerHealth] = {}
+        self._broker_costs: dict[str, float] = {
             **_DEFAULT_BROKER_COSTS,
             **(broker_costs_bps or {}),
         }
@@ -266,17 +268,17 @@ class OrderRouter:
     # Health accessors
     # ------------------------------------------------------------------
 
-    def get_broker_health(self, name: str) -> Optional[BrokerHealth]:
+    def get_broker_health(self, name: str) -> BrokerHealth | None:
         return self._broker_health.get(name)
 
-    def get_all_broker_health(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_broker_health(self) -> dict[str, dict[str, Any]]:
         return {name: h.as_dict() for name, h in self._broker_health.items()}
 
     # ------------------------------------------------------------------
     # Broker selection
     # ------------------------------------------------------------------
 
-    def _rank_brokers(self) -> List[Tuple[str, BaseExecutionGateway]]:
+    def _rank_brokers(self) -> list[tuple[str, BaseExecutionGateway]]:
         """
         Rank configured brokers by a composite score (lower is better):
           score = cost_bps + latency_penalty
@@ -285,8 +287,8 @@ class OrderRouter:
         if not self._brokers:
             return []
 
-        healthy: List[Tuple[float, str, BaseExecutionGateway]] = []
-        unhealthy: List[Tuple[str, BaseExecutionGateway]] = []
+        healthy: list[tuple[float, str, BaseExecutionGateway]] = []
+        unhealthy: list[tuple[str, BaseExecutionGateway]] = []
 
         for name, gw in self._brokers.items():
             health = self._broker_health.get(name)
@@ -307,7 +309,7 @@ class OrderRouter:
         ranked.extend(unhealthy)
         return ranked
 
-    def _select_broker(self) -> List[Tuple[str, BaseExecutionGateway]]:
+    def _select_broker(self) -> list[tuple[str, BaseExecutionGateway]]:
         """
         Return an ordered list of (name, gateway) to try.
         First entry is the preferred broker; subsequent entries are failover.
@@ -363,7 +365,7 @@ class OrderRouter:
         quantity: int,
         adv: float,
         price: float,
-    ) -> List[int]:
+    ) -> list[int]:
         """
         Split *quantity* into child slices so that each slice is at most
         ``max_participation_rate * ADV`` shares.  Also uses the market impact
@@ -383,7 +385,7 @@ class OrderRouter:
         n_slices = math.ceil(quantity / max_child)
         base_qty = quantity // n_slices
         remainder = quantity - base_qty * n_slices
-        slices: List[int] = []
+        slices: list[int] = []
         for i in range(n_slices):
             q = base_qty + (1 if i < remainder else 0)
             if q > 0:
@@ -391,7 +393,10 @@ class OrderRouter:
 
         logger.info(
             "ADV sizing: qty=%d adv=%.0f max_child=%d -> %d slices",
-            quantity, adv, max_child, len(slices),
+            quantity,
+            adv,
+            max_child,
+            len(slices),
         )
         return slices
 
@@ -404,7 +409,7 @@ class OrderRouter:
         signal: Signal,
         quantity: int,
         order_type: OrderType = OrderType.LIMIT,
-        limit_price: Optional[float] = None,
+        limit_price: float | None = None,
         price_improvement_ticks: int = 0,
     ) -> Order:
         exchange = signal.exchange.value
@@ -420,22 +425,19 @@ class OrderRouter:
                 if price != original_price:
                     logger.debug(
                         "Tick size adjusted: %.4f -> %.2f for %s",
-                        original_price, price, signal.symbol,
+                        original_price,
+                        price,
+                        signal.symbol,
                     )
 
             # Price sanity check
             if price is not None and not validate_price_sanity(price):
                 raise ValueError(
-                    f"Price {price} outside valid range "
-                    f"[{_MIN_PRICE_INR}, {_MAX_PRICE_INR}] for {signal.symbol}"
+                    f"Price {price} outside valid range [{_MIN_PRICE_INR}, {_MAX_PRICE_INR}] for {signal.symbol}"
                 )
 
             # -- Spread-based price improvement (if market data available) ------
-            if (
-                order_type == OrderType.LIMIT
-                and self._market_data_fn is not None
-                and self._improvement_bps > 0
-            ):
+            if order_type == OrderType.LIMIT and self._market_data_fn is not None and self._improvement_bps > 0:
                 try:
                     quote = await asyncio.wait_for(
                         self._market_data_fn(signal.symbol),
@@ -445,37 +447,44 @@ class OrderRouter:
                     ask = quote.get("ask", 0.0)
                     if bid > 0 and ask > 0:
                         improved = self._spread_price_improvement(
-                            signal.side.value, bid, ask, self._improvement_bps,
+                            signal.side.value,
+                            bid,
+                            ask,
+                            self._improvement_bps,
                         )
                         if improved > 0:
                             logger.info(
                                 "Spread improvement %s: signal=%.2f mid=%.2f improved=%.2f (%.1f bps)",
-                                signal.symbol, price, (bid + ask) / 2, improved,
+                                signal.symbol,
+                                price,
+                                (bid + ask) / 2,
+                                improved,
                                 self._improvement_bps,
                             )
                             price = improved
                 except Exception as exc:
                     logger.warning(
                         "Market data fetch failed for %s spread improvement: %s",
-                        signal.symbol, exc,
+                        signal.symbol,
+                        exc,
                     )
 
             # -- Tick-based price improvement (original, used if no spread) -----
             if price_improvement_ticks and order_type == OrderType.LIMIT:
                 price = self._price_improvement(
-                    price, signal.side.value, price_improvement_ticks,
+                    price,
+                    signal.side.value,
+                    price_improvement_ticks,
                 )
 
         # Minimum order value check
         if price is not None and price > 0:
             order_value = quantity * price
             if order_value < _MIN_ORDER_VALUE_INR:
-                raise ValueError(
-                    f"Order value ₹{order_value:.0f} below minimum ₹{_MIN_ORDER_VALUE_INR:.0f}"
-                )
+                raise ValueError(f"Order value ₹{order_value:.0f} below minimum ₹{_MIN_ORDER_VALUE_INR:.0f}")
 
         # -- ADV-aware child sizing --------------------------------------------
-        adv_slices: Optional[List[int]] = None
+        adv_slices: list[int] | None = None
         if self._market_data_fn is not None and quantity > 0:
             try:
                 quote = await asyncio.wait_for(
@@ -487,37 +496,51 @@ class OrderRouter:
                     adv_slices = self._adv_adjusted_child_sizes(quantity, adv, price)
             except Exception as exc:
                 logger.warning(
-                    "ADV sizing lookup failed for %s: %s", signal.symbol, exc,
+                    "ADV sizing lookup failed for %s: %s",
+                    signal.symbol,
+                    exc,
                 )
 
         # -- Freeze qty check (exchange-mandated splitting) ---------------------
         if self._freeze_qty_manager is not None and quantity > 0:
             try:
                 split_result = self._freeze_qty_manager.check_and_split(
-                    signal.symbol, quantity,
+                    signal.symbol,
+                    quantity,
                 )
                 if split_result and len(split_result) > 1:
                     logger.info(
                         "Freeze qty split: %s %d -> %d child orders",
-                        signal.symbol, quantity, len(split_result),
+                        signal.symbol,
+                        quantity,
+                        len(split_result),
                     )
                     return await self._submit_split_orders(
-                        signal, split_result, order_type, price,
+                        signal,
+                        split_result,
+                        order_type,
+                        price,
                     )
             except Exception as e:
                 logger.warning(
                     "Freeze qty check failed for %s (proceeding with full qty): %s",
-                    signal.symbol, e,
+                    signal.symbol,
+                    e,
                 )
 
         # -- If ADV sizing produced multiple slices, use them -------------------
         if adv_slices is not None and len(adv_slices) > 1:
             logger.info(
                 "ADV split: %s %d -> %d child orders",
-                signal.symbol, quantity, len(adv_slices),
+                signal.symbol,
+                quantity,
+                len(adv_slices),
             )
             return await self._submit_split_orders(
-                signal, adv_slices, order_type, price,
+                signal,
+                adv_slices,
+                order_type,
+                price,
             )
 
         # -- Route to broker (multi-broker or single) ---------------------------
@@ -539,7 +562,7 @@ class OrderRouter:
         exchange: str,
         quantity: int,
         order_type: OrderType,
-        price: Optional[float],
+        price: float | None,
     ) -> Order:
         """
         Place an order, using multi-broker failover if configured.
@@ -556,7 +579,13 @@ class OrderRouter:
             # If we have health tracking for a single broker, still record it
             broker_name = self._single_broker_name()
             return await self._place_with_health(
-                broker_name, gateway, signal, exchange, quantity, order_type, price,
+                broker_name,
+                gateway,
+                signal,
+                exchange,
+                quantity,
+                order_type,
+                price,
             )
 
         # Multi-broker: try each candidate in rank order
@@ -564,24 +593,31 @@ class OrderRouter:
         for broker_name, gateway in broker_candidates:
             try:
                 order = await self._place_with_health(
-                    broker_name, gateway, signal, exchange,
-                    quantity, order_type, price,
+                    broker_name,
+                    gateway,
+                    signal,
+                    exchange,
+                    quantity,
+                    order_type,
+                    price,
                 )
                 return order
             except Exception as exc:
                 last_exc = exc
                 logger.warning(
                     "Broker %s failed for %s %s qty=%d: %s — trying next broker",
-                    broker_name, signal.side.value, signal.symbol, quantity, exc,
+                    broker_name,
+                    signal.side.value,
+                    signal.symbol,
+                    quantity,
+                    exc,
                 )
                 # Health tracker updated inside _place_with_health
 
         # All brokers exhausted
-        raise RuntimeError(
-            f"All brokers failed for {signal.symbol}. Last error: {last_exc}"
-        ) from last_exc
+        raise RuntimeError(f"All brokers failed for {signal.symbol}. Last error: {last_exc}") from last_exc
 
-    def _single_broker_name(self) -> Optional[str]:
+    def _single_broker_name(self) -> str | None:
         """Return the name of the sole configured broker, if any."""
         if len(self._brokers) == 1:
             return next(iter(self._brokers))
@@ -589,13 +625,13 @@ class OrderRouter:
 
     async def _place_with_health(
         self,
-        broker_name: Optional[str],
+        broker_name: str | None,
         gateway: BaseExecutionGateway,
         signal: Signal,
         exchange: str,
         quantity: int,
         order_type: OrderType,
-        price: Optional[float],
+        price: float | None,
     ) -> Order:
         """Place an order through *gateway* and record health metrics."""
         health = self._broker_health.get(broker_name) if broker_name else None
@@ -617,13 +653,12 @@ class OrderRouter:
             if health:
                 health.record_success(time.monotonic() - t0)
             return order
-        except asyncio.TimeoutError:
+        except TimeoutError as exc:
             if health:
                 health.record_failure()
             raise RuntimeError(
-                f"Broker {broker_name or 'default'} timed out after {_DEFAULT_BROKER_TIMEOUT}s "
-                f"for {signal.symbol}"
-            )
+                f"Broker {broker_name or 'default'} timed out after {_DEFAULT_BROKER_TIMEOUT}s for {signal.symbol}"
+            ) from exc
         except Exception:
             if health:
                 health.record_failure()
@@ -636,13 +671,18 @@ class OrderRouter:
     async def _submit_split_orders(
         self,
         signal: Signal,
-        quantities: List[int],
+        quantities: list[int],
         order_type: OrderType,
-        price: Optional[float],
+        price: float | None,
     ) -> Order:
-        """Submit child orders with 1 s delay between them. Return first order as parent."""
+        """Submit child orders with 1 s delay between them. Return first order as parent.
+
+        On partial failure, attempts to cancel all previously successful children
+        to prevent orphaned orders living at the broker but invisible to the caller.
+        """
         exchange = signal.exchange.value
-        parent_order: Optional[Order] = None
+        parent_order: Order | None = None
+        successful_children: list[Order] = []
 
         for i, qty in enumerate(quantities):
             if qty <= 0:
@@ -650,23 +690,56 @@ class OrderRouter:
             if i > 0:
                 await asyncio.sleep(1.0)  # Rate limit between child orders
 
-            order = await self._route_and_place(
-                signal=signal,
-                exchange=exchange,
-                quantity=qty,
-                order_type=order_type,
-                price=price,
-            )
+            try:
+                order = await self._route_and_place(
+                    signal=signal,
+                    exchange=exchange,
+                    quantity=qty,
+                    order_type=order_type,
+                    price=price,
+                )
+            except Exception as child_err:
+                logger.error(
+                    "Split child %d/%d failed for %s: %s — cancelling %d prior children",
+                    i + 1,
+                    len(quantities),
+                    signal.symbol,
+                    child_err,
+                    len(successful_children),
+                )
+                # Best-effort cancel of already-submitted children
+                for prev_order in successful_children:
+                    try:
+                        gw = self._gateway(exchange)
+                        if gw is not None:
+                            await gw.cancel_order(prev_order.order_id)
+                            logger.info(
+                                "Cancelled orphaned split child: order_id=%s",
+                                prev_order.order_id,
+                            )
+                    except Exception as cancel_err:
+                        logger.warning(
+                            "Failed to cancel orphaned split child %s: %s",
+                            prev_order.order_id,
+                            cancel_err,
+                        )
+                raise RuntimeError(
+                    f"Split order child {i + 1}/{len(quantities)} failed for {signal.symbol}: {child_err}"
+                ) from child_err
+
+            successful_children.append(order)
             if parent_order is None:
                 parent_order = order
             logger.info(
                 "Split child %d/%d: order_id=%s qty=%d",
-                i + 1, len(quantities), order.order_id, qty,
+                i + 1,
+                len(quantities),
+                order.order_id,
+                qty,
             )
 
         if parent_order is None:
             raise RuntimeError(
-                f"No child orders placed for {signal.symbol} "
-                f"(all {len(quantities)} slices had qty <= 0)"
+                f"No child orders placed for {signal.symbol} (all {len(quantities)} slices had qty <= 0)"
             )
         return parent_order

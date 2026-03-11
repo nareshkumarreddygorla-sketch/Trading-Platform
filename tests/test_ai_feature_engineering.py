@@ -1,31 +1,38 @@
 """Tests for AI feature engineering pipeline."""
-import pytest
-from datetime import datetime, timezone, timedelta
 
-from src.core.events import Bar, Exchange
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
 from src.ai.feature_engineering import compute_price_features, compute_regime_features
 from src.ai.feature_engineering.specs import FEATURE_SPECS, FeatureGroup
+from src.core.events import Bar, Exchange
 
 
 @pytest.fixture
 def sample_bars():
     bars = []
     base = 100.0
-    ts = datetime.now(timezone.utc) - timedelta(days=100)
+    ts = datetime.now(UTC) - timedelta(days=100)
     for i in range(100):
         o = base
         base = base * (1 + (i % 5 - 2) * 0.005)
         h = max(o, base) * 1.01
         l = min(o, base) * 0.99
-        bars.append(Bar(
-            symbol="RELIANCE",
-            exchange=Exchange.NSE,
-            interval="1d",
-            open=o, high=h, low=l, close=base,
-            volume=1_000_000 + i * 1000,
-            ts=ts + timedelta(days=i),
-            source="test",
-        ))
+        bars.append(
+            Bar(
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                interval="1d",
+                open=o,
+                high=h,
+                low=l,
+                close=base,
+                volume=1_000_000 + i * 1000,
+                ts=ts + timedelta(days=i),
+                source="test",
+            )
+        )
     return bars
 
 

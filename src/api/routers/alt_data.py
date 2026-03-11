@@ -1,6 +1,6 @@
 """API router for alternative data: news sentiment, FII/DII flows, combined signals."""
+
 import logging
-from typing import List, Optional
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/v1/alt-data")
 
 
 # ── Response models ──
+
 
 class NewsArticleResponse(BaseModel):
     title: str
@@ -66,10 +67,12 @@ class CombinedSignalResponse(BaseModel):
 
 # ── Helpers ──
 
+
 def _get_news_aggregator(request: Request):
     agg = getattr(request.app.state, "news_aggregator", None)
     if agg is None:
         from src.data_pipeline.news_aggregator import NewsAggregator
+
         agg = NewsAggregator()
         request.app.state.news_aggregator = agg
     return agg
@@ -79,6 +82,7 @@ def _get_fii_dii_tracker(request: Request):
     tracker = getattr(request.app.state, "fii_dii_tracker", None)
     if tracker is None:
         from src.data_pipeline.fii_dii_flow import FIIDIITracker
+
         tracker = FIIDIITracker()
         request.app.state.fii_dii_tracker = tracker
     return tracker
@@ -86,10 +90,11 @@ def _get_fii_dii_tracker(request: Request):
 
 # ── News endpoints ──
 
-@router.get("/news", response_model=List[NewsArticleResponse])
+
+@router.get("/news", response_model=list[NewsArticleResponse])
 async def get_news(
     request: Request,
-    symbols: Optional[str] = None,
+    symbols: str | None = None,
     market: str = "india",
 ):
     """Fetch latest market news with sentiment scores."""
@@ -98,9 +103,13 @@ async def get_news(
     articles = await agg.fetch_news(symbols=sym_list, market=market)
     return [
         NewsArticleResponse(
-            title=a.title, source=a.source, url=a.url,
-            published_at=a.published_at, summary=a.summary,
-            sentiment_score=a.sentiment_score, symbols=a.symbols,
+            title=a.title,
+            source=a.source,
+            url=a.url,
+            published_at=a.published_at,
+            summary=a.summary,
+            sentiment_score=a.sentiment_score,
+            symbols=a.symbols,
         )
         for a in articles[:30]
     ]
@@ -109,7 +118,7 @@ async def get_news(
 @router.get("/news/sentiment", response_model=SentimentSummaryResponse)
 async def get_sentiment_summary(
     request: Request,
-    symbols: Optional[str] = None,
+    symbols: str | None = None,
     market: str = "india",
 ):
     """Get aggregated sentiment summary from recent news."""
@@ -129,16 +138,22 @@ async def get_sentiment_summary(
 
 # ── FII/DII endpoints ──
 
-@router.get("/fii-dii/flows", response_model=List[FlowResponse])
+
+@router.get("/fii-dii/flows", response_model=list[FlowResponse])
 async def get_fii_dii_flows(request: Request, days: int = 10):
     """Get recent FII/DII institutional flow data."""
     tracker = _get_fii_dii_tracker(request)
     flows = tracker.get_recent_flows(days=days)
     return [
         FlowResponse(
-            date=f.date, fii_buy=f.fii_buy, fii_sell=f.fii_sell,
-            fii_net=f.fii_net, dii_buy=f.dii_buy, dii_sell=f.dii_sell,
-            dii_net=f.dii_net, total_net=f.total_net,
+            date=f.date,
+            fii_buy=f.fii_buy,
+            fii_sell=f.fii_sell,
+            fii_net=f.fii_net,
+            dii_buy=f.dii_buy,
+            dii_sell=f.dii_sell,
+            dii_net=f.dii_net,
+            total_net=f.total_net,
         )
         for f in flows
     ]
@@ -150,14 +165,20 @@ async def get_fii_dii_analysis(request: Request):
     tracker = _get_fii_dii_tracker(request)
     a = tracker.analyze()
     return FlowAnalysisResponse(
-        trend=a.trend, fii_streak=a.fii_streak, dii_streak=a.dii_streak,
-        avg_fii_net_5d=a.avg_fii_net_5d, avg_dii_net_5d=a.avg_dii_net_5d,
-        total_fii_net_month=a.total_fii_net_month, total_dii_net_month=a.total_dii_net_month,
-        signal_strength=a.signal_strength, recommendation=a.recommendation,
+        trend=a.trend,
+        fii_streak=a.fii_streak,
+        dii_streak=a.dii_streak,
+        avg_fii_net_5d=a.avg_fii_net_5d,
+        avg_dii_net_5d=a.avg_dii_net_5d,
+        total_fii_net_month=a.total_fii_net_month,
+        total_dii_net_month=a.total_dii_net_month,
+        signal_strength=a.signal_strength,
+        recommendation=a.recommendation,
     )
 
 
 # ── Combined signal ──
+
 
 @router.get("/combined-signal", response_model=CombinedSignalResponse)
 async def get_combined_signal(request: Request, market: str = "india"):
@@ -172,7 +193,14 @@ async def get_combined_signal(request: Request, market: str = "india"):
 
     # Combine news sentiment (0-1) with flow signal
     news_score = sentiment.overall_score  # 0-1
-    flow_score = 0.5 + (flow_analysis.signal_strength * (1 if flow_analysis.trend == "bullish" else -1 if flow_analysis.trend == "bearish" else 0)) / 2
+    flow_score = (
+        0.5
+        + (
+            flow_analysis.signal_strength
+            * (1 if flow_analysis.trend == "bullish" else -1 if flow_analysis.trend == "bearish" else 0)
+        )
+        / 2
+    )
 
     combined = 0.6 * news_score + 0.4 * flow_score
     if combined > 0.65:

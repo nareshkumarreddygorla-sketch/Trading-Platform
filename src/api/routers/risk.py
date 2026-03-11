@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -13,16 +13,17 @@ logger = logging.getLogger(__name__)
 # Response models
 # ---------------------------------------------------------------------------
 
+
 class RiskSnapshotResponse(BaseModel):
     equity: float
     daily_pnl: float
-    positions: List[dict]
+    positions: list[dict]
     circuit_open: bool = False
     kill_switch_armed: bool = False
 
 
 class RiskPositionsResponse(BaseModel):
-    positions: List[dict]
+    positions: list[dict]
 
 
 class RiskStateResponse(BaseModel):
@@ -41,7 +42,7 @@ class RiskLimitsResponse(BaseModel):
 
 class UpdateLimitsResponse(BaseModel):
     status: str
-    limits: Dict[str, Any]
+    limits: dict[str, Any]
 
 
 class VarResponse(BaseModel):
@@ -49,11 +50,11 @@ class VarResponse(BaseModel):
     var_99: float = 0.0
     portfolio_vol: float = 0.0
     horizon_days: int = 1
-    per_position_var: Dict[str, Any] = {}
+    per_position_var: dict[str, Any] = {}
 
 
 class SectorResponse(BaseModel):
-    sectors: Dict[str, Any]
+    sectors: dict[str, Any]
     max_sector_pct: float
 
 
@@ -71,23 +72,23 @@ class CorrelationResponse(BaseModel):
 
 
 class ModelWeightsResponse(BaseModel):
-    weights: Dict[str, Any]
-    ic_scores: Dict[str, Any]
+    weights: dict[str, Any]
+    ic_scores: dict[str, Any]
 
 
 class ModelDriftResponse(BaseModel):
     drifted: bool
-    layers: Dict[str, Any]
-    error: Optional[str] = None
+    layers: dict[str, Any]
+    error: str | None = None
 
 
 class AlertHistoryResponse(BaseModel):
-    alerts: List[Any]
+    alerts: list[Any]
 
 
 class DatabaseHealthResponse(BaseModel):
     healthy: bool = True
-    error: Optional[str] = None
+    error: str | None = None
 
 
 router = APIRouter()
@@ -101,7 +102,7 @@ def _get_bar_cache(request: Request):
     return getattr(request.app.state, "bar_cache", None)
 
 
-def _latest_price_from_cache(bar_cache, symbol: str, exchange: str = "NSE") -> Optional[float]:
+def _latest_price_from_cache(bar_cache, symbol: str, exchange: str = "NSE") -> float | None:
     """Get the latest close price from bar cache for mark-to-market."""
     if bar_cache is None:
         return None
@@ -134,7 +135,11 @@ def _position_to_dict(p, bar_cache=None) -> dict:
             unrealized_pnl = (current_price - avg_price) * quantity
         else:
             unrealized_pnl = (avg_price - current_price) * quantity
-        pct_change = ((current_price - avg_price) / avg_price) * 100 if side == "BUY" else ((avg_price - current_price) / avg_price) * 100
+        pct_change = (
+            ((current_price - avg_price) / avg_price) * 100
+            if side == "BUY"
+            else ((avg_price - current_price) / avg_price) * 100
+        )
     else:
         unrealized_pnl = getattr(p, "unrealized_pnl", 0.0)
         pct_change = 0.0
@@ -223,9 +228,9 @@ async def get_limits(request: Request, current_user: dict = Depends(get_current_
 
 
 class UpdateLimitsBody(BaseModel):
-    max_position_pct: Optional[float] = None
-    max_daily_loss_pct: Optional[float] = None
-    max_open_positions: Optional[int] = None
+    max_position_pct: float | None = None
+    max_daily_loss_pct: float | None = None
+    max_open_positions: int | None = None
 
 
 @router.put("/limits")
@@ -301,7 +306,9 @@ async def risk_var(request: Request, current_user: dict = Depends(get_current_us
                 logger.warning("On-demand VaR computation failed: %s", e)
 
     if var_result is None:
-        raise HTTPException(status_code=503, detail="VaR data not available — no positions or PortfolioVaR not initialized")
+        raise HTTPException(
+            status_code=503, detail="VaR data not available — no positions or PortfolioVaR not initialized"
+        )
     return {
         "var_95": getattr(var_result, "var_95", 0),
         "var_99": getattr(var_result, "var_99", 0),
@@ -384,7 +391,10 @@ async def model_drift(request: Request, current_user: dict = Depends(get_current
     try:
         signals = dd.check_all()
         drifted = sum(1 for s in signals if s.drifted) >= 2
-        layers = {s.drift_type.value: {"drifted": s.drifted, "value": round(s.value, 4), "threshold": s.threshold} for s in signals}
+        layers = {
+            s.drift_type.value: {"drifted": s.drifted, "value": round(s.value, 4), "threshold": s.threshold}
+            for s in signals
+        }
         return {"drifted": drifted, "layers": layers}
     except Exception:
         logger.exception("Drift detection check failed")
@@ -406,7 +416,7 @@ async def run_stress_test(request: Request, current_user: dict = Depends(require
     try:
         from src.risk_engine.stress_testing import StressTestEngine
     except ImportError:
-        raise HTTPException(status_code=501, detail="Stress testing module not available")
+        raise HTTPException(status_code=501, detail="Stress testing module not available") from None
 
     rm = _get_risk_manager(request)
     if rm is None:
@@ -414,7 +424,7 @@ async def run_stress_test(request: Request, current_user: dict = Depends(require
 
     sector_clf = getattr(request.app.state, "sector_classifier", None)
     engine = StressTestEngine(sector_classifier=sector_clf)
-    results = engine.run_full_suite(list(rm.positions), rm.equity)
+    _results = engine.run_full_suite(list(rm.positions), rm.equity)
 
     # Store on app state for dashboard
     request.app.state.stress_test_engine = engine
@@ -436,10 +446,11 @@ async def archival_policy(request: Request, current_user: dict = Depends(get_cur
     """Get current data retention/archival policy."""
     try:
         from src.persistence.archival import DataArchivalManager
+
         mgr = DataArchivalManager()
         return mgr.get_retention_summary()
     except ImportError:
-        raise HTTPException(status_code=503, detail="Archival module not available")
+        raise HTTPException(status_code=503, detail="Archival module not available") from None
 
 
 @router.post("/reconciliation/run")
@@ -485,6 +496,7 @@ async def database_health(request: Request, current_user: dict = Depends(get_cur
     """Check database health: disk usage, connection pool, connectivity."""
     try:
         from src.persistence.database import check_database_health
+
         return check_database_health()
     except Exception as e:
         return {"healthy": False, "error": str(e)}

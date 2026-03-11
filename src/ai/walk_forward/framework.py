@@ -4,15 +4,15 @@ Rolling window: train [t-T, t), test [t, t+O).
 Stability score: S = (mean_Sharpe / (std_Sharpe + ε)) * (1 - mean_dd/dd_limit) * I(frac_positive_Sharpe >= 0.7)
 Replacement rule: replace only if Sharpe improves, drawdown not worse, S above threshold, N consecutive positive windows.
 """
+
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
 
 
 @dataclass
 class WalkForwardConfig:
-    train_bars: int = 60 * 78   # e.g. 60 days of 78 1m bars per day
+    train_bars: int = 60 * 78  # e.g. 60 days of 78 1m bars per day
     test_bars: int = 10 * 78
     step_bars: int = 10 * 78
     expanding: bool = False
@@ -36,8 +36,8 @@ class WalkForwardResult:
 
 
 def stability_score(
-    sharpes: List[float],
-    max_drawdowns_pct: List[float],
+    sharpes: list[float],
+    max_drawdowns_pct: list[float],
     dd_limit_pct: float,
     min_frac_positive: float,
 ) -> float:
@@ -71,7 +71,7 @@ def replacement_rule(
     candidate_dd_pct: float,
     candidate_stability: float,
     candidate_consecutive_positive: int,
-    config: Optional[WalkForwardConfig] = None,
+    config: WalkForwardConfig | None = None,
 ) -> bool:
     """
     Replace current model with candidate only if:

@@ -4,6 +4,7 @@ Sentry error tracking initialization.
 Activates only when SENTRY_DSN is set. Gracefully degrades if sentry-sdk
 is not installed.
 """
+
 import logging
 import os
 

@@ -35,10 +35,11 @@ import logging
 import os
 import threading
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # SEBI Algo Registration Framework
 # ---------------------------------------------------------------------------
+
 
 def _generate_sebi_algo_id(algo_name: str, version: str) -> str:
     """
@@ -84,6 +86,7 @@ class AlgoRegistration:
     previous_version_id : str
         SEBI algo ID of the previous version (empty for first version).
     """
+
     sebi_algo_id: str
     algo_name: str
     version: str
@@ -98,6 +101,7 @@ class AlgoRegistration:
 # ---------------------------------------------------------------------------
 # Enum: every auditable event type in the platform
 # ---------------------------------------------------------------------------
+
 
 class AuditEventType(str, Enum):
     """Exhaustive set of auditable event types for SEBI compliance."""
@@ -135,7 +139,7 @@ RETENTION_YEARS = 5  # SEBI minimum; enforced by RetentionManager
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _retention_expiry() -> datetime:
@@ -146,6 +150,7 @@ def _retention_expiry() -> datetime:
 # ---------------------------------------------------------------------------
 # Immutable audit event dataclass
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class AuditEvent:
@@ -169,10 +174,10 @@ class AuditEvent:
     event_type: AuditEventType
     timestamp: datetime
     symbol: str
-    details: Dict[str, Any]
+    details: dict[str, Any]
     model_source: str
     strategy_id: str
-    risk_checks: Dict[str, Any]
+    risk_checks: dict[str, Any]
     retention_until: datetime
 
 
@@ -197,6 +202,7 @@ _CSV_COLUMNS = [
 # Core audit trail class
 # ---------------------------------------------------------------------------
 
+
 class SEBIAuditTrail:
     """
     Thread-safe, append-only SEBI compliance audit trail.
@@ -216,28 +222,28 @@ class SEBIAuditTrail:
 
     def __init__(
         self,
-        db_session_factory: Optional[Callable] = None,
+        db_session_factory: Callable | None = None,
         flush_threshold: int = 100,
     ) -> None:
-        self._events: List[AuditEvent] = []
+        self._events: list[AuditEvent] = []
         self._lock = threading.Lock()
         self._db_session_factory = db_session_factory
         self._flush_threshold = flush_threshold
-        self._pending_flush: List[AuditEvent] = []
+        self._pending_flush: list[AuditEvent] = []
         # SHA-256 hash chain for tamper detection (SEBI compliance)
-        self._last_hash: Optional[str] = None
+        self._last_hash: str | None = None
 
         # Algo registration registry (keyed by sebi_algo_id)
-        self._algo_registry: Dict[str, AlgoRegistration] = {}
+        self._algo_registry: dict[str, AlgoRegistration] = {}
         # Map algo_name -> list of sebi_algo_ids (version history)
-        self._algo_versions: Dict[str, List[str]] = {}
+        self._algo_versions: dict[str, list[str]] = {}
 
         # OTR monitor (lazy-initialised or injected)
-        self._otr_monitor: Optional[Any] = None
+        self._otr_monitor: Any | None = None
         # Surveillance engine (lazy-initialised or injected)
-        self._surveillance_engine: Optional[Any] = None
+        self._surveillance_engine: Any | None = None
         # Retention manager (lazy-initialised or injected)
-        self._retention_manager: Optional[Any] = None
+        self._retention_manager: Any | None = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -250,11 +256,12 @@ class SEBIAuditTrail:
         """Compute HMAC-SHA256 hash linking this event to the previous one.
         P2-1: upgraded from plain SHA-256 to HMAC-SHA256 for cryptographic integrity."""
         import hmac as _hmac
+
         prev = self._last_hash or "genesis"
         payload = f"{prev}|{event.event_id}|{event.timestamp.isoformat()}|{event.event_type.value}|{event.symbol}|{json.dumps(event.details, sort_keys=True, default=str)}"
         return _hmac.new(self._HMAC_KEY, payload.encode(), hashlib.sha256).hexdigest()
 
-    def verify_chain_integrity(self) -> Tuple[bool, int]:
+    def verify_chain_integrity(self) -> tuple[bool, int]:
         """P2-1: Verify entire audit chain integrity. Returns (valid, last_valid_index).
         If tampered, returns the index of the first broken link."""
         with self._lock:
@@ -264,6 +271,7 @@ class SEBIAuditTrail:
             for i, event in enumerate(self._events):
                 expected_prev = prev_hash or "genesis"
                 import hmac as _hmac
+
                 payload = f"{expected_prev}|{event.event_id}|{event.timestamp.isoformat()}|{event.event_type.value}|{event.symbol}|{json.dumps(event.details, sort_keys=True, default=str)}"
                 computed = _hmac.new(self._HMAC_KEY, payload.encode(), hashlib.sha256).hexdigest()
                 prev_hash = computed
@@ -299,10 +307,10 @@ class SEBIAuditTrail:
         self,
         event_type: AuditEventType,
         symbol: str,
-        details: Dict[str, Any],
+        details: dict[str, Any],
         model_source: str = "",
         strategy_id: str = "",
-        risk_checks: Optional[Dict[str, Any]] = None,
+        risk_checks: dict[str, Any] | None = None,
     ) -> AuditEvent:
         return AuditEvent(
             event_id=str(uuid.uuid4()),
@@ -316,7 +324,7 @@ class SEBIAuditTrail:
             retention_until=_retention_expiry(),
         )
 
-    def _flush_to_db(self, chain_hash: Optional[str] = None) -> None:
+    def _flush_to_db(self, chain_hash: str | None = None) -> None:
         """
         Persist pending events to the database.
 
@@ -335,6 +343,7 @@ class SEBIAuditTrail:
 
         try:
             from sqlalchemy import text as _sa_text
+
             session = self._db_session_factory()
             try:
                 for evt in self._pending_flush:
@@ -345,7 +354,9 @@ class SEBIAuditTrail:
                         ),
                         {
                             "ts": evt.timestamp,
-                            "event_type": evt.event_type.value if hasattr(evt.event_type, 'value') else str(evt.event_type),
+                            "event_type": evt.event_type.value
+                            if hasattr(evt.event_type, "value")
+                            else str(evt.event_type),
                             "actor": evt.model_source or evt.strategy_id or "system",
                             "payload": json.dumps(
                                 {
@@ -382,7 +393,7 @@ class SEBIAuditTrail:
         direction: str,
         confidence: float,
         model_source: str,
-        model_weights: Optional[Dict[str, float]] = None,
+        model_weights: dict[str, float] | None = None,
     ) -> AuditEvent:
         """
         Record a trading signal generation event (AC1).
@@ -423,9 +434,9 @@ class SEBIAuditTrail:
         side: str,
         qty: float,
         order_type: str,
-        price: Optional[float],
+        price: float | None,
         strategy_id: str,
-        risk_checks_passed: Dict[str, bool],
+        risk_checks_passed: dict[str, bool],
     ) -> AuditEvent:
         """
         Record an order submission event (AC2).
@@ -472,7 +483,7 @@ class SEBIAuditTrail:
         side: str,
         qty: float,
         price: float,
-        costs_breakdown: Dict[str, float],
+        costs_breakdown: dict[str, float],
         slippage: float,
     ) -> AuditEvent:
         """
@@ -516,8 +527,8 @@ class SEBIAuditTrail:
         self,
         check_type: str,
         result: bool,
-        values: Dict[str, Any],
-        thresholds: Dict[str, Any],
+        values: dict[str, Any],
+        thresholds: dict[str, Any],
     ) -> AuditEvent:
         """
         Record a risk-gate decision event (AC4).
@@ -533,10 +544,7 @@ class SEBIAuditTrail:
         thresholds : dict
             Configured thresholds that were evaluated against.
         """
-        event_type = (
-            AuditEventType.RISK_CHECK_PASSED if result
-            else AuditEventType.RISK_CHECK_FAILED
-        )
+        event_type = AuditEventType.RISK_CHECK_PASSED if result else AuditEventType.RISK_CHECK_FAILED
         details = {
             "check_type": check_type,
             "result": result,
@@ -558,12 +566,12 @@ class SEBIAuditTrail:
 
     def get_events(
         self,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        event_type: Optional[AuditEventType] = None,
-        symbol: Optional[str] = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        event_type: AuditEventType | None = None,
+        symbol: str | None = None,
         limit: int = 1000,
-    ) -> List[AuditEvent]:
+    ) -> list[AuditEvent]:
         """
         Retrieve audit events with optional filters.
 
@@ -605,8 +613,8 @@ class SEBIAuditTrail:
 
     def export_csv(
         self,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> str:
         """
         Export audit events as CSV content for SEBI regulatory submission.
@@ -625,9 +633,7 @@ class SEBIAuditTrail:
         """
         import json as _json
 
-        events = self.get_events(
-            start_date=start_date, end_date=end_date, limit=2**31 - 1
-        )
+        events = self.get_events(start_date=start_date, end_date=end_date, limit=2**31 - 1)
 
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=_CSV_COLUMNS)
@@ -697,7 +703,7 @@ class SEBIAuditTrail:
         version: str,
         description: str,
         registered_by: str,
-        parameters: Optional[Dict[str, Any]] = None,
+        parameters: dict[str, Any] | None = None,
     ) -> AlgoRegistration:
         """
         Register an algorithm with SEBI-format ID and version tracking.
@@ -721,9 +727,7 @@ class SEBIAuditTrail:
             The registration record with assigned SEBI algo ID.
         """
         sebi_id = _generate_sebi_algo_id(algo_name, version)
-        params_hash = hashlib.sha256(
-            json.dumps(parameters or {}, sort_keys=True).encode()
-        ).hexdigest()
+        params_hash = hashlib.sha256(json.dumps(parameters or {}, sort_keys=True).encode()).hexdigest()
 
         # Find previous version
         previous_id = ""
@@ -766,11 +770,7 @@ class SEBIAuditTrail:
             self._algo_versions[algo_name].append(sebi_id)
 
         # Record audit event
-        event_type = (
-            AuditEventType.ALGO_VERSION_UPDATED
-            if previous_id
-            else AuditEventType.ALGO_REGISTERED
-        )
+        event_type = AuditEventType.ALGO_VERSION_UPDATED if previous_id else AuditEventType.ALGO_REGISTERED
         event = self._make_event(
             event_type=event_type,
             symbol="",
@@ -788,7 +788,9 @@ class SEBIAuditTrail:
 
         logger.info(
             "Algorithm registered: %s (%s) -> SEBI ID: %s",
-            algo_name, version, sebi_id,
+            algo_name,
+            version,
+            sebi_id,
         )
         return registration
 
@@ -839,7 +841,7 @@ class SEBIAuditTrail:
         logger.info("Algorithm deactivated: %s (reason: %s)", sebi_algo_id, reason)
         return True
 
-    def get_algo_registry(self) -> List[Dict[str, Any]]:
+    def get_algo_registry(self) -> list[dict[str, Any]]:
         """Get all registered algorithms with their SEBI IDs and version history."""
         with self._lock:
             registrations = list(self._algo_registry.values())
@@ -859,15 +861,11 @@ class SEBIAuditTrail:
             for r in registrations
         ]
 
-    def get_algo_version_history(self, algo_name: str) -> List[Dict[str, Any]]:
+    def get_algo_version_history(self, algo_name: str) -> list[dict[str, Any]]:
         """Get the version history for a specific algorithm."""
         with self._lock:
             version_ids = self._algo_versions.get(algo_name, [])
-            registrations = [
-                self._algo_registry[vid]
-                for vid in version_ids
-                if vid in self._algo_registry
-            ]
+            registrations = [self._algo_registry[vid] for vid in version_ids if vid in self._algo_registry]
 
         return [
             {
@@ -890,11 +888,11 @@ class SEBIAuditTrail:
         side: str,
         qty: float,
         order_type: str,
-        price: Optional[float],
+        price: float | None,
         strategy_id: str,
         algo_id: str,
         order_id: str,
-        risk_checks_passed: Dict[str, bool],
+        risk_checks_passed: dict[str, bool],
     ) -> AuditEvent:
         """
         Record an order and update OTR tracking.
@@ -916,6 +914,7 @@ class SEBIAuditTrail:
         # Feed OTR monitor
         if self._otr_monitor is not None:
             from .otr_monitor import OTRStatus
+
             status = self._otr_monitor.record_order(algo_id, order_id, symbol)
 
             if status == OTRStatus.WARNING:
@@ -963,11 +962,11 @@ class SEBIAuditTrail:
         side: str,
         qty: float,
         price: float,
-        costs_breakdown: Dict[str, float],
+        costs_breakdown: dict[str, float],
         slippage: float,
         algo_id: str,
         order_id: str,
-        trade_id: Optional[str] = None,
+        trade_id: str | None = None,
     ) -> AuditEvent:
         """
         Record a fill and run post-trade surveillance.
@@ -1022,8 +1021,8 @@ class SEBIAuditTrail:
     def generate_regulatory_report(
         self,
         report_type: str = "daily",
-        report_date: Optional[datetime] = None,
-    ) -> Dict[str, Any]:
+        report_date: datetime | None = None,
+    ) -> dict[str, Any]:
         """
         Generate a SEBI-format regulatory report.
 
@@ -1110,10 +1109,7 @@ class SEBIAuditTrail:
                 "total_fills": len(fills),
                 "total_rejections": len(rejections),
                 "total_cancellations": len(cancellations),
-                "fill_rate": (
-                    round(len(fills) / len(orders) * 100, 2)
-                    if orders else 0
-                ),
+                "fill_rate": (round(len(fills) / len(orders) * 100, 2) if orders else 0),
                 "symbols_traded": sorted(list(symbols)),
                 "total_traded_value": round(total_value, 2),
             },
@@ -1121,10 +1117,9 @@ class SEBIAuditTrail:
                 "risk_checks_passed": len(risk_passes),
                 "risk_checks_failed": len(risk_fails),
                 "pass_rate": (
-                    round(
-                        len(risk_passes) / (len(risk_passes) + len(risk_fails)) * 100, 2
-                    )
-                    if (risk_passes or risk_fails) else 100
+                    round(len(risk_passes) / (len(risk_passes) + len(risk_fails)) * 100, 2)
+                    if (risk_passes or risk_fails)
+                    else 100
                 ),
             },
             "otr_compliance": {
@@ -1162,7 +1157,10 @@ class SEBIAuditTrail:
 
         logger.info(
             "SEBI regulatory report generated: type=%s, period=%s to %s, events=%d",
-            report_type, start.isoformat(), end.isoformat(), len(events),
+            report_type,
+            start.isoformat(),
+            end.isoformat(),
+            len(events),
         )
 
         return report
@@ -1184,6 +1182,7 @@ class SEBIAuditTrail:
         """
         if self._retention_manager is not None:
             from .retention import DataCategory
+
             try:
                 cat = DataCategory(category)
             except ValueError:
@@ -1195,7 +1194,7 @@ class SEBIAuditTrail:
         retention_end = data_date + timedelta(days=RETENTION_YEARS * 365)
         return now < retention_end
 
-    def get_retention_status(self) -> Dict[str, Any]:
+    def get_retention_status(self) -> dict[str, Any]:
         """Get current retention compliance status."""
         if self._retention_manager is not None:
             return self._retention_manager.get_retention_summary()

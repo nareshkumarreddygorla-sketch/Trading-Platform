@@ -2,8 +2,10 @@
 Risk Monitor Agent: continuously monitors portfolio risk,
 auto-adjusts exposure, triggers circuit breaker on anomalies.
 """
+
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -29,8 +31,8 @@ class RiskMonitorAgent(BaseAgent):
         risk_manager=None,
         circuit_breaker=None,
         kill_switch=None,
-        get_positions: Optional[Callable] = None,
-        get_bars: Optional[Callable] = None,
+        get_positions: Callable | None = None,
+        get_bars: Callable | None = None,
         max_portfolio_drawdown_pct: float = 5.0,
         max_position_correlation: float = 0.85,
         volatility_scale_threshold: float = 0.03,
@@ -47,13 +49,13 @@ class RiskMonitorAgent(BaseAgent):
         self._vol_threshold = volatility_scale_threshold
         self._monitor_interval = monitor_interval
         self._peak_equity: float = 0.0
-        self._alerts: List[Dict[str, Any]] = []
+        self._alerts: list[dict[str, Any]] = []
 
     @property
     def interval_seconds(self) -> float:
         return self._monitor_interval
 
-    def _check_drawdown(self, equity: float) -> Optional[Dict]:
+    def _check_drawdown(self, equity: float) -> dict | None:
         """Check if portfolio drawdown exceeds threshold."""
         if equity > self._peak_equity:
             self._peak_equity = equity
@@ -73,7 +75,7 @@ class RiskMonitorAgent(BaseAgent):
             }
         return None
 
-    def _check_volatility(self, positions: list) -> Optional[float]:
+    def _check_volatility(self, positions: list) -> float | None:
         """Calculate portfolio volatility and return exposure scale factor."""
         if not positions or not self._get_bars:
             return None
@@ -82,6 +84,7 @@ class RiskMonitorAgent(BaseAgent):
         for pos in positions:
             try:
                 from src.core.events import Exchange
+
                 bars = self._get_bars(pos.symbol, Exchange.NSE, "1m", 30)
                 if bars and len(bars) > 5:
                     closes = np.array([b.close for b in bars])
@@ -101,7 +104,7 @@ class RiskMonitorAgent(BaseAgent):
             return 0.6  # High vol: scale to 60%
         return None  # Normal vol: no change
 
-    def _calculate_position_correlation(self, positions: list) -> Optional[Dict]:
+    def _calculate_position_correlation(self, positions: list) -> dict | None:
         """Check for dangerous position correlations."""
         if not positions or len(positions) < 2 or not self._get_bars:
             return None
@@ -112,6 +115,7 @@ class RiskMonitorAgent(BaseAgent):
         for symbol in symbols:
             try:
                 from src.core.events import Exchange
+
                 bars = self._get_bars(symbol, Exchange.NSE, "1m", 60)
                 if bars and len(bars) > 20:
                     closes = np.array([b.close for b in bars])
@@ -164,8 +168,9 @@ class RiskMonitorAgent(BaseAgent):
         drawdown_alert = self._check_drawdown(equity)
         if drawdown_alert:
             self._alerts.append(drawdown_alert)
-            logger.warning("RiskAgent: %s — drawdown=%.1f%%",
-                           drawdown_alert["severity"], drawdown_alert["drawdown_pct"])
+            logger.warning(
+                "RiskAgent: %s — drawdown=%.1f%%", drawdown_alert["severity"], drawdown_alert["drawdown_pct"]
+            )
 
             await self.send_message(
                 target="broadcast",
@@ -177,7 +182,10 @@ class RiskMonitorAgent(BaseAgent):
             if drawdown_alert["severity"] == "critical" and self._kill_switch:
                 try:
                     from src.execution.order_entry.kill_switch import KillReason
-                    await self._kill_switch.arm(reason=KillReason.MAX_DRAWDOWN, detail="Critical drawdown breach (auto risk agent)")
+
+                    await self._kill_switch.arm(
+                        reason=KillReason.MAX_DRAWDOWN, detail="Critical drawdown breach (auto risk agent)"
+                    )
                     logger.warning("RiskAgent: KILL SWITCH ARMED (critical drawdown)")
                 except Exception as e:
                     logger.error("RiskAgent: failed to arm kill switch: %s", e)
@@ -209,7 +217,7 @@ class RiskMonitorAgent(BaseAgent):
         if len(self._alerts) > 50:
             self._alerts = self._alerts[-50:]
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         status = super().get_status()
         status["peak_equity"] = self._peak_equity
         status["recent_alerts"] = self._alerts[-5:]

@@ -3,6 +3,7 @@ Risk-first control for AI: no AI decision bypasses the risk engine.
 All ensemble signals, meta-allocator weights, and LLM suggestions are passed
 through the same RiskManager checks before any order or parameter change.
 """
+
 import logging
 from typing import Any
 

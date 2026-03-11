@@ -2,13 +2,13 @@
 Global kill switch: prevents new orders; allows position reduction only.
 Atomic and immediate. Checked at step 4 of OrderEntryService pipeline.
 """
+
 import asyncio
 import logging
 import os
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,24 +27,28 @@ class KillReason(str, Enum):
 
 # Reasons that NEVER auto-disarm (require human intervention).
 # Module-level constant so both KillSwitchState and KillSwitch can reference it.
-_MANUAL_DISARM_ONLY = frozenset({
-    KillReason.MANUAL,
-    KillReason.MAX_DAILY_LOSS,
-    KillReason.FILL_MISMATCH,
-    KillReason.MAX_DRAWDOWN,
-})
+_MANUAL_DISARM_ONLY = frozenset(
+    {
+        KillReason.MANUAL,
+        KillReason.MAX_DAILY_LOSS,
+        KillReason.FILL_MISMATCH,
+        KillReason.MAX_DRAWDOWN,
+    }
+)
 
 
 @dataclass
 class KillSwitchState:
     armed: bool
-    reason: Optional[KillReason] = None
+    reason: KillReason | None = None
     detail: str = ""
-    ts: Optional[datetime] = None
+    ts: datetime | None = None
     allow_reduce_only: bool = True  # if True, only orders that reduce position are allowed
 
 
-_KILL_STATE_PATH = os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "..", "kill_switch_state.json"))
+_KILL_STATE_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "..", "kill_switch_state.json")
+)
 
 
 class KillSwitch:
@@ -55,15 +59,16 @@ class KillSwitch:
     Supports auto-disarm for recoverable conditions (broker latency, VIX spike, etc.).
     """
 
-    def __init__(self, allow_reduce_only: bool = True, auto_disarm_after_minutes: int = 15,
-                 vix_disarm_threshold: float = 25.0):
+    def __init__(
+        self, allow_reduce_only: bool = True, auto_disarm_after_minutes: int = 15, vix_disarm_threshold: float = 25.0
+    ):
         self._state = KillSwitchState(armed=False, allow_reduce_only=allow_reduce_only)
         # Note: asyncio.Lock() in __init__ is safe as long as KillSwitch is instantiated
         # within a running event loop (e.g., during lifespan startup). Creating it at
         # module level or in synchronous code requires Python 3.10+ lazy loop binding.
         self._lock = asyncio.Lock()
         self._auto_disarm_after_minutes = auto_disarm_after_minutes
-        self._arm_timestamp: Optional[datetime] = None
+        self._arm_timestamp: datetime | None = None
         self._consecutive_healthy_checks: int = 0
         self._required_healthy_checks: int = 3  # 3 consecutive checks before auto-disarm
         self._vix_disarm_threshold = vix_disarm_threshold
@@ -82,7 +87,8 @@ class KillSwitch:
             self._arm_timestamp = datetime.fromisoformat(saved["armed_at"]) if saved.get("armed_at") else None
             logger.warning(
                 "Kill switch restored from disk: reason=%s allow_reduce_only=%s",
-                saved.get("reason"), restored_reduce_only,
+                saved.get("reason"),
+                restored_reduce_only,
             )
 
     async def _persist_state(self):
@@ -91,27 +97,28 @@ class KillSwitch:
         Uses atomic write (write to temp + os.replace) with fsync to ensure
         the state survives both process crashes and power failures.
         """
-        import json, tempfile
+        import json
+        import tempfile
+
         state = {
             "armed": self._state.armed,
             "reason": self._state.reason.value if self._state.reason else None,
             "detail": self._state.detail,
             "armed_at": self._arm_timestamp.isoformat() if self._arm_timestamp else None,
             "allow_reduce_only": self._state.allow_reduce_only,
-            "persisted_at": datetime.now(timezone.utc).isoformat(),
+            "persisted_at": datetime.now(UTC).isoformat(),
         }
         try:
             # Ensure parent directory exists
             os.makedirs(os.path.dirname(_KILL_STATE_PATH), exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_KILL_STATE_PATH))
             try:
-                with os.fdopen(fd, 'w') as f:
+                with os.fdopen(fd, "w") as f:
                     json.dump(state, f)
                     f.flush()
                     os.fsync(f.fileno())  # Ensure data hits disk before rename
                 os.replace(tmp, _KILL_STATE_PATH)
-                logger.debug("Kill switch state persisted (armed=%s reason=%s)",
-                           state["armed"], state["reason"])
+                logger.debug("Kill switch state persisted (armed=%s reason=%s)", state["armed"], state["reason"])
             except BaseException:
                 try:
                     os.unlink(tmp)
@@ -129,6 +136,7 @@ class KillSwitch:
         was shut down (or crashed) while armed, it stays armed on restart.
         """
         import json
+
         try:
             if os.path.exists(_KILL_STATE_PATH):
                 with open(_KILL_STATE_PATH) as f:
@@ -139,14 +147,17 @@ class KillSwitch:
                 state = json.loads(raw)
                 if state.get("armed"):
                     logger.critical(
-                        "Kill switch was armed at shutdown (reason=%s, detail=%s, armed_at=%s) "
-                        "— re-arming on startup",
-                        state.get("reason"), state.get("detail", ""), state.get("armed_at"),
+                        "Kill switch was armed at shutdown (reason=%s, detail=%s, armed_at=%s) — re-arming on startup",
+                        state.get("reason"),
+                        state.get("detail", ""),
+                        state.get("armed_at"),
                     )
                     return state
                 else:
-                    logger.info("Kill switch state file loaded: disarmed (persisted_at=%s)",
-                              state.get("persisted_at", "unknown"))
+                    logger.info(
+                        "Kill switch state file loaded: disarmed (persisted_at=%s)",
+                        state.get("persisted_at", "unknown"),
+                    )
         except json.JSONDecodeError as e:
             logger.error("Kill switch state file is corrupt, ignoring: %s", e)
         except Exception as e:
@@ -166,17 +177,18 @@ class KillSwitch:
                     logger.warning(
                         "Kill switch arm REJECTED: current reason=%s (manual-only) "
                         "cannot be downgraded to %s (auto-disarmable)",
-                        self._state.reason.value, reason.value,
+                        self._state.reason.value,
+                        reason.value,
                     )
                     return
             self._state = KillSwitchState(
                 armed=True,
                 reason=reason,
                 detail=detail,
-                ts=datetime.now(timezone.utc),
+                ts=datetime.now(UTC),
                 allow_reduce_only=self._state.allow_reduce_only,
             )
-            self._arm_timestamp = datetime.now(timezone.utc)
+            self._arm_timestamp = datetime.now(UTC)
             self._consecutive_healthy_checks = 0
             logger.warning("Kill switch ARMED: reason=%s detail=%s", reason.value, detail)
         await self._persist_state()
@@ -197,7 +209,7 @@ class KillSwitch:
                 allow_reduce_only=self._state.allow_reduce_only,
             )
 
-    async def check_auto_disarm(self, broker_healthy: bool = True, vix_value: Optional[float] = None) -> bool:
+    async def check_auto_disarm(self, broker_healthy: bool = True, vix_value: float | None = None) -> bool:
         """
         Check if kill switch should auto-disarm based on recovery conditions.
         Call from periodic risk snapshot (every 5 minutes).
@@ -227,7 +239,10 @@ class KillSwitch:
                     self._state = KillSwitchState(armed=False, allow_reduce_only=self._state.allow_reduce_only)
                     self._arm_timestamp = None
                     self._consecutive_healthy_checks = 0
-                    logger.info("Kill switch AUTO-DISARMED: broker recovered after %d healthy checks", self._required_healthy_checks)
+                    logger.info(
+                        "Kill switch AUTO-DISARMED: broker recovered after %d healthy checks",
+                        self._required_healthy_checks,
+                    )
                     disarmed = True
 
             # Check VIX-based auto-disarm
@@ -261,12 +276,14 @@ class KillSwitch:
             # Time-based auto-disarm for other recoverable reasons
             if reason in (KillReason.DRIFT_SPIKE, KillReason.REJECTION_SPIKE):
                 if self._arm_timestamp:
-                    elapsed_min = (datetime.now(timezone.utc) - self._arm_timestamp).total_seconds() / 60
+                    elapsed_min = (datetime.now(UTC) - self._arm_timestamp).total_seconds() / 60
                     if elapsed_min >= self._auto_disarm_after_minutes:
                         self._state = KillSwitchState(armed=False, allow_reduce_only=self._state.allow_reduce_only)
                         self._arm_timestamp = None
                         self._consecutive_healthy_checks = 0
-                        logger.info("Kill switch AUTO-DISARMED: timed out after %.0f min (reason=%s)", elapsed_min, reason.value)
+                        logger.info(
+                            "Kill switch AUTO-DISARMED: timed out after %.0f min (reason=%s)", elapsed_min, reason.value
+                        )
                         disarmed = True
 
         if disarmed:
@@ -287,7 +304,11 @@ class KillSwitch:
         """
         if not state.get("armed", False) if isinstance(state, dict) else not getattr(state, "armed", False):
             return True
-        allow_reduce = state.get("allow_reduce_only", True) if isinstance(state, dict) else getattr(state, "allow_reduce_only", True)
+        allow_reduce = (
+            state.get("allow_reduce_only", True)
+            if isinstance(state, dict)
+            else getattr(state, "allow_reduce_only", True)
+        )
         if not allow_reduce:
             return False
         # Adjust net position for pending reduce orders

@@ -26,6 +26,7 @@ Usage:
     PYTHONPATH=. python scripts/train_lstm.py --symbols RELIANCE.NS,INFY.NS,TCS.NS
     PYTHONPATH=. python scripts/train_lstm.py --epochs 50 --lr 0.0005
 """
+
 import argparse
 import json
 import logging
@@ -60,31 +61,95 @@ MIN_HISTORY_DAYS = 126  # ~6 months of trading days minimum
 
 # Default NIFTY50 tickers for Yahoo Finance (suffixed with .NS)
 NIFTY50_TICKERS = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS",
-    "LT.NS", "HCLTECH.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS",
-    "SUNPHARMA.NS", "TITAN.NS", "BAJFINANCE.NS", "WIPRO.NS", "ULTRACEMCO.NS",
-    "NESTLEIND.NS", "ONGC.NS", "NTPC.NS", "TATAMOTORS.NS", "M&M.NS",
-    "POWERGRID.NS", "JSWSTEEL.NS", "TATASTEEL.NS", "ADANIENT.NS", "ADANIPORTS.NS",
-    "BAJAJFINSV.NS", "COALINDIA.NS", "TECHM.NS", "HDFCLIFE.NS", "GRASIM.NS",
-    "DIVISLAB.NS", "DRREDDY.NS", "CIPLA.NS", "BPCL.NS", "EICHERMOT.NS",
-    "APOLLOHOSP.NS", "SBILIFE.NS", "TATACONSUM.NS", "BRITANNIA.NS", "INDUSINDBK.NS",
-    "HEROMOTOCO.NS", "BAJAJ-AUTO.NS", "HINDALCO.NS", "UPL.NS", "LTIM.NS",
+    "RELIANCE.NS",
+    "TCS.NS",
+    "HDFCBANK.NS",
+    "INFY.NS",
+    "ICICIBANK.NS",
+    "HINDUNILVR.NS",
+    "SBIN.NS",
+    "BHARTIARTL.NS",
+    "ITC.NS",
+    "KOTAKBANK.NS",
+    "LT.NS",
+    "HCLTECH.NS",
+    "AXISBANK.NS",
+    "ASIANPAINT.NS",
+    "MARUTI.NS",
+    "SUNPHARMA.NS",
+    "TITAN.NS",
+    "BAJFINANCE.NS",
+    "WIPRO.NS",
+    "ULTRACEMCO.NS",
+    "NESTLEIND.NS",
+    "ONGC.NS",
+    "NTPC.NS",
+    "TATAMOTORS.NS",
+    "M&M.NS",
+    "POWERGRID.NS",
+    "JSWSTEEL.NS",
+    "TATASTEEL.NS",
+    "ADANIENT.NS",
+    "ADANIPORTS.NS",
+    "BAJAJFINSV.NS",
+    "COALINDIA.NS",
+    "TECHM.NS",
+    "HDFCLIFE.NS",
+    "GRASIM.NS",
+    "DIVISLAB.NS",
+    "DRREDDY.NS",
+    "CIPLA.NS",
+    "BPCL.NS",
+    "EICHERMOT.NS",
+    "APOLLOHOSP.NS",
+    "SBILIFE.NS",
+    "TATACONSUM.NS",
+    "BRITANNIA.NS",
+    "INDUSINDBK.NS",
+    "HEROMOTOCO.NS",
+    "BAJAJ-AUTO.NS",
+    "HINDALCO.NS",
+    "UPL.NS",
+    "LTIM.NS",
 ]
 
 # Extended universe: NIFTY50 + NIFTY Next 50 midcaps for broader training coverage (30+ symbols)
 EXTENDED_TICKERS = NIFTY50_TICKERS + [
     # NIFTY Next 50 additions (midcap diversification)
-    "HAVELLS.NS", "PIDILITIND.NS", "GODREJCP.NS", "DABUR.NS", "BERGEPAINT.NS",
-    "SIEMENS.NS", "ABB.NS", "COLPAL.NS", "ICICIPRULI.NS", "NAUKRI.NS",
-    "MUTHOOTFIN.NS", "BANKBARODA.NS", "PNB.NS", "INDIGO.NS", "DLF.NS",
-    "AMBUJACEM.NS", "LUPIN.NS", "BIOCON.NS", "TRENT.NS", "PETRONET.NS",
+    "HAVELLS.NS",
+    "PIDILITIND.NS",
+    "GODREJCP.NS",
+    "DABUR.NS",
+    "BERGEPAINT.NS",
+    "SIEMENS.NS",
+    "ABB.NS",
+    "COLPAL.NS",
+    "ICICIPRULI.NS",
+    "NAUKRI.NS",
+    "MUTHOOTFIN.NS",
+    "BANKBARODA.NS",
+    "PNB.NS",
+    "INDIGO.NS",
+    "DLF.NS",
+    "AMBUJACEM.NS",
+    "LUPIN.NS",
+    "BIOCON.NS",
+    "TRENT.NS",
+    "PETRONET.NS",
 ]
 
 # Quick mode: smaller subset for fast iteration
 QUICK_TICKERS = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "SBIN.NS", "ITC.NS", "HCLTECH.NS", "WIPRO.NS", "LT.NS",
+    "RELIANCE.NS",
+    "TCS.NS",
+    "HDFCBANK.NS",
+    "INFY.NS",
+    "ICICIBANK.NS",
+    "SBIN.NS",
+    "ITC.NS",
+    "HCLTECH.NS",
+    "WIPRO.NS",
+    "LT.NS",
 ]
 
 
@@ -94,6 +159,7 @@ QUICK_TICKERS = [
 @dataclass
 class WindowMetrics:
     """Metrics for a single walk-forward window."""
+
     window_idx: int
     train_start: str
     train_end: str
@@ -111,6 +177,7 @@ class WindowMetrics:
 @dataclass
 class TrainingReport:
     """Aggregate training report across all walk-forward windows."""
+
     model_version: str
     timestamp: str
     total_windows: int
@@ -148,9 +215,7 @@ def fetch_yahoo_data(
     try:
         import yfinance as yf
     except ImportError:
-        logger.error(
-            "yfinance not installed. Install with: pip install yfinance"
-        )
+        logger.error("yfinance not installed. Install with: pip install yfinance")
         sys.exit(1)
 
     data: Dict[str, pd.DataFrame] = {}
@@ -165,7 +230,9 @@ def fetch_yahoo_data(
             if df is None or len(df) < MIN_HISTORY_DAYS:
                 logger.warning(
                     "Skipping %s: insufficient data (%d bars, need %d)",
-                    symbol, len(df) if df is not None else 0, MIN_HISTORY_DAYS,
+                    symbol,
+                    len(df) if df is not None else 0,
+                    MIN_HISTORY_DAYS,
                 )
                 failed.append(symbol)
                 continue
@@ -180,8 +247,13 @@ def fetch_yahoo_data(
                 continue
 
             data[symbol] = df
-            logger.info("  %s: %d bars [%s .. %s]", symbol, len(df),
-                        df.index[0].strftime("%Y-%m-%d"), df.index[-1].strftime("%Y-%m-%d"))
+            logger.info(
+                "  %s: %d bars [%s .. %s]",
+                symbol,
+                len(df),
+                df.index[0].strftime("%Y-%m-%d"),
+                df.index[-1].strftime("%Y-%m-%d"),
+            )
 
         except Exception as exc:
             logger.warning("Failed to fetch %s: %s", symbol, exc)
@@ -218,17 +290,19 @@ def compute_features_from_df(df: pd.DataFrame, symbol: str) -> Optional[np.ndarr
     # Build Bar objects
     bars: List[Bar] = []
     for idx, row in df.iterrows():
-        bars.append(Bar(
-            symbol=symbol,
-            exchange=Exchange.NSE,
-            interval="1d",
-            open=float(row["Open"]),
-            high=float(row["High"]),
-            low=float(row["Low"]),
-            close=float(row["Close"]),
-            volume=float(row["Volume"]),
-            ts=pd.Timestamp(idx, tz="UTC") if idx.tzinfo is None else pd.Timestamp(idx),
-        ))
+        bars.append(
+            Bar(
+                symbol=symbol,
+                exchange=Exchange.NSE,
+                interval="1d",
+                open=float(row["Open"]),
+                high=float(row["High"]),
+                low=float(row["Low"]),
+                close=float(row["Close"]),
+                volume=float(row["Volume"]),
+                ts=pd.Timestamp(idx, tz="UTC") if idx.tzinfo is None else pd.Timestamp(idx),
+            )
+        )
 
     # We need at least ~40 bars of history for indicators to stabilize
     min_warmup = 40
@@ -288,9 +362,7 @@ def prepare_sequences(
         X: (N, SEQ_LEN, F) array
         y: (N,) array
     """
-    assert len(features) == len(labels), (
-        f"features and labels length mismatch: {len(features)} vs {len(labels)}"
-    )
+    assert len(features) == len(labels), f"features and labels length mismatch: {len(features)} vs {len(labels)}"
     T, F = features.shape
     if T < SEQ_LEN:
         return np.empty((0, SEQ_LEN, F), dtype=np.float32), np.empty((0,), dtype=np.float32)
@@ -365,8 +437,7 @@ def aggregate_data(
         all_y.append(y)
         all_dates.extend(date_indices)
         used_symbols.append(symbol)
-        logger.info("  %s: %d sequences (positive rate: %.1f%%)",
-                     symbol, len(X), np.nanmean(y) * 100)
+        logger.info("  %s: %d sequences (positive rate: %.1f%%)", symbol, len(X), np.nanmean(y) * 100)
 
     if not all_X:
         logger.error("No valid training data produced from any symbol.")
@@ -382,11 +453,14 @@ def aggregate_data(
     y = y[sort_idx]
     date_arr = date_arr[sort_idx]
 
-    logger.info("Total dataset: %d sequences, %d features, positive rate: %.1f%%",
-                len(X), X.shape[2], np.nanmean(y) * 100)
-    logger.info("Date range: %s to %s (sorted temporally across all symbols)",
-                datetime.fromtimestamp(date_arr[0], tz=timezone.utc).strftime("%Y-%m-%d"),
-                datetime.fromtimestamp(date_arr[-1], tz=timezone.utc).strftime("%Y-%m-%d"))
+    logger.info(
+        "Total dataset: %d sequences, %d features, positive rate: %.1f%%", len(X), X.shape[2], np.nanmean(y) * 100
+    )
+    logger.info(
+        "Date range: %s to %s (sorted temporally across all symbols)",
+        datetime.fromtimestamp(date_arr[0], tz=timezone.utc).strftime("%Y-%m-%d"),
+        datetime.fromtimestamp(date_arr[-1], tz=timezone.utc).strftime("%Y-%m-%d"),
+    )
 
     return X, y, date_arr, used_symbols
 
@@ -463,17 +537,23 @@ def walk_forward_train(
     n_windows = (n_samples - train_window) // test_window
     if n_windows < 1:
         logger.error(
-            "Not enough data for walk-forward: %d samples, need at least %d "
-            "(train=%d + test=%d)",
-            n_samples, total_window, train_window, test_window,
+            "Not enough data for walk-forward: %d samples, need at least %d (train=%d + test=%d)",
+            n_samples,
+            total_window,
+            train_window,
+            test_window,
         )
         sys.exit(1)
 
     logger.info(
         "Walk-forward: %d windows (train=%d, test=%d, total samples=%d, "
         "epochs_per_window=%d, early_stopping_patience=%d)",
-        n_windows, train_window, test_window, n_samples,
-        epochs_per_window, early_stopping_patience,
+        n_windows,
+        train_window,
+        test_window,
+        n_samples,
+        epochs_per_window,
+        early_stopping_patience,
     )
 
     # Dropout scheduling: linearly DECREASE from 0.5 to 0.3 across windows
@@ -539,15 +619,11 @@ def walk_forward_train(
         X_test_norm = np.clip(X_test_norm, -5.0, 5.0)
 
         # DataLoaders
-        train_ds = TensorDataset(
-            torch.FloatTensor(X_train_norm), torch.FloatTensor(y_train)
-        )
+        train_ds = TensorDataset(torch.FloatTensor(X_train_norm), torch.FloatTensor(y_train))
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
 
         # Optimizer (fresh per window with warm-started weights)
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=learning_rate, weight_decay=1e-5
-        )
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
         # OneCycleLR scheduler: ramp up then anneal within each window
         steps_per_epoch = max(1, len(train_loader))
@@ -600,7 +676,11 @@ def walk_forward_train(
                 if patience_counter >= early_stopping_patience:
                     logger.debug(
                         "Window %d: early stopping at epoch %d/%d (val_loss=%.4f, best=%.4f)",
-                        w, epoch + 1, epochs_per_window, val_loss, best_window_loss,
+                        w,
+                        epoch + 1,
+                        epochs_per_window,
+                        val_loss,
+                        best_window_loss,
                     )
                     break
 
@@ -660,8 +740,14 @@ def walk_forward_train(
                 "Window %3d/%d — train_loss=%.4f test_loss=%.4f "
                 "train_acc=%.3f test_acc=%.3f IC=%.4f (avg_recent=%.4f) "
                 "dropout=%.2f",
-                w + 1, n_windows, final_train_loss, test_loss,
-                train_accuracy, test_accuracy, ic, avg_recent_ic,
+                w + 1,
+                n_windows,
+                final_train_loss,
+                test_loss,
+                train_accuracy,
+                test_accuracy,
+                ic,
+                avg_recent_ic,
                 window_dropout,
             )
 
@@ -788,17 +874,15 @@ def print_report(report: TrainingReport) -> None:
     logger.info("-" * 70)
     logger.info("Avg Train Loss:      %.4f", report.avg_train_loss)
     logger.info("Avg Test Loss:       %.4f", report.avg_test_loss)
-    logger.info("Avg Train Accuracy:  %.3f (%.1f%%)", report.avg_train_accuracy,
-                report.avg_train_accuracy * 100)
-    logger.info("Avg Test Accuracy:   %.3f (%.1f%%)", report.avg_test_accuracy,
-                report.avg_test_accuracy * 100)
+    logger.info("Avg Train Accuracy:  %.3f (%.1f%%)", report.avg_train_accuracy, report.avg_train_accuracy * 100)
+    logger.info("Avg Test Accuracy:   %.3f (%.1f%%)", report.avg_test_accuracy, report.avg_test_accuracy * 100)
     logger.info("-" * 70)
     logger.info("Avg IC:              %.4f", report.avg_ic)
     logger.info("IC Std Dev:          %.4f", report.ic_std)
-    logger.info("Stability Score:     %.3f (%.0f%% of windows IC > 0)",
-                report.stability_score, report.stability_score * 100)
-    logger.info("IC Threshold (0.05): %s",
-                "PASSED" if report.passed_ic_threshold else "FAILED")
+    logger.info(
+        "Stability Score:     %.3f (%.0f%% of windows IC > 0)", report.stability_score, report.stability_score * 100
+    )
+    logger.info("IC Threshold (0.05): %s", "PASSED" if report.passed_ic_threshold else "FAILED")
     logger.info("-" * 70)
     logger.info("Training Time:       %.1f seconds", report.total_training_time_sec)
     logger.info("=" * 70)
@@ -856,10 +940,16 @@ def train(
         epochs = 8
         train_window = 40
         test_window = 5
-        logger.info("QUICK MODE: using smaller subset (%d symbols), "
-                     "shorter period (%s), fewer epochs (%d), "
-                     "smaller windows (train=%d, test=%d)",
-                     len(symbols), period, epochs, train_window, test_window)
+        logger.info(
+            "QUICK MODE: using smaller subset (%d symbols), "
+            "shorter period (%s), fewer epochs (%d), "
+            "smaller windows (train=%d, test=%d)",
+            len(symbols),
+            period,
+            epochs,
+            train_window,
+            test_window,
+        )
     else:
         if symbols is None:
             symbols = EXTENDED_TICKERS  # 70 symbols (NIFTY50 + midcap diversification)
@@ -880,7 +970,9 @@ def train(
         logger.error(
             "Insufficient sequences (%d) for walk-forward with "
             "train_window=%d + test_window=%d. Need more data or symbols.",
-            len(X), train_window, test_window,
+            len(X),
+            train_window,
+            test_window,
         )
         sys.exit(1)
 
@@ -893,7 +985,8 @@ def train(
     logger.info("STEP 3: Walk-forward training")
     logger.info("=" * 70)
     best_state, window_metrics = walk_forward_train(
-        X, y,
+        X,
+        y,
         train_window=train_window,
         test_window=test_window,
         epochs_per_window=epochs,
@@ -919,15 +1012,11 @@ def train(
     gate_reasons = []
 
     if report.avg_ic < IC_GATE_THRESHOLD:
-        gate_reasons.append(
-            f"avg IC {report.avg_ic:.4f} < {IC_GATE_THRESHOLD}"
-        )
+        gate_reasons.append(f"avg IC {report.avg_ic:.4f} < {IC_GATE_THRESHOLD}")
         gate_passed = False
 
     if report.avg_test_accuracy < ACCURACY_GATE_THRESHOLD:
-        gate_reasons.append(
-            f"avg test accuracy {report.avg_test_accuracy:.3f} < {ACCURACY_GATE_THRESHOLD}"
-        )
+        gate_reasons.append(f"avg test accuracy {report.avg_test_accuracy:.3f} < {ACCURACY_GATE_THRESHOLD}")
         gate_passed = False
 
     # Transaction cost hurdle: IC must generate returns exceeding costs
@@ -936,14 +1025,15 @@ def train(
     estimated_edge = report.avg_ic * 0.02  # IC * typical vol = expected excess return
     if estimated_edge < TRANSACTION_COST_PCT:
         gate_reasons.append(
-            f"transaction cost hurdle: estimated edge {estimated_edge*100:.4f}% "
-            f"< costs {TRANSACTION_COST_PCT*100:.2f}%"
+            f"transaction cost hurdle: estimated edge {estimated_edge * 100:.4f}% "
+            f"< costs {TRANSACTION_COST_PCT * 100:.2f}%"
         )
         gate_passed = False
     else:
         logger.info(
             "Transaction cost gate: PASSED (edge=%.4f%% > cost=%.2f%%)",
-            estimated_edge * 100, TRANSACTION_COST_PCT * 100,
+            estimated_edge * 100,
+            TRANSACTION_COST_PCT * 100,
         )
 
     if not gate_passed:
@@ -951,10 +1041,7 @@ def train(
             "MODEL VALIDATION GATE FAILED — model will NOT be saved. Reasons: %s",
             "; ".join(gate_reasons),
         )
-        logger.warning(
-            "Consider: more data, feature engineering, hyperparameter tuning, "
-            "or longer training windows."
-        )
+        logger.warning("Consider: more data, feature engineering, hyperparameter tuning, or longer training windows.")
         # Still save the report for analysis
         os.makedirs(MODELS_DIR, exist_ok=True)
         report_path = os.path.join(MODELS_DIR, "lstm_training_report_REJECTED.json")
@@ -1020,40 +1107,56 @@ Examples:
     )
 
     parser.add_argument(
-        "--quick", action="store_true",
+        "--quick",
+        action="store_true",
         help="Quick retraining mode: fewer symbols, smaller windows, fewer epochs.",
     )
     parser.add_argument(
-        "--symbols", type=str, default=None,
-        help="Comma-separated list of Yahoo Finance tickers (e.g. RELIANCE.NS,TCS.NS). "
-             "Defaults to NIFTY50.",
+        "--symbols",
+        type=str,
+        default=None,
+        help="Comma-separated list of Yahoo Finance tickers (e.g. RELIANCE.NS,TCS.NS). Defaults to NIFTY50.",
     )
     parser.add_argument(
-        "--epochs", type=int, default=30,
+        "--epochs",
+        type=int,
+        default=30,
         help="Epochs per walk-forward window (default: 30).",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=64,
+        "--batch-size",
+        type=int,
+        default=64,
         help="Training batch size (default: 64).",
     )
     parser.add_argument(
-        "--lr", type=float, default=0.001,
+        "--lr",
+        type=float,
+        default=0.001,
         help="Learning rate (default: 0.001).",
     )
     parser.add_argument(
-        "--period", type=str, default="2y",
+        "--period",
+        type=str,
+        default="2y",
         help="Yahoo Finance data period: 6mo, 1y, 2y, 5y, max (default: 2y).",
     )
     parser.add_argument(
-        "--train-window", type=int, default=60,
+        "--train-window",
+        type=int,
+        default=60,
         help="Walk-forward training window size in sequences (default: 60).",
     )
     parser.add_argument(
-        "--test-window", type=int, default=10,
+        "--test-window",
+        type=int,
+        default=10,
         help="Walk-forward test window size in sequences (default: 10).",
     )
     parser.add_argument(
-        "--verbose", "-v", action="store_true",
+        "--verbose",
+        "-v",
+        action="store_true",
         help="Enable debug logging.",
     )
 

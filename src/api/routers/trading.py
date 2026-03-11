@@ -5,9 +5,9 @@ Used by K8s readiness probe and dashboards; 503 when kill switch armed or circui
 Includes explicit /trading/stop and /trading/start endpoints for admin control
 of the autonomous trading loop with optional position close-out.
 """
-import asyncio
+
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
@@ -121,7 +121,9 @@ async def trading_ready(request: Request):
 
 
 @router.put("/trading/exposure_multiplier")
-async def set_exposure_multiplier(request: Request, body: dict = None, current_user: dict = Depends(require_roles(["admin"]))):
+async def set_exposure_multiplier(
+    request: Request, body: dict = None, current_user: dict = Depends(require_roles(["admin"]))
+):
     """
     Set risk exposure multiplier from LLM advisory (0.5--1.5).
     Applied to effective equity for position sizing; caps at [0.5, 1.5].
@@ -192,7 +194,9 @@ async def trading_mode(request: Request, current_user: dict = Depends(get_curren
 
 
 @router.put("/trading/autonomous")
-async def set_autonomous_mode(request: Request, body: dict = None, current_user: dict = Depends(require_roles(["admin"]))):
+async def set_autonomous_mode(
+    request: Request, body: dict = None, current_user: dict = Depends(require_roles(["admin"]))
+):
     """
     Toggle the autonomous loop on/off.
     Body: {"enabled": true/false}
@@ -226,6 +230,7 @@ async def set_autonomous_mode(request: Request, body: dict = None, current_user:
 # ---------------------------------------------------------------------------
 # POST /trading/stop  —  Admin-only: stop autonomous loop, optionally close positions
 # ---------------------------------------------------------------------------
+
 
 @router.post("/trading/stop")
 async def trading_stop(
@@ -272,7 +277,10 @@ async def trading_stop(
 
     logger.info(
         "AUDIT | trading/stop | actor=%s | was_running=%s | close_positions=%s | mode=%s",
-        actor, was_running, close_positions, mode,
+        actor,
+        was_running,
+        close_positions,
+        mode,
     )
 
     # ── Optionally close all open positions ──
@@ -295,6 +303,7 @@ async def trading_stop(
                     if get_bars_fn:
                         try:
                             from src.models.common import Exchange
+
                             bars = get_bars_fn(symbol, Exchange.NSE, "1m", 2)
                             if bars:
                                 exit_price = bars[-1].close
@@ -304,14 +313,14 @@ async def trading_stop(
                     # Build and submit close order via order entry service
                     order_entry = getattr(request.app.state, "order_entry_service", None)
                     if order_entry is not None and hasattr(order_entry, "submit_order"):
+                        from src.execution.idempotency import stable_idempotency_key
+                        from src.execution.order_entry import OrderEntryRequest
                         from src.models.common import (
                             Exchange,
                             OrderType,
                             Signal,
                             SignalSide,
                         )
-                        from src.execution.order_entry import OrderEntryRequest
-                        from src.execution.idempotency import stable_idempotency_key
 
                         close_side = SignalSide.SELL if trade_side == "BUY" else SignalSide.BUY
                         close_signal = Signal(
@@ -324,11 +333,14 @@ async def trading_stop(
                             risk_level="EMERGENCY",
                             reason=f"ADMIN_STOP_CLOSE: actor={actor} {trade_side} {symbol}",
                             price=exit_price,
-                            ts=datetime.now(timezone.utc),
+                            ts=datetime.now(UTC),
                         )
-                        bar_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        bar_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
                         idem_key = stable_idempotency_key(
-                            bar_ts, "admin_stop_close", symbol, close_side.value,
+                            bar_ts,
+                            "admin_stop_close",
+                            symbol,
+                            close_side.value,
                         )
                         req = OrderEntryRequest(
                             signal=close_signal,
@@ -352,12 +364,16 @@ async def trading_stop(
                                     pass
                             logger.info(
                                 "AUDIT | position_closed | actor=%s | symbol=%s | side=%s | qty=%s",
-                                actor, symbol, close_side_str, trade.get("qty", trade.get("quantity", 0)),
+                                actor,
+                                symbol,
+                                close_side_str,
+                                trade.get("qty", trade.get("quantity", 0)),
                             )
                         else:
                             logger.warning(
                                 "[trading/stop] Close order rejected for %s: %s",
-                                symbol, getattr(result, "reject_reason", "unknown"),
+                                symbol,
+                                getattr(result, "reject_reason", "unknown"),
                             )
                     else:
                         logger.warning("[trading/stop] OrderEntryService unavailable; cannot close %s", symbol)
@@ -392,6 +408,7 @@ async def trading_stop(
 # ---------------------------------------------------------------------------
 # POST /trading/start  —  Admin-only: start autonomous loop
 # ---------------------------------------------------------------------------
+
 
 @router.post("/trading/start")
 async def trading_start(
@@ -446,7 +463,8 @@ async def trading_start(
         autonomous_loop.start()
         logger.info(
             "AUDIT | trading/start | actor=%s | mode=%s",
-            actor, mode,
+            actor,
+            mode,
         )
 
     # Count active strategies

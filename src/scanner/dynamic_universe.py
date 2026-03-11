@@ -18,15 +18,14 @@ Usage:
     symbols = universe.get_tradeable_stocks()        # top 300 liquid stocks
     symbols = universe.get_training_stocks(count=200) # for AI training
 """
+
 import io
 import json
 import logging
-import os
 import time
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -41,7 +40,7 @@ CACHE_TTL = 86400  # 24 hours
 
 _SESSION_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
@@ -54,11 +53,11 @@ class DynamicUniverse:
 
     def __init__(
         self,
-        min_volume: int = 50_000,         # min shares/day
-        min_turnover: float = 1e7,        # min INR 1 crore/day
-        min_price: float = 10.0,          # exclude penny stocks
-        max_price: float = 50_000.0,      # exclude ultra-expensive
-        target_count: int = 300,          # how many stocks to keep
+        min_volume: int = 50_000,  # min shares/day
+        min_turnover: float = 1e7,  # min INR 1 crore/day
+        min_price: float = 10.0,  # exclude penny stocks
+        max_price: float = 50_000.0,  # exclude ultra-expensive
+        target_count: int = 300,  # how many stocks to keep
         cache_ttl: int = CACHE_TTL,
     ):
         self.min_volume = min_volume
@@ -67,11 +66,11 @@ class DynamicUniverse:
         self.max_price = max_price
         self.target_count = target_count
         self.cache_ttl = cache_ttl
-        self._last_scan: Optional[Dict] = None
+        self._last_scan: dict | None = None
 
     # ── Step 1: Fetch ALL NSE-listed symbols ──────────────────────────
 
-    def fetch_all_nse_symbols(self) -> List[str]:
+    def fetch_all_nse_symbols(self) -> list[str]:
         """Fetch every equity listed on NSE from the official EQUITY_L.csv."""
         import requests
 
@@ -97,6 +96,7 @@ class DynamicUniverse:
         # Fallback: nsetools
         try:
             from nsetools import Nse
+
             nse = Nse()
             codes = nse.get_stock_codes()
             symbols = [k for k in codes.keys() if k != "SYMBOL"]
@@ -111,6 +111,7 @@ class DynamicUniverse:
             resp = requests.get(url2, timeout=15, headers=_SESSION_HEADERS)
             resp.raise_for_status()
             import csv
+
             reader = csv.DictReader(io.StringIO(resp.text))
             symbols = [row.get("Symbol", "").strip() for row in reader if row.get("Symbol", "").strip()]
             logger.info("Fetched %d symbols from Nifty 500 CSV fallback", len(symbols))
@@ -120,6 +121,7 @@ class DynamicUniverse:
 
         # Final fallback: bundled list
         from src.scanner.nse_universe import FALLBACK_SYMBOLS
+
         logger.warning("All dynamic fetches failed, using %d bundled symbols", len(FALLBACK_SYMBOLS))
         return list(FALLBACK_SYMBOLS)
 
@@ -185,7 +187,7 @@ class DynamicUniverse:
 
     # ── Step 3: Fetch market cap data (yfinance, batched) ─────────────
 
-    def fetch_market_caps(self, symbols: List[str], batch_size: int = 50) -> Dict[str, float]:
+    def fetch_market_caps(self, symbols: list[str], batch_size: int = 50) -> dict[str, float]:
         """Fetch market caps via yfinance for additional filtering."""
         try:
             import yfinance as yf
@@ -194,7 +196,7 @@ class DynamicUniverse:
 
         market_caps = {}
         for i in range(0, len(symbols), batch_size):
-            batch = symbols[i:i + batch_size]
+            batch = symbols[i : i + batch_size]
             yf_batch = [f"{s}.NS" for s in batch]
             try:
                 tickers = yf.Tickers(" ".join(yf_batch))
@@ -215,7 +217,7 @@ class DynamicUniverse:
 
     # ── Step 4: Build filtered universe ───────────────────────────────
 
-    def build_universe(self, force_refresh: bool = False) -> Dict:
+    def build_universe(self, force_refresh: bool = False) -> dict:
         """
         Full pipeline: fetch all stocks → filter → rank → return best.
 
@@ -240,8 +242,7 @@ class DynamicUniverse:
         total_nse = len(all_symbols)
 
         if not all_symbols:
-            return {"symbols": [], "total_nse": 0, "post_filter": 0,
-                    "scan_date": datetime.now(timezone.utc).isoformat()}
+            return {"symbols": [], "total_nse": 0, "post_filter": 0, "scan_date": datetime.now(UTC).isoformat()}
 
         # Step 2: Get bhavcopy for volume/turnover
         bhav = self.fetch_bhavcopy()
@@ -250,22 +251,24 @@ class DynamicUniverse:
             # No bhavcopy — fall back to returning all symbols (limited to target)
             logger.warning("No bhavcopy data, returning first %d symbols unfiltered", self.target_count)
             result = {
-                "symbols": all_symbols[:self.target_count],
+                "symbols": all_symbols[: self.target_count],
                 "total_nse": total_nse,
                 "post_filter": len(all_symbols),
-                "scan_date": datetime.now(timezone.utc).isoformat(),
+                "scan_date": datetime.now(UTC).isoformat(),
                 "filter_method": "unfiltered_fallback",
             }
             self._save_cache(result)
             return result
 
         # Step 3: Apply filters
-        bhav = bhav.rename(columns={
-            "SYMBOL": "symbol",
-            "CLOSE": "close",
-            "TOTTRDQTY": "volume",
-            "TOTTRDVAL": "turnover",
-        })
+        bhav = bhav.rename(
+            columns={
+                "SYMBOL": "symbol",
+                "CLOSE": "close",
+                "TOTTRDQTY": "volume",
+                "TOTTRDVAL": "turnover",
+            }
+        )
 
         # Only keep symbols that exist in our all_symbols list
         valid_set = set(all_symbols)
@@ -279,22 +282,18 @@ class DynamicUniverse:
             bhav["avg_trade_value"] = 0.0
 
         filtered = bhav[
-            (bhav["volume"] >= self.min_volume) &
-            (bhav["turnover"] >= self.min_turnover) &
-            (bhav["close"] >= self.min_price) &
-            (bhav["close"] <= self.max_price) &
-            (bhav["avg_trade_value"] >= 10.0)  # P1-5: filter out illiquid micro-lots
+            (bhav["volume"] >= self.min_volume)
+            & (bhav["turnover"] >= self.min_turnover)
+            & (bhav["close"] >= self.min_price)
+            & (bhav["close"] <= self.max_price)
+            & (bhav["avg_trade_value"] >= 10.0)  # P1-5: filter out illiquid micro-lots
         ].copy()
 
-        logger.info("Filter results: %d total → %d after volume/turnover/price filter",
-                     total_nse, len(filtered))
+        logger.info("Filter results: %d total → %d after volume/turnover/price filter", total_nse, len(filtered))
 
         if filtered.empty:
             # Relaxed filter
-            filtered = bhav[
-                (bhav["volume"] >= self.min_volume // 5) &
-                (bhav["close"] >= self.min_price)
-            ].copy()
+            filtered = bhav[(bhav["volume"] >= self.min_volume // 5) & (bhav["close"] >= self.min_price)].copy()
             logger.info("Relaxed filter: %d stocks", len(filtered))
 
         # Step 4: Rank by composite liquidity score
@@ -303,24 +302,24 @@ class DynamicUniverse:
             filtered["turn_rank"] = filtered["turnover"].rank(pct=True)
             # Price proximity to round numbers (psychological levels) - minor factor
             filtered["liquidity_score"] = (
-                0.45 * filtered["vol_rank"] +
-                0.45 * filtered["turn_rank"] +
-                0.10 * filtered["close"].rank(pct=True)  # prefer mid-range priced stocks
+                0.45 * filtered["vol_rank"]
+                + 0.45 * filtered["turn_rank"]
+                + 0.10 * filtered["close"].rank(pct=True)  # prefer mid-range priced stocks
             )
             filtered = filtered.sort_values("liquidity_score", ascending=False)
 
         # Step 5: Take top N
-        result_symbols = filtered["symbol"].tolist()[:self.target_count]
+        result_symbols = filtered["symbol"].tolist()[: self.target_count]
 
         # Build sector info if we have extra columns
-        sectors = {}
+        _sectors = {}
         # Bhavcopy doesn't have sector data, but we'll add that later via metadata
 
         result = {
             "symbols": result_symbols,
             "total_nse": total_nse,
             "post_filter": len(filtered),
-            "scan_date": datetime.now(timezone.utc).isoformat(),
+            "scan_date": datetime.now(UTC).isoformat(),
             "filter_method": "volume_turnover_ranked",
             "filters_applied": {
                 "min_volume": self.min_volume,
@@ -335,14 +334,15 @@ class DynamicUniverse:
 
         logger.info(
             "Dynamic universe built: %d tradeable stocks from %d total NSE listings",
-            len(result_symbols), total_nse,
+            len(result_symbols),
+            total_nse,
         )
 
         return result
 
     # ── Public API ────────────────────────────────────────────────────
 
-    def validate_cached_symbols(self, cached_symbols: List[str]) -> List[str]:
+    def validate_cached_symbols(self, cached_symbols: list[str]) -> list[str]:
         """P1-6: Remove delisted/suspended stocks from cached universe.
         Fetches live NSE symbol list and filters out any cached symbols not present."""
         try:
@@ -361,7 +361,7 @@ class DynamicUniverse:
             logger.debug("Survivorship validation failed: %s — keeping cached", e)
             return cached_symbols
 
-    def get_tradeable_stocks(self, count: Optional[int] = None, force_refresh: bool = False) -> List[str]:
+    def get_tradeable_stocks(self, count: int | None = None, force_refresh: bool = False) -> list[str]:
         """
         Get the best tradeable stocks. Fully autonomous — no hardcoded lists.
 
@@ -381,19 +381,19 @@ class DynamicUniverse:
             return symbols[:count]
         return symbols
 
-    def get_training_stocks(self, count: int = 200) -> List[str]:
+    def get_training_stocks(self, count: int = 200) -> list[str]:
         """Get stocks for AI model training — broader set for better generalization."""
         return self.get_tradeable_stocks(count=count)
 
-    def get_trading_stocks(self, count: int = 100) -> List[str]:
+    def get_trading_stocks(self, count: int = 100) -> list[str]:
         """Get stocks for active trading — tighter set of most liquid names."""
         return self.get_tradeable_stocks(count=count)
 
-    def get_yfinance_symbols(self, count: Optional[int] = None) -> List[str]:
+    def get_yfinance_symbols(self, count: int | None = None) -> list[str]:
         """Get symbols with .NS suffix for yfinance compatibility."""
         return [f"{s}.NS" for s in self.get_tradeable_stocks(count=count)]
 
-    def get_scan_info(self) -> Dict:
+    def get_scan_info(self) -> dict:
         """Get info about the last universe scan."""
         if self._last_scan:
             return self._last_scan
@@ -401,19 +401,22 @@ class DynamicUniverse:
 
     # ── Cache ─────────────────────────────────────────────────────────
 
-    def _load_cache(self) -> Optional[Dict]:
+    def _load_cache(self) -> dict | None:
         try:
             if UNIVERSE_CACHE.exists():
                 data = json.loads(UNIVERSE_CACHE.read_text())
                 if time.time() - data.get("cache_ts", 0) < self.cache_ttl:
-                    logger.info("Using cached dynamic universe (%d symbols, scanned %s)",
-                                len(data.get("symbols", [])), data.get("scan_date", "?"))
+                    logger.info(
+                        "Using cached dynamic universe (%d symbols, scanned %s)",
+                        len(data.get("symbols", [])),
+                        data.get("scan_date", "?"),
+                    )
                     return data
         except Exception as e:
             logger.debug("Universe cache load failed: %s", e)
         return None
 
-    def _save_cache(self, data: Dict) -> None:
+    def _save_cache(self, data: dict) -> None:
         try:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
             data["cache_ts"] = time.time()
@@ -424,7 +427,7 @@ class DynamicUniverse:
 
 # ── Module-level singleton ────────────────────────────────────────────
 
-_instance: Optional[DynamicUniverse] = None
+_instance: DynamicUniverse | None = None
 
 
 def get_dynamic_universe() -> DynamicUniverse:

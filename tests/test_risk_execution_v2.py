@@ -14,19 +14,16 @@ Run:
 """
 
 import asyncio
-import hashlib
-import math
-import time
-import threading
-from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import numpy as np
-import pytest
 
 from src.core.events import Exchange, Position, Signal, SignalSide
+from src.execution.order_entry.idempotency import IdempotencyStore
+from src.execution.order_entry.kill_switch import KillReason, KillSwitch, KillSwitchState
+from src.execution.order_entry.rate_limiter import OrderRateLimiter, RateLimitConfig
 from src.risk_engine.circuit_breaker import CircuitBreaker, CircuitState
-from src.risk_engine.limits import LimitCheckResult, RiskLimits
+from src.risk_engine.limits import RiskLimits
 from src.risk_engine.manager import RiskManager
 from src.risk_engine.metrics import (
     RiskMetrics,
@@ -37,15 +34,12 @@ from src.risk_engine.metrics import (
     sharpe_annual,
     var_parametric,
 )
-from src.risk_engine.var import PortfolioVaR, Z_95, Z_99
-from src.execution.order_entry.rate_limiter import OrderRateLimiter, RateLimitConfig
-from src.execution.order_entry.kill_switch import KillReason, KillSwitch, KillSwitchState
-from src.execution.order_entry.idempotency import IdempotencyStore
-
+from src.risk_engine.var import PortfolioVaR
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_signal(
     symbol: str = "RELIANCE",
@@ -100,8 +94,10 @@ class TestRiskManagerUpdateEquity:
     """update_equity: negative equity triggers circuit, positive does not."""
 
     def test_negative_equity_opens_circuit(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             assert rm.is_circuit_open() is False
 
@@ -111,8 +107,10 @@ class TestRiskManagerUpdateEquity:
             assert rm.is_circuit_open() is True
 
     def test_positive_equity_no_circuit_change(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             rm.update_equity(120_000)
 
@@ -124,8 +122,10 @@ class TestRiskManagerCanPlaceOrder:
     """can_place_order: circuit, force_reduce, zero equity, basic approval."""
 
     def test_circuit_open_rejects_normal_order(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             rm.open_circuit("test")
             sig = _make_signal()
@@ -139,21 +139,21 @@ class TestRiskManagerCanPlaceOrder:
         rm = RiskManager(equity=100_000, load_persisted_state=False)
         sig = _make_signal()
 
-        result = rm.can_place_order(sig, quantity=2, price=2500,
-                                    is_reducing=False, force_reduce=True)
+        result = rm.can_place_order(sig, quantity=2, price=2500, is_reducing=False, force_reduce=True)
 
         assert result.allowed is False
         assert "force_reduce_requires_is_reducing" in result.reason
 
     def test_force_reduce_with_is_reducing_bypasses_circuit(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             rm.open_circuit("test")
             sig = _make_signal()
 
-            result = rm.can_place_order(sig, quantity=2, price=2500,
-                                        is_reducing=True, force_reduce=True)
+            result = rm.can_place_order(sig, quantity=2, price=2500, is_reducing=True, force_reduce=True)
 
             assert result.allowed is True
 
@@ -251,16 +251,20 @@ class TestRiskManagerDailyPnL:
     """Daily PnL tracking and daily_loss breach."""
 
     def test_register_pnl_accumulates(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             rm.register_pnl(-200)
             rm.register_pnl(-300)
             assert rm.daily_pnl == -500
 
     def test_daily_loss_breach_blocks_new_orders(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(
                 equity=100_000,
                 limits=RiskLimits(max_daily_loss_pct=2.0),
@@ -275,8 +279,10 @@ class TestRiskManagerDailyPnL:
             assert "daily loss" in result.reason
 
     def test_reset_daily_pnl(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             rm.register_pnl(-500)
             rm.reset_daily_pnl()
@@ -288,8 +294,10 @@ class TestRiskManagerConsecutiveLosses:
     """Consecutive losses tracking."""
 
     def test_consecutive_losses_increment(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             rm.register_pnl(-100)
             rm.register_pnl(-200)
@@ -297,8 +305,10 @@ class TestRiskManagerConsecutiveLosses:
             assert rm._consecutive_losses == 3
 
     def test_positive_pnl_resets_consecutive_losses(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             rm.register_pnl(-100)
             rm.register_pnl(-200)
@@ -307,8 +317,10 @@ class TestRiskManagerConsecutiveLosses:
             assert rm._consecutive_losses == 0
 
     def test_consecutive_losses_breach_blocks_orders(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(
                 equity=100_000,
                 limits=RiskLimits(max_consecutive_losses=3),
@@ -328,8 +340,10 @@ class TestRiskManagerSnapshot:
     """risk_snapshot returns correct data."""
 
     def test_snapshot_fields(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             rm.register_pnl(-200)
             rm.add_position(_make_position())
@@ -345,8 +359,10 @@ class TestRiskManagerSnapshot:
             assert snap["consecutive_losses"] == 1
 
     def test_snapshot_circuit_open(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             rm.open_circuit("test")
             snap = rm.risk_snapshot()
@@ -395,8 +411,10 @@ class TestCircuitBreakerTrip:
     """trip() opens circuit."""
 
     def test_trip_opens_circuit(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             assert cb.state == CircuitState.CLOSED
@@ -407,8 +425,10 @@ class TestCircuitBreakerTrip:
             assert rm.is_circuit_open() is True
 
     def test_double_trip_is_idempotent(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             cb.trip()
@@ -421,8 +441,10 @@ class TestCircuitBreakerReset:
     """reset() goes to HALF_OPEN."""
 
     def test_reset_goes_to_half_open(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             cb.trip()
@@ -437,16 +459,20 @@ class TestCircuitBreakerAllowOrder:
     """allow_order in different states."""
 
     def test_closed_allows(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
 
             assert cb.allow_order() is True
 
     def test_open_blocks(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             cb.trip()
@@ -454,13 +480,17 @@ class TestCircuitBreakerAllowOrder:
             assert cb.allow_order() is False
 
     def test_half_open_allows_limited_trades(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             cb.trip()
             cb._half_open_observation_secs = 99999  # prevent auto-promotion
             cb.reset(current_equity=100_000)
+            # Disable auto-promotion so allow_order() tests pure HALF_OPEN limiting
+            cb.check_half_open_promotion = lambda: None
 
             max_trades = cb._half_open_max_trades  # 3
 
@@ -470,13 +500,17 @@ class TestCircuitBreakerAllowOrder:
             assert allowed_count == max_trades
 
     def test_half_open_blocks_after_limit_exhausted(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             cb.trip()
             cb._half_open_observation_secs = 99999
             cb.reset(current_equity=100_000)
+            # Disable auto-promotion so we test pure HALF_OPEN blocking
+            cb.check_half_open_promotion = lambda: None
 
             for _ in range(cb._half_open_max_trades):
                 cb.allow_order()
@@ -489,8 +523,10 @@ class TestCircuitBreakerHalfOpenPromotion:
     """check_half_open_promotion after observation period."""
 
     def test_promotion_after_observation_and_trades(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             cb.trip()
@@ -507,16 +543,20 @@ class TestCircuitBreakerHalfOpenPromotion:
             assert rm._exposure_multiplier == 1.0
 
     def test_no_promotion_without_enough_trades(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             cb.trip()
-            cb._half_open_observation_secs = 0
+            # Prevent time-based promotion (OR condition: time OR trades)
+            cb._half_open_observation_secs = 99999
             cb.reset(current_equity=100_000)
 
-            # Don't execute enough trades
-            cb.allow_order()  # only 1 of 3
+            # Don't execute enough trades — only 1 of 3
+            # (use allow_order with auto-promotion disabled to avoid side effects)
+            cb._half_open_trade_count = 1
 
             cb.check_half_open_promotion()
             assert cb.state == CircuitState.HALF_OPEN
@@ -526,8 +566,10 @@ class TestCircuitBreakerForceReset:
     """force_reset skips HALF_OPEN; cooldown prevents rapid resets."""
 
     def test_force_reset_goes_directly_to_closed(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             cb.trip()
@@ -540,8 +582,10 @@ class TestCircuitBreakerForceReset:
             assert rm.is_circuit_open() is False
 
     def test_force_reset_cooldown_prevents_rapid_resets(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
 
@@ -563,8 +607,10 @@ class TestCircuitBreakerUpdateEquity:
     """update_equity triggers trip on drawdown."""
 
     def test_drawdown_triggers_trip(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(
                 equity=100_000,
                 limits=RiskLimits(circuit_breaker_drawdown_pct=5.0),
@@ -580,8 +626,10 @@ class TestCircuitBreakerUpdateEquity:
             assert cb.state == CircuitState.OPEN
 
     def test_small_drawdown_no_trip(self, tmp_path):
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", tmp_path / "cs.json"),
+        ):
             rm = RiskManager(
                 equity=100_000,
                 limits=RiskLimits(circuit_breaker_drawdown_pct=5.0),
@@ -655,8 +703,9 @@ class TestRiskLimitsPostInit:
         assert limits2.max_consecutive_losses == 20
 
     def test_normal_values_not_clamped(self):
-        limits = RiskLimits(max_position_pct=5.0, max_daily_loss_pct=2.0,
-                           max_open_positions=10, max_consecutive_losses=5)
+        limits = RiskLimits(
+            max_position_pct=5.0, max_daily_loss_pct=2.0, max_open_positions=10, max_consecutive_losses=5
+        )
         assert limits.max_position_pct == 5.0
         assert limits.max_daily_loss_pct == 2.0
         assert limits.max_open_positions == 10
@@ -871,6 +920,7 @@ class TestKillSwitch:
     def test_arm_and_check(self, tmp_path):
         async def _test():
             import src.execution.order_entry.kill_switch as ks_mod
+
             original = ks_mod._KILL_STATE_PATH
             ks_mod._KILL_STATE_PATH = str(tmp_path / "kill_switch_state.json")
             try:
@@ -891,6 +941,7 @@ class TestKillSwitch:
     def test_disarm(self, tmp_path):
         async def _test():
             import src.execution.order_entry.kill_switch as ks_mod
+
             original = ks_mod._KILL_STATE_PATH
             ks_mod._KILL_STATE_PATH = str(tmp_path / "kill_switch_state.json")
             try:
@@ -930,6 +981,7 @@ class TestKillSwitch:
 
     def test_manual_reason_cannot_be_downgraded(self):
         """Manual kill reason should not be overwritten by auto-disarmable reason."""
+
         async def _test():
             ks = KillSwitch()
             await ks.arm(KillReason.MAX_DAILY_LOSS, detail="big loss")

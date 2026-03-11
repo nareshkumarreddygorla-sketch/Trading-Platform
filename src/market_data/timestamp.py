@@ -9,13 +9,13 @@ normalizer, and yfinance_fallback_feeder.
 All public functions return timezone-aware ``datetime`` in UTC.
 """
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Union
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
 
 __all__ = ["normalize_ts", "IST", "UTC"]
 
 # Named timezone constants
-UTC = timezone.utc
+UTC = UTC
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
@@ -102,6 +102,7 @@ def _resolve_tz(name: str) -> timezone:
         return tz
     try:
         from zoneinfo import ZoneInfo
+
         zi = ZoneInfo(name)
         # ZoneInfo objects are accepted by datetime directly, but we need a
         # fixed-offset ``timezone`` for consistency.  Approximate via current
@@ -112,7 +113,7 @@ def _resolve_tz(name: str) -> timezone:
         return IST  # safe default for Indian markets
 
 
-def _parse_str(s: str) -> Union[datetime, str]:
+def _parse_str(s: str) -> datetime | str:
     """Best-effort parse of an ISO-8601-ish string to datetime.
 
     Returns the original string unchanged if parsing fails so the caller

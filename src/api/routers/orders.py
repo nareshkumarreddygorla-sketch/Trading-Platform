@@ -2,16 +2,14 @@ import asyncio
 import math
 import re
 from enum import Enum
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from src.core.events import Exchange, Signal, SignalSide
-from src.api.deps import get_order_entry_service, get_kill_switch
 from src.api.auth import get_current_user, require_roles
+from src.api.deps import get_kill_switch, get_order_entry_service
+from src.core.events import Exchange, OrderType, Signal, SignalSide
 from src.execution.order_entry import OrderEntryRequest, RejectReason
-from src.core.events import OrderType
 
 router = APIRouter()
 
@@ -24,6 +22,7 @@ def _validate_symbol(symbol: str) -> str:
     if not _SYMBOL_RE.match(symbol):
         raise HTTPException(400, f"Invalid symbol: must match {_SYMBOL_RE.pattern}")
     return symbol
+
 
 MAX_IDEMPOTENCY_KEY_LEN = 256
 MAX_KILL_SWITCH_REASON_LEN = 64
@@ -64,9 +63,9 @@ class PlaceOrderRequest(BaseModel):
     side: OrderSideEnum
     quantity: float = Field(..., gt=0, le=MAX_ORDER_QUANTITY)
     order_type: OrderTypeEnum = OrderTypeEnum.LIMIT
-    limit_price: Optional[float] = Field(None, gt=0)
+    limit_price: float | None = Field(None, gt=0)
     strategy_id: str = Field("", max_length=MAX_STRATEGY_ID_LEN)
-    idempotency_key: Optional[str] = Field(None, max_length=MAX_IDEMPOTENCY_KEY_LEN)
+    idempotency_key: str | None = Field(None, max_length=MAX_IDEMPOTENCY_KEY_LEN)
 
     @field_validator("quantity")
     @classmethod
@@ -77,30 +76,30 @@ class PlaceOrderRequest(BaseModel):
 
     @field_validator("limit_price")
     @classmethod
-    def limit_price_must_be_finite(cls, v: Optional[float]) -> Optional[float]:
+    def limit_price_must_be_finite(cls, v: float | None) -> float | None:
         if v is not None and not math.isfinite(v):
             raise ValueError("limit_price must be finite")
         return v
 
 
 class OrderResponse(BaseModel):
-    order_id: Optional[str]
-    broker_order_id: Optional[str]
+    order_id: str | None
+    broker_order_id: str | None
     strategy_id: str
     symbol: str
     exchange: str
     side: str
     quantity: float
     order_type: str
-    limit_price: Optional[float]
+    limit_price: float | None
     status: str
     filled_qty: float
-    avg_price: Optional[float]
-    ts: Optional[str]
+    avg_price: float | None
+    ts: str | None
 
 
 class OrderListResponse(BaseModel):
-    orders: List[OrderResponse]
+    orders: list[OrderResponse]
     total: int
 
 
@@ -111,11 +110,11 @@ class PositionResponse(BaseModel):
     quantity: float
     avg_price: float
     unrealized_pnl: float = 0.0
-    strategy_id: Optional[str] = None
+    strategy_id: str | None = None
 
 
 class PositionsResponse(BaseModel):
-    positions: List[PositionResponse]
+    positions: list[PositionResponse]
 
 
 class CancelOrderResponse(BaseModel):
@@ -124,16 +123,16 @@ class CancelOrderResponse(BaseModel):
 
 
 class PlaceOrderResponse(BaseModel):
-    order_id: Optional[str] = None
-    broker_order_id: Optional[str] = None
+    order_id: str | None = None
+    broker_order_id: str | None = None
     status: str
-    latency_ms: Optional[float] = None
+    latency_ms: float | None = None
 
 
 class KillSwitchResponse(BaseModel):
     status: str
-    reason: Optional[str] = None
-    message: Optional[str] = None
+    reason: str | None = None
+    message: str | None = None
 
 
 def _order_to_response(o) -> OrderResponse:
@@ -157,8 +156,8 @@ def _order_to_response(o) -> OrderResponse:
 @router.get("/orders", response_model=OrderListResponse)
 async def list_orders(
     request: Request,
-    status: Optional[str] = None,
-    strategy_id: Optional[str] = None,
+    status: str | None = None,
+    strategy_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
     current_user: dict = Depends(get_current_user),
@@ -171,7 +170,9 @@ async def list_orders(
         loop = asyncio.get_running_loop()
         orders, total = await loop.run_in_executor(
             None,
-            lambda: persistence.list_orders_paginated_sync(limit=limit, offset=offset, status=db_status, strategy_id=strategy_id),
+            lambda: persistence.list_orders_paginated_sync(
+                limit=limit, offset=offset, status=db_status, strategy_id=strategy_id
+            ),
         )
         return OrderListResponse(orders=[_order_to_response(o) for o in orders], total=total)
     order_entry = get_order_entry_service(request)
@@ -230,10 +231,11 @@ async def cancel_order(
     broker_order_id = getattr(order, "broker_order_id", None)
     try:
         ok = await gateway.cancel_order(order_id, broker_order_id)
-    except Exception as e:
+    except Exception:
         import logging as _logging
+
         _logging.getLogger(__name__).exception("Order cancellation failed")
-        raise HTTPException(502, "Order cancellation failed")
+        raise HTTPException(502, "Order cancellation failed") from None
     if not ok:
         raise HTTPException(502, "Cancel rejected by broker")
 
@@ -359,16 +361,25 @@ async def place_order(
                 audit_repo.append_sync(
                     "order_submit_success",
                     actor,
-                    {"order_id": result.order_id, "broker_order_id": result.broker_order_id, "symbol": body.symbol, "side": body.side.value},
+                    {
+                        "order_id": result.order_id,
+                        "broker_order_id": result.broker_order_id,
+                        "symbol": body.symbol,
+                        "side": body.side.value,
+                    },
                 )
             else:
                 audit_repo.append_sync(
                     "order_submit_reject",
                     actor,
-                    {"reason": result.reject_reason.value if result.reject_reason else "", "detail": result.reject_detail or ""},
+                    {
+                        "reason": result.reject_reason.value if result.reject_reason else "",
+                        "detail": result.reject_detail or "",
+                    },
                 )
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).exception("Audit append failed: %s", e)
 
     if not result.success:
@@ -388,7 +399,12 @@ async def place_order(
             raise HTTPException(400, detail)
         raise HTTPException(503, f"Order rejected: {reason.value if reason else 'unknown'}: {detail}")
 
-    return {"order_id": result.order_id, "broker_order_id": result.broker_order_id, "status": "PENDING", "latency_ms": result.latency_ms}
+    return {
+        "order_id": result.order_id,
+        "broker_order_id": result.broker_order_id,
+        "status": "PENDING",
+        "latency_ms": result.latency_ms,
+    }
 
 
 @router.post("/admin/kill_switch/arm", response_model=KillSwitchResponse)
@@ -405,6 +421,7 @@ async def kill_switch_arm(
     reason = (reason or "manual")[:MAX_KILL_SWITCH_REASON_LEN]
     detail = (detail or "")[:MAX_KILL_SWITCH_DETAIL_LEN]
     from src.execution.order_entry.kill_switch import KillReason
+
     try:
         r = KillReason(reason)
     except ValueError:
@@ -413,7 +430,9 @@ async def kill_switch_arm(
     audit_repo = getattr(request.app.state, "audit_repo", None)
     if audit_repo:
         try:
-            audit_repo.append_sync("kill_switch_arm", current_user.get("user_id", "admin"), {"reason": reason, "detail": detail})
+            audit_repo.append_sync(
+                "kill_switch_arm", current_user.get("user_id", "admin"), {"reason": reason, "detail": detail}
+            )
         except Exception:
             pass
     return {"status": "armed", "reason": reason}
@@ -444,6 +463,7 @@ async def safe_mode_clear(
 ):
     """Clear safe_mode so trading can be re-enabled after broker is back. Audit logged."""
     import logging
+
     logger = logging.getLogger(__name__)
     if not getattr(request.app.state, "safe_mode", False):
         return {"status": "ok", "message": "safe_mode was not set"}

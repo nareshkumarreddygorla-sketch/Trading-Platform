@@ -5,17 +5,18 @@ Includes:
 - Pre-market readiness gate (all systems must report ready before trading starts)
 - Graceful shutdown: persist all state, cancel open orders, flush audit trail
 """
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .database import init_database, shutdown_database
-from .risk import init_risk
-from .execution import init_execution, shutdown_execution
 from .ai import init_ai
+from .database import init_database, shutdown_database
+from .execution import init_execution, shutdown_execution
 from .market_data import init_market_data, shutdown_market_data
+from .risk import init_risk
 from .trading import init_trading, shutdown_trading
 
 logger = logging.getLogger(__name__)
@@ -112,8 +113,7 @@ async def _pre_market_readiness_gate(app: FastAPI) -> None:
 
             if is_live:
                 logger.critical(
-                    "PRE-MARKET READINESS GATE FAILED (LIVE MODE): %d blockers — "
-                    "entering safe_mode: %s",
+                    "PRE-MARKET READINESS GATE FAILED (LIVE MODE): %d blockers — entering safe_mode: %s",
                     len(blockers),
                     ", ".join(blockers),
                 )
@@ -164,7 +164,7 @@ async def _graceful_shutdown(app: FastAPI) -> None:
                                     if cancel_fn:
                                         await asyncio.wait_for(cancel_fn(broker_id), timeout=5.0)
                                         logger.info("Cancelled order %s at broker", broker_id)
-                                except (asyncio.TimeoutError, Exception) as e:
+                                except (TimeoutError, Exception) as e:
                                     logger.warning("Failed to cancel order %s at broker: %s", broker_id, e)
             except Exception as e:
                 logger.warning("Pending order cancellation on shutdown failed: %s", e)
@@ -237,6 +237,7 @@ async def _graceful_shutdown(app: FastAPI) -> None:
     # 5. Close database connections
     try:
         from src.persistence import get_engine
+
         engine = get_engine()
         if engine is not None:
             engine.dispose()
@@ -251,14 +252,16 @@ async def _graceful_shutdown(app: FastAPI) -> None:
             task.cancel()
             try:
                 await asyncio.wait_for(task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
             logger.info("Cancelled background task: %s", task_name)
 
     # 7. Close Redis connections
     try:
-        import redis as _redis_sync
         import os
+
+        import redis as _redis_sync
+
         _redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
         _rc = _redis_sync.from_url(_redis_url, socket_timeout=2)
         _rc.close()
@@ -285,7 +288,7 @@ def _wire_ws_snapshot_provider(app: FastAPI) -> None:
     def _build_snapshot() -> dict:
         rm = getattr(app.state, "risk_manager", None)
         ks = getattr(app.state, "kill_switch", None)
-        cb = getattr(app.state, "circuit_breaker", None)
+        _cb = getattr(app.state, "circuit_breaker", None)
         al = getattr(app.state, "autonomous_loop", None)
 
         # Equity and PnL
@@ -364,6 +367,7 @@ async def lifespan(app: FastAPI):
     # ── Pre-flight database health check (Sprint 11.3) ──
     try:
         from src.persistence.database import check_database_health
+
         db_health = check_database_health()
         if not db_health["healthy"]:
             logger.critical("DATABASE HEALTH CHECK FAILED: %s — trading will be disabled", db_health["error"])

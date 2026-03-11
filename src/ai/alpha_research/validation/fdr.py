@@ -1,7 +1,6 @@
 """
 Phase B: False Discovery Rate (Benjamini-Hochberg), permutation test for IC.
 """
-from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -9,10 +8,11 @@ import numpy as np
 def _ic_rank(signal: np.ndarray, forward_return: np.ndarray) -> float:
     """Spearman correlation (avoid circular import)."""
     from .ic import ic_rank
+
     return ic_rank(signal, forward_return)
 
 
-def fdr_benjamini_hochberg(p_values: List[float], alpha: float = 0.05) -> List[bool]:
+def fdr_benjamini_hochberg(p_values: list[float], alpha: float = 0.05) -> list[bool]:
     """
     Benjamini-Hochberg: order p-values; find largest k with p_(k) <= (k/m)*alpha;
     reject hypotheses 1..k (all indices with p <= threshold). Returns list of bool (True = reject H0).
@@ -35,8 +35,8 @@ def permutation_test_ic(
     signal: np.ndarray,
     forward_return: np.ndarray,
     n_permutations: int = 500,
-    seed: Optional[int] = None,
-) -> Tuple[float, float]:
+    seed: int | None = None,
+) -> tuple[float, float]:
     """
     Observed IC (rank); permute forward_return; compute IC under null.
     p-value = fraction of permutations with |IC_perm| >= |IC_obs|.

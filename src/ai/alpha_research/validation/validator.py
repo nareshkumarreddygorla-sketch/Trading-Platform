@@ -3,13 +3,13 @@ Phase B: Statistical validation layer.
 IC, IC stability, turnover-adjusted IC, E[r] after cost, capacity-adjusted;
 FDR, min sample, OOS, walk-forward, permutation; reject weak/collapsed/unstable.
 """
+
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
 
-from .ic import ic_rank, ic_stability_time, ic_stability_regime, turnover_adjusted_ic
 from .fdr import fdr_benjamini_hochberg, permutation_test_ic
+from .ic import ic_rank, ic_stability_regime, ic_stability_time, turnover_adjusted_ic
 
 
 @dataclass
@@ -29,7 +29,7 @@ class ValidationResult:
     signal_id: str
     passed: bool
     reason: str
-    ic_result: Optional[ICResult] = None
+    ic_result: ICResult | None = None
     sharpe_oos: float = 0.0
     e_return_after_cost: float = 0.0
     turnover: float = 0.0
@@ -79,7 +79,7 @@ class StatisticalValidator:
         signal: np.ndarray,
         forward_return: np.ndarray,
         turnover: float = 0.0,
-        regime_labels: Optional[np.ndarray] = None,
+        regime_labels: np.ndarray | None = None,
         mean_return_gross: float = 0.0,
         sharpe_oos: float = 0.0,
         n_wf_positive: int = 0,
@@ -182,28 +182,30 @@ class StatisticalValidator:
 
     def validate_batch_with_fdr(
         self,
-        results: List[ValidationResult],
-    ) -> List[ValidationResult]:
+        results: list[ValidationResult],
+    ) -> list[ValidationResult]:
         """Apply FDR to p-values; return new list with passed=False where FDR does not reject. Same order as results."""
         p_vals = [r.ic_result.p_value if r.ic_result is not None else 1.0 for r in results]
         if not p_vals:
             return list(results)
         reject = fdr_benjamini_hochberg(p_vals, self.fdr_alpha)
-        out: List[ValidationResult] = []
+        out: list[ValidationResult] = []
         for i, r in enumerate(results):
             if r.passed and i < len(reject) and not reject[i]:
-                out.append(ValidationResult(
-                    signal_id=r.signal_id,
-                    passed=False,
-                    reason="fdr_not_rejected",
-                    ic_result=r.ic_result,
-                    sharpe_oos=r.sharpe_oos,
-                    e_return_after_cost=r.e_return_after_cost,
-                    turnover=r.turnover,
-                    n_samples=r.n_samples,
-                    n_wf_positive=r.n_wf_positive,
-                    min_wf_cycles_required=r.min_wf_cycles_required,
-                ))
+                out.append(
+                    ValidationResult(
+                        signal_id=r.signal_id,
+                        passed=False,
+                        reason="fdr_not_rejected",
+                        ic_result=r.ic_result,
+                        sharpe_oos=r.sharpe_oos,
+                        e_return_after_cost=r.e_return_after_cost,
+                        turnover=r.turnover,
+                        n_samples=r.n_samples,
+                        n_wf_positive=r.n_wf_positive,
+                        min_wf_cycles_required=r.min_wf_cycles_required,
+                    )
+                )
             else:
                 out.append(r)
         return out

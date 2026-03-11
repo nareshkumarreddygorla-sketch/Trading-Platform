@@ -2,12 +2,14 @@
 Agent framework: BaseAgent, AgentMessage, AgentOrchestrator.
 Manages lifecycle and inter-agent communication via asyncio queues.
 """
+
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -15,15 +17,16 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentMessage:
     """Inter-agent communication message."""
+
     source: str
     target: str  # agent name or "broadcast"
     msg_type: str  # e.g. "opportunity", "risk_alert", "execute_signal"
-    payload: Dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     timestamp: str = ""
 
     def __post_init__(self):
         if not self.timestamp:
-            self.timestamp = datetime.now(timezone.utc).isoformat()
+            self.timestamp = datetime.now(UTC).isoformat()
 
 
 class BaseAgent(ABC):
@@ -34,23 +37,23 @@ class BaseAgent(ABC):
 
     def __init__(self):
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._inbox: asyncio.Queue = asyncio.Queue()
-        self._outbox: Optional[asyncio.Queue] = None  # Set by orchestrator
+        self._outbox: asyncio.Queue | None = None  # Set by orchestrator
         self._tick_count = 0
-        self._last_run: Optional[str] = None
+        self._last_run: str | None = None
         self._status: str = "idle"
-        self._errors: List[str] = []
+        self._errors: list[str] = []
 
     def set_outbox(self, queue: asyncio.Queue) -> None:
         self._outbox = queue
 
-    async def send_message(self, target: str, msg_type: str, payload: Dict[str, Any]) -> None:
+    async def send_message(self, target: str, msg_type: str, payload: dict[str, Any]) -> None:
         if self._outbox:
             msg = AgentMessage(source=self.name, target=target, msg_type=msg_type, payload=payload)
             await self._outbox.put(msg)
 
-    async def receive_message(self) -> Optional[AgentMessage]:
+    async def receive_message(self) -> AgentMessage | None:
         try:
             return self._inbox.get_nowait()
         except asyncio.QueueEmpty:
@@ -67,7 +70,7 @@ class BaseAgent(ABC):
         """How often this agent runs its cycle."""
         ...
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "description": self.description,
@@ -87,7 +90,7 @@ class BaseAgent(ABC):
                 self._status = "running"
                 await self.run_cycle()
                 self._tick_count += 1
-                self._last_run = datetime.now(timezone.utc).isoformat()
+                self._last_run = datetime.now(UTC).isoformat()
                 self._status = "idle"
             except asyncio.CancelledError:
                 break
@@ -124,11 +127,11 @@ class AgentOrchestrator:
     """Manages agent lifecycle and routes inter-agent messages."""
 
     def __init__(self):
-        self._agents: Dict[str, BaseAgent] = {}
+        self._agents: dict[str, BaseAgent] = {}
         self._message_queue: asyncio.Queue = asyncio.Queue()
-        self._router_task: Optional[asyncio.Task] = None
+        self._router_task: asyncio.Task | None = None
         self._running = False
-        self._on_broadcast: Optional[Callable] = None
+        self._on_broadcast: Callable | None = None
 
     def register(self, agent: BaseAgent) -> None:
         self._agents[agent.name] = agent
@@ -175,17 +178,21 @@ class AgentOrchestrator:
                 elif msg.target in self._agents:
                     await self._agents[msg.target]._inbox.put(msg)
                 else:
-                    logger.warning("Message target %s not found, dropping msg from %s (type=%s)",
-                                   msg.target, msg.source, msg.msg_type)
-            except asyncio.TimeoutError:
+                    logger.warning(
+                        "Message target %s not found, dropping msg from %s (type=%s)",
+                        msg.target,
+                        msg.source,
+                        msg.msg_type,
+                    )
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning("Message routing error: %s", e)
 
-    def get_agent(self, name: str) -> Optional[BaseAgent]:
+    def get_agent(self, name: str) -> BaseAgent | None:
         return self._agents.get(name)
 
-    def get_all_status(self) -> Dict[str, Dict]:
+    def get_all_status(self) -> dict[str, dict]:
         return {name: agent.get_status() for name, agent in self._agents.items()}

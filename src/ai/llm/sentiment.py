@@ -3,9 +3,9 @@ News Sentiment Analysis via LLM: earnings, RBI, budget, geopolitical.
 Output: sentiment score and optional risk parameter suggestion (e.g. reduce exposure).
 LLM does NOT place trades.
 """
+
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from .client import LLMClient
 
@@ -35,13 +35,14 @@ class NewsSentimentService:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    async def analyze(self, news_text: str, source: str = "") -> Optional[SentimentResult]:
+    async def analyze(self, news_text: str, source: str = "") -> SentimentResult | None:
         user = f"Source: {source}\n\nText:\n{news_text[:4000]}"
         raw = await self.llm.complete(SYSTEM_SENTIMENT, user, max_tokens=256)
         if not raw:
             return None
         try:
             import json
+
             # Strip markdown code block if present
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]

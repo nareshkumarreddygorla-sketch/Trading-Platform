@@ -3,6 +3,7 @@ Example model training pipeline: load features from feature store (or CSV),
 train XGBoost classifier, return model and metrics for registry.
 Used by RetrainPipeline train_fn. Walk-forward validation in backtest layer.
 """
+
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -71,6 +72,7 @@ def run_example_training(
     """
     if data_path and data_path.exists():
         import json
+
         with open(data_path) as f:
             vectors = json.load(f)
         X, y, names = load_feature_matrix(vectors, target_col="target")

@@ -6,13 +6,12 @@ QA Phase 5 & 6 — AI validation, capital gate, adversarial.
 18) Capital gate: stress/restart false → ok=false; manual paper still allowed.
 19) Adversarial: feed die + broker spike + Redis down + drawdown + restart.
 """
+
 import pytest
 
-from src.ai.feature_engine import FeatureEngine
 from src.ai.alpha_model import AlphaModel
-from src.core.events import Bar, Exchange, OrderType, OrderStatus, Signal, SignalSide
-from datetime import datetime, timezone
 from src.api.capital_gate import CapitalGate
+from src.core.events import Exchange, OrderStatus, OrderType, Signal, SignalSide
 
 
 # --- 15) Deterministic model ---
@@ -33,13 +32,21 @@ def test_ai_deterministic_same_features_same_signal():
 def test_confidence_exactly_threshold_consistent():
     """Confidence exactly at min_confidence → consistent include/exclude."""
     from src.ai.portfolio_allocator import PortfolioAllocator
+    from src.core.events import Signal, SignalSide
     from src.risk_engine import RiskManager
     from src.risk_engine.limits import RiskLimits
-    from src.core.events import Signal, SignalSide
 
     rm = RiskManager(equity=100_000.0, limits=RiskLimits(max_open_positions=5, max_position_pct=10.0))
     allocator = PortfolioAllocator(rm, min_confidence=0.5)
-    sig = Signal(strategy_id="s1", symbol="R", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.5, portfolio_weight=0.1, price=100.0)
+    sig = Signal(
+        strategy_id="s1",
+        symbol="R",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.5,
+        portfolio_weight=0.1,
+        price=100.0,
+    )
     result = allocator.allocate([sig], 100_000.0, [])
     assert isinstance(result, list)
     assert len(result) <= 1
@@ -83,17 +90,18 @@ async def test_capital_validate_true_when_all_passed():
 @pytest.mark.asyncio
 async def test_adversarial_circuit_plus_idempotency_no_bypass():
     """Drawdown breach (circuit open) + idempotency: no order must reach broker."""
-    from src.risk_engine import RiskManager
-    from src.risk_engine.limits import RiskLimits
-    from src.risk_engine.circuit_breaker import CircuitBreaker
-    from src.execution.order_entry.kill_switch import KillSwitch
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.execution.lifecycle import OrderLifecycle
     from src.execution.order_entry import OrderEntryService
     from src.execution.order_entry.idempotency import IdempotencyStore
+    from src.execution.order_entry.kill_switch import KillSwitch
     from src.execution.order_entry.request import OrderEntryRequest
     from src.execution.order_entry.reservation import ExposureReservation
     from src.execution.order_router import OrderRouter
-    from src.execution.lifecycle import OrderLifecycle
-    from unittest.mock import MagicMock, AsyncMock
+    from src.risk_engine import RiskManager
+    from src.risk_engine.circuit_breaker import CircuitBreaker
+    from src.risk_engine.limits import RiskLimits
 
     limits = RiskLimits(max_open_positions=5, circuit_breaker_drawdown_pct=5.0)
     rm = RiskManager(equity=100_000.0, limits=limits)
@@ -104,7 +112,9 @@ async def test_adversarial_circuit_plus_idempotency_no_bypass():
     assert rm.is_circuit_open()
 
     gateway = MagicMock()
-    gateway.place_order = AsyncMock(return_value=MagicMock(order_id="x", broker_order_id="x", status=OrderStatus.LIVE, filled_qty=0, avg_price=None))
+    gateway.place_order = AsyncMock(
+        return_value=MagicMock(order_id="x", broker_order_id="x", status=OrderStatus.LIVE, filled_qty=0, avg_price=None)
+    )
     idempotency_store = IdempotencyStore(redis_url="redis://localhost:6379/0")
     try:
         if not await idempotency_store.is_available():
@@ -120,8 +130,23 @@ async def test_adversarial_circuit_plus_idempotency_no_bypass():
         kill_switch=KillSwitch(),
         reservation=ExposureReservation(),
     )
-    sig = Signal(strategy_id="s1", symbol="R", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.9, portfolio_weight=0.1, price=100.0)
-    req = OrderEntryRequest(signal=sig, quantity=10, order_type=OrderType.LIMIT, limit_price=100.0, idempotency_key="qa_adv_001", source="qa")
+    sig = Signal(
+        strategy_id="s1",
+        symbol="R",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.9,
+        portfolio_weight=0.1,
+        price=100.0,
+    )
+    req = OrderEntryRequest(
+        signal=sig,
+        quantity=10,
+        order_type=OrderType.LIMIT,
+        limit_price=100.0,
+        idempotency_key="qa_adv_001",
+        source="qa",
+    )
     result = await service.submit_order(req)
     assert result.success is False
     assert gateway.place_order.await_count == 0
