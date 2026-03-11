@@ -710,7 +710,7 @@ class OrderRouter:
                 # Best-effort cancel of already-submitted children
                 for prev_order in successful_children:
                     try:
-                        gw = self._broker_manager.route_exchange(exchange)
+                        gw = self._gateway(exchange)
                         if gw is not None:
                             await gw.cancel_order(prev_order.order_id)
                             logger.info(
