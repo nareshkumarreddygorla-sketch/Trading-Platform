@@ -11,6 +11,7 @@ Pipeline:
 
 Usage: python -m scripts.nightly_autonomous_pipeline
 """
+
 import asyncio
 import logging
 import sys
@@ -35,6 +36,7 @@ async def step_1_data_refresh():
     logger.info("=" * 50)
     try:
         from scripts.nightly_data_refresh import main as data_main
+
         quality = await data_main()
         return quality
     except Exception as e:
@@ -49,6 +51,7 @@ async def step_2_nightly_simulation(symbols: list = None):
     logger.info("=" * 50)
     try:
         from src.simulation.orchestrator import SimulationOrchestrator
+
         orch = SimulationOrchestrator(max_workers=4, top_n=5)
         results = await orch.run_nightly_pipeline(
             symbols=symbols,
@@ -61,8 +64,7 @@ async def step_2_nightly_simulation(symbols: list = None):
             "selected_count": len(selected),
             "top_sharpe": results[0].sharpe_ratio if results else 0,
             "selected": [
-                {"strategy": s.strategy_id, "sharpe": s.sharpe_ratio, "win_rate": s.win_rate}
-                for s in selected
+                {"strategy": s.strategy_id, "sharpe": s.sharpe_ratio, "win_rate": s.win_rate} for s in selected
             ],
         }
     except Exception as e:
@@ -84,6 +86,7 @@ async def step_3_model_retraining():
             logger.info("No trained models found, triggering training")
             # Run XGBoost training
             from scripts.train_alpha_model import main as train_main
+
             train_main()
             return {"action": "trained", "reason": "no_models_found"}
 
@@ -94,6 +97,7 @@ async def step_3_model_retraining():
         if model_age_days > 7:
             logger.info("Model is %d days old, triggering retrain", model_age_days)
             from scripts.train_alpha_model import main as train_main
+
             train_main()
             return {"action": "retrained", "reason": f"model_age_{model_age_days}d"}
 
@@ -144,8 +148,7 @@ async def main():
     """Run the full nightly autonomous pipeline."""
     start = datetime.now()
     logger.info("=" * 60)
-    logger.info("AUTONOMOUS NIGHTLY PIPELINE - %s IST",
-                 datetime.now(_IST).strftime("%Y-%m-%d %H:%M"))
+    logger.info("AUTONOMOUS NIGHTLY PIPELINE - %s IST", datetime.now(_IST).strftime("%Y-%m-%d %H:%M"))
     logger.info("=" * 60)
 
     results = {}
@@ -175,9 +178,11 @@ async def main():
     logger.info("Data:       %s", "PASS" if results["data"].get("quality_pass") else "FAIL")
     logger.info("Simulation: %s selected", results["simulation"].get("selected_count", "N/A"))
     logger.info("Training:   %s", results["training"].get("action", "N/A"))
-    logger.info("Pre-Market: %s outlook, %.1fx exposure",
-                 results["pre_market"].get("outlook", "N/A"),
-                 results["pre_market"].get("exposure", 1.0))
+    logger.info(
+        "Pre-Market: %s outlook, %.1fx exposure",
+        results["pre_market"].get("outlook", "N/A"),
+        results["pre_market"].get("exposure", 1.0),
+    )
     logger.info("=" * 60)
 
     return results

@@ -4,6 +4,7 @@ Run the Alpha Research & Edge Discovery pipeline end-to-end.
 Uses synthetic data if no feature store / backtest; otherwise wire run_backtest_fn.
 Usage: PYTHONPATH=. python scripts/run_alpha_research.py
 """
+
 import logging
 import sys
 from pathlib import Path
@@ -68,6 +69,7 @@ def main() -> None:
         signal_matrix[c.hypothesis_id] = np.asarray(signal_matrix[keys[i]], dtype=float)
     # Sanity: IC of first synthetic signal vs forward_returns
     from src.ai.alpha_research.validation.ic import ic_rank
+
     first_sig = signal_matrix.get(keys[0])
     if first_sig is not None and len(first_sig) == len(forward_returns):
         ic0 = ic_rank(np.asarray(first_sig), forward_returns)
@@ -136,8 +138,15 @@ def main() -> None:
         if with_ic:
             v0 = with_ic[0]
             ic = v0.ic_result
-            logger.info("Sample: %s reason=%s ic_mean=%.4f p_value=%.4f e_net=%.6f n_wf=%d",
-                v0.signal_id, v0.reason, ic.ic_mean, ic.p_value, v0.e_return_after_cost, v0.n_wf_positive)
+            logger.info(
+                "Sample: %s reason=%s ic_mean=%.4f p_value=%.4f e_net=%.6f n_wf=%d",
+                v0.signal_id,
+                v0.reason,
+                ic.ic_mean,
+                ic.p_value,
+                v0.e_return_after_cost,
+                v0.n_wf_positive,
+            )
 
     ranked = pipeline.run_scoring(
         capacity_scores={v.signal_id: 0.6 for v in validated if v.passed},

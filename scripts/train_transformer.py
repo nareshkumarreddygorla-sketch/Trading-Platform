@@ -18,6 +18,7 @@ Usage:
     PYTHONPATH=. python scripts/train_transformer.py --epochs 30
     PYTHONPATH=. python scripts/train_transformer.py --symbols RELIANCE.NS,TCS.NS
 """
+
 import argparse
 import json
 import logging
@@ -44,8 +45,16 @@ MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
 # Quick mode tickers (same as LSTM training)
 QUICK_TICKERS = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "SBIN.NS", "ITC.NS", "HCLTECH.NS", "WIPRO.NS", "LT.NS",
+    "RELIANCE.NS",
+    "TCS.NS",
+    "HDFCBANK.NS",
+    "INFY.NS",
+    "ICICIBANK.NS",
+    "SBIN.NS",
+    "ITC.NS",
+    "HCLTECH.NS",
+    "WIPRO.NS",
+    "LT.NS",
 ]
 
 
@@ -55,6 +64,7 @@ QUICK_TICKERS = [
 @dataclass
 class WindowMetrics:
     """Metrics for a single walk-forward window."""
+
     window_idx: int
     train_start: str
     train_end: str
@@ -72,6 +82,7 @@ class WindowMetrics:
 @dataclass
 class TrainingReport:
     """Aggregate training report across all walk-forward windows."""
+
     model_version: str
     timestamp: str
     total_windows: int
@@ -124,17 +135,23 @@ def walk_forward_train(
     n_windows = (n_samples - train_window) // test_window
     if n_windows < 1:
         logger.error(
-            "Not enough data for walk-forward: %d samples, need at least %d "
-            "(train=%d + test=%d)",
-            n_samples, train_window + test_window, train_window, test_window,
+            "Not enough data for walk-forward: %d samples, need at least %d (train=%d + test=%d)",
+            n_samples,
+            train_window + test_window,
+            train_window,
+            test_window,
         )
         sys.exit(1)
 
     logger.info(
         "Walk-forward: %d windows (train=%d, test=%d, total samples=%d, "
         "epochs_per_window=%d, early_stopping_patience=%d)",
-        n_windows, train_window, test_window, n_samples,
-        epochs_per_window, early_stopping_patience,
+        n_windows,
+        train_window,
+        test_window,
+        n_samples,
+        epochs_per_window,
+        early_stopping_patience,
     )
 
     # Initialize model
@@ -185,19 +202,18 @@ def walk_forward_train(
         X_test_norm = np.clip((X_test - means) / stds, -5.0, 5.0)
 
         # DataLoaders
-        train_ds = TensorDataset(
-            torch.FloatTensor(X_train_norm), torch.FloatTensor(y_train)
-        )
+        train_ds = TensorDataset(torch.FloatTensor(X_train_norm), torch.FloatTensor(y_train))
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
 
         # Optimizer (fresh per window with warm-started weights)
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=learning_rate, weight_decay=1e-5
-        )
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
         # Cosine annealing LR schedule with warm restarts per window
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=max(1, epochs_per_window // 3), T_mult=2, eta_min=1e-6,
+            optimizer,
+            T_0=max(1, epochs_per_window // 3),
+            T_mult=2,
+            eta_min=1e-6,
         )
 
         # Early stopping state for this window
@@ -243,7 +259,11 @@ def walk_forward_train(
                 if patience_counter >= early_stopping_patience:
                     logger.debug(
                         "Window %d: early stopping at epoch %d/%d (val_loss=%.4f, best=%.4f)",
-                        w, epoch + 1, epochs_per_window, val_loss, best_window_loss,
+                        w,
+                        epoch + 1,
+                        epochs_per_window,
+                        val_loss,
+                        best_window_loss,
                     )
                     break
 
@@ -298,10 +318,15 @@ def walk_forward_train(
 
         if (w + 1) % 5 == 0 or w == 0 or w == n_windows - 1:
             logger.info(
-                "Window %3d/%d — train_loss=%.4f test_loss=%.4f "
-                "train_acc=%.3f test_acc=%.3f IC=%.4f (avg_recent=%.4f)",
-                w + 1, n_windows, final_train_loss, test_loss,
-                train_accuracy, test_accuracy, ic, avg_recent_ic,
+                "Window %3d/%d — train_loss=%.4f test_loss=%.4f train_acc=%.3f test_acc=%.3f IC=%.4f (avg_recent=%.4f)",
+                w + 1,
+                n_windows,
+                final_train_loss,
+                test_loss,
+                train_accuracy,
+                test_accuracy,
+                ic,
+                avg_recent_ic,
             )
 
     return best_state, window_metrics, best_means, best_stds
@@ -351,9 +376,12 @@ def train(
         train_window = 40
         test_window = 5
         logger.info(
-            "QUICK MODE: %d symbols, period=%s, epochs=%d, "
-            "train_window=%d, test_window=%d",
-            len(symbols), period, epochs, train_window, test_window,
+            "QUICK MODE: %d symbols, period=%s, epochs=%d, train_window=%d, test_window=%d",
+            len(symbols),
+            period,
+            epochs,
+            train_window,
+            test_window,
         )
     else:
         period = "2y"
@@ -374,9 +402,10 @@ def train(
 
     if len(X) < train_window + test_window:
         logger.error(
-            "Insufficient sequences (%d) for walk-forward with "
-            "train_window=%d + test_window=%d.",
-            len(X), train_window, test_window,
+            "Insufficient sequences (%d) for walk-forward with train_window=%d + test_window=%d.",
+            len(X),
+            train_window,
+            test_window,
         )
         return
 
@@ -387,7 +416,8 @@ def train(
     logger.info("STEP 3: Walk-forward training (Transformer)")
     logger.info("=" * 70)
     best_state, window_metrics, best_means, best_stds = walk_forward_train(
-        X, y,
+        X,
+        y,
         train_window=train_window,
         test_window=test_window,
         epochs_per_window=epochs,
@@ -458,15 +488,14 @@ def train(
     logger.info("-" * 70)
     logger.info("Avg Train Loss:      %.4f", report.avg_train_loss)
     logger.info("Avg Test Loss:       %.4f", report.avg_test_loss)
-    logger.info("Avg Train Accuracy:  %.3f (%.1f%%)", report.avg_train_accuracy,
-                report.avg_train_accuracy * 100)
-    logger.info("Avg Test Accuracy:   %.3f (%.1f%%)", report.avg_test_accuracy,
-                report.avg_test_accuracy * 100)
+    logger.info("Avg Train Accuracy:  %.3f (%.1f%%)", report.avg_train_accuracy, report.avg_train_accuracy * 100)
+    logger.info("Avg Test Accuracy:   %.3f (%.1f%%)", report.avg_test_accuracy, report.avg_test_accuracy * 100)
     logger.info("-" * 70)
     logger.info("Avg IC:              %.4f", report.avg_ic)
     logger.info("IC Std Dev:          %.4f", report.ic_std)
-    logger.info("Stability Score:     %.3f (%.0f%% of windows IC > 0)",
-                report.stability_score, report.stability_score * 100)
+    logger.info(
+        "Stability Score:     %.3f (%.0f%% of windows IC > 0)", report.stability_score, report.stability_score * 100
+    )
     logger.info("-" * 70)
     logger.info("Training Time:       %.1f seconds", report.total_training_time_sec)
     logger.info("=" * 70)
@@ -545,20 +574,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train Transformer predictor with walk-forward validation.",
     )
-    parser.add_argument("--epochs", type=int, default=30,
-                        help="Epochs per walk-forward window (default: 30).")
-    parser.add_argument("--batch-size", type=int, default=64,
-                        help="Training batch size (default: 64).")
-    parser.add_argument("--lr", type=float, default=0.0005,
-                        help="Learning rate (default: 0.0005).")
-    parser.add_argument("--symbols", type=str, default=None,
-                        help="Comma-separated list of Yahoo Finance tickers.")
-    parser.add_argument("--quick", action="store_true",
-                        help="Quick mode: fewer symbols, smaller windows.")
-    parser.add_argument("--train-window", type=int, default=60,
-                        help="Walk-forward training window size (default: 60).")
-    parser.add_argument("--test-window", type=int, default=10,
-                        help="Walk-forward test window size (default: 10).")
+    parser.add_argument("--epochs", type=int, default=30, help="Epochs per walk-forward window (default: 30).")
+    parser.add_argument("--batch-size", type=int, default=64, help="Training batch size (default: 64).")
+    parser.add_argument("--lr", type=float, default=0.0005, help="Learning rate (default: 0.0005).")
+    parser.add_argument("--symbols", type=str, default=None, help="Comma-separated list of Yahoo Finance tickers.")
+    parser.add_argument("--quick", action="store_true", help="Quick mode: fewer symbols, smaller windows.")
+    parser.add_argument("--train-window", type=int, default=60, help="Walk-forward training window size (default: 60).")
+    parser.add_argument("--test-window", type=int, default=10, help="Walk-forward test window size (default: 10).")
     args = parser.parse_args()
 
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()] if args.symbols else None

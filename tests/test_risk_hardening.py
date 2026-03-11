@@ -72,7 +72,9 @@ def test_leverage_breach_rejection(limits):
     limits.max_per_symbol_pct = 100.0
     rm = RiskManager(equity=100_000.0, limits=limits)
     rm.positions = [
-        Position(symbol="X", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=1500, avg_price=100, strategy_id="s1"),
+        Position(
+            symbol="X", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=1500, avg_price=100, strategy_id="s1"
+        ),
     ]
     # 150k notional existing. Add 60k -> 210k = 210% > 200% leverage limit
     sig = Signal(

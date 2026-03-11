@@ -5,6 +5,7 @@ Revises: 003
 Create Date: 2026-03-09
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -32,8 +33,7 @@ def upgrade() -> None:
         sa.Column("volume", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("symbol", "exchange", "interval", "timestamp",
-                            name="uq_ohlcv_symbol_exchange_interval_ts"),
+        sa.UniqueConstraint("symbol", "exchange", "interval", "timestamp", name="uq_ohlcv_symbol_exchange_interval_ts"),
     )
     op.create_index("ix_ohlcv_symbol_interval_ts", "ohlcv_bars", ["symbol", "interval", "timestamp"])
     op.create_index("ix_ohlcv_timestamp", "ohlcv_bars", ["timestamp"])

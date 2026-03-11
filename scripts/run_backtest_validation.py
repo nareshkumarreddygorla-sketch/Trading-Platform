@@ -6,6 +6,7 @@ Runs backtests on real historical data and outputs metrics.
 Usage:
     PYTHONPATH=. python3 scripts/run_backtest_validation.py
 """
+
 import logging
 import os
 import sys
@@ -25,8 +26,16 @@ MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
 # Top stocks to validate against
 VALIDATION_SYMBOLS = [
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-    "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT",
+    "RELIANCE",
+    "TCS",
+    "HDFCBANK",
+    "INFY",
+    "ICICIBANK",
+    "SBIN",
+    "BHARTIARTL",
+    "ITC",
+    "KOTAKBANK",
+    "LT",
 ]
 
 
@@ -49,17 +58,19 @@ def load_bars_from_parquet(symbol: str):
             ts = pd.Timestamp(idx)
             if ts.tzinfo is None:
                 ts = ts.tz_localize("UTC")
-            bars.append(Bar(
-                symbol=symbol,
-                exchange=Exchange.NSE,
-                interval="1d",
-                open=float(row.get("open", row.get("Open", 0))),
-                high=float(row.get("high", row.get("High", 0))),
-                low=float(row.get("low", row.get("Low", 0))),
-                close=float(row.get("close", row.get("Close", 0))),
-                volume=float(row.get("volume", row.get("Volume", 0))),
-                ts=ts.to_pydatetime(),
-            ))
+            bars.append(
+                Bar(
+                    symbol=symbol,
+                    exchange=Exchange.NSE,
+                    interval="1d",
+                    open=float(row.get("open", row.get("Open", 0))),
+                    high=float(row.get("high", row.get("High", 0))),
+                    low=float(row.get("low", row.get("Low", 0))),
+                    close=float(row.get("close", row.get("Close", 0))),
+                    volume=float(row.get("volume", row.get("Volume", 0))),
+                    ts=ts.to_pydatetime(),
+                )
+            )
         except Exception as e:
             logger.debug("Bar parse error for %s: %s", symbol, e)
             continue
@@ -84,7 +95,9 @@ def run_strategy_backtest(strategy, bars, symbol):
 
 def main():
     from src.strategy_engine.classical import (
-        EMACrossoverStrategy, MACDStrategy, RSIStrategy,
+        EMACrossoverStrategy,
+        MACDStrategy,
+        RSIStrategy,
     )
     from src.ai.alpha_model import AlphaStrategy, AlphaModel
 
@@ -139,10 +152,10 @@ def main():
             result = run_strategy_backtest(strategy, bars, symbol)
             if result.metrics:
                 m = result.metrics
-                ret = getattr(m, 'total_return_pct', 0) or 0
-                sharpe = getattr(m, 'sharpe', 0) or 0
-                n_trades = getattr(m, 'num_trades', len(result.trades))
-                win_rate = getattr(m, 'win_rate_pct', 0) or 0
+                ret = getattr(m, "total_return_pct", 0) or 0
+                sharpe = getattr(m, "sharpe", 0) or 0
+                n_trades = getattr(m, "num_trades", len(result.trades))
+                win_rate = getattr(m, "win_rate_pct", 0) or 0
 
                 all_returns.append(ret)
                 all_sharpe.append(sharpe)
@@ -181,9 +194,15 @@ def main():
             logger.info("  %-20s — %s", name, metrics["error"])
         else:
             verdict = "PASS" if metrics["avg_return_pct"] > -5 and metrics["total_trades"] > 0 else "FAIL"
-            logger.info("  %-20s  ret=%+.1f%%  sharpe=%.2f  trades=%d  win=%.0f%%  [%s]",
-                        name, metrics["avg_return_pct"], metrics["avg_sharpe"],
-                        metrics["total_trades"], metrics["avg_win_rate"], verdict)
+            logger.info(
+                "  %-20s  ret=%+.1f%%  sharpe=%.2f  trades=%d  win=%.0f%%  [%s]",
+                name,
+                metrics["avg_return_pct"],
+                metrics["avg_sharpe"],
+                metrics["total_trades"],
+                metrics["avg_win_rate"],
+                verdict,
+            )
 
 
 if __name__ == "__main__":

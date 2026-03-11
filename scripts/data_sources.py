@@ -14,6 +14,7 @@ Usage:
     dd = DataDownloader()
     df = dd.download("RELIANCE", period="5y", interval="1d")
 """
+
 import logging
 import os
 import time
@@ -32,11 +33,13 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "data", "nse_historical")
 # ═══════════════════════════════════════════════════════════════════════════
 class YFinanceSource:
     """Yahoo Finance via yfinance library. Best for daily data (2+ years)."""
+
     name = "yfinance"
 
     def __init__(self):
         try:
             import yfinance
+
             self._yf = yfinance
             self.available = True
         except ImportError:
@@ -65,8 +68,7 @@ class YFinanceSource:
             logger.debug("YFinance failed for %s: %s", symbol, e)
             return pd.DataFrame()
 
-    def download_bulk(self, symbols: List[str], period: str = "2y",
-                      interval: str = "1d") -> Dict[str, pd.DataFrame]:
+    def download_bulk(self, symbols: List[str], period: str = "2y", interval: str = "1d") -> Dict[str, pd.DataFrame]:
         """Download multiple symbols efficiently using yfinance batch."""
         if not self.available:
             return {}
@@ -75,8 +77,12 @@ class YFinanceSource:
         try:
             # Batch download (much faster)
             data = self._yf.download(
-                yf_symbols, period=period, interval=interval,
-                group_by="ticker", threads=True, progress=False,
+                yf_symbols,
+                period=period,
+                interval=interval,
+                group_by="ticker",
+                threads=True,
+                progress=False,
             )
             for orig_sym, yf_sym in zip(symbols, yf_symbols):
                 try:
@@ -107,6 +113,7 @@ class YFinanceSource:
 # ═══════════════════════════════════════════════════════════════════════════
 class AlphaVantageSource:
     """Alpha Vantage API. Best for long history (20+ years daily)."""
+
     name = "alpha_vantage"
 
     def __init__(self, api_key: str = ""):
@@ -143,14 +150,16 @@ class AlphaVantageSource:
 
             records = []
             for date_str, vals in data[ts_key].items():
-                records.append({
-                    "timestamp": pd.Timestamp(date_str),
-                    "open": float(vals["1. open"]),
-                    "high": float(vals["2. high"]),
-                    "low": float(vals["3. low"]),
-                    "close": float(vals["4. close"]),
-                    "volume": float(vals["5. volume"]),
-                })
+                records.append(
+                    {
+                        "timestamp": pd.Timestamp(date_str),
+                        "open": float(vals["1. open"]),
+                        "high": float(vals["2. high"]),
+                        "low": float(vals["3. low"]),
+                        "close": float(vals["4. close"]),
+                        "volume": float(vals["5. volume"]),
+                    }
+                )
 
             df = pd.DataFrame(records)
             df.set_index("timestamp", inplace=True)
@@ -205,8 +214,7 @@ class DataDownloader:
         logger.warning("All sources failed for %s", symbol)
         return pd.DataFrame()
 
-    def download_all(self, symbols: List[str], period: str = "2y",
-                     interval: str = "1d") -> Dict[str, pd.DataFrame]:
+    def download_all(self, symbols: List[str], period: str = "2y", interval: str = "1d") -> Dict[str, pd.DataFrame]:
         """Download all symbols, using bulk download when possible."""
         results = {}
 
@@ -219,8 +227,9 @@ class DataDownloader:
                 remaining = [s for s in symbols if s not in results]
                 if not remaining:
                     break
-                logger.info("Bulk got %d/%d, downloading remaining %d individually",
-                            len(bulk), len(symbols), len(remaining))
+                logger.info(
+                    "Bulk got %d/%d, downloading remaining %d individually", len(bulk), len(symbols), len(remaining)
+                )
                 symbols = remaining
 
         # Fall back to individual downloads for remaining
@@ -245,20 +254,76 @@ INDEX_SYMBOLS = ["^NSEI", "^NSEBANK"]  # Nifty 50 + Bank Nifty (always needed)
 
 # Fallback list — ONLY used when dynamic fetch fails (offline/network error)
 _FALLBACK_SYMBOLS = [
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-    "HINDUNILVR", "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK",
-    "LT", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
-    "TITAN", "SUNPHARMA", "ULTRACEMCO", "WIPRO", "HCLTECH",
-    "NESTLEIND", "BAJAJFINSV", "ONGC", "NTPC", "POWERGRID",
-    "ADANIENT", "ADANIPORTS", "JSWSTEEL", "TATAMOTORS", "TATASTEEL",
-    "TECHM", "INDUSINDBK", "HINDALCO", "COALINDIA", "DRREDDY",
-    "DIVISLAB", "GRASIM", "CIPLA", "EICHERMOT", "APOLLOHOSP",
-    "HEROMOTOCO", "BPCL", "BRITANNIA", "TATACONSUM", "SBILIFE",
-    "HDFCLIFE", "M&M", "UPL", "BAJAJ-AUTO", "SHREECEM",
-    "BANKBARODA", "PNB", "IOC", "GAIL", "VEDL",
-    "HAVELLS", "PIDILITIND", "DABUR", "GODREJCP", "MARICO",
-    "BERGEPAINT", "ICICIPRULI", "COLPAL", "NAUKRI", "MUTHOOTFIN",
-    "CHOLAFIN", "TATAPOWER", "DLF", "SIEMENS", "ABB",
+    "RELIANCE",
+    "TCS",
+    "HDFCBANK",
+    "INFY",
+    "ICICIBANK",
+    "HINDUNILVR",
+    "SBIN",
+    "BHARTIARTL",
+    "ITC",
+    "KOTAKBANK",
+    "LT",
+    "AXISBANK",
+    "BAJFINANCE",
+    "ASIANPAINT",
+    "MARUTI",
+    "TITAN",
+    "SUNPHARMA",
+    "ULTRACEMCO",
+    "WIPRO",
+    "HCLTECH",
+    "NESTLEIND",
+    "BAJAJFINSV",
+    "ONGC",
+    "NTPC",
+    "POWERGRID",
+    "ADANIENT",
+    "ADANIPORTS",
+    "JSWSTEEL",
+    "TATAMOTORS",
+    "TATASTEEL",
+    "TECHM",
+    "INDUSINDBK",
+    "HINDALCO",
+    "COALINDIA",
+    "DRREDDY",
+    "DIVISLAB",
+    "GRASIM",
+    "CIPLA",
+    "EICHERMOT",
+    "APOLLOHOSP",
+    "HEROMOTOCO",
+    "BPCL",
+    "BRITANNIA",
+    "TATACONSUM",
+    "SBILIFE",
+    "HDFCLIFE",
+    "M&M",
+    "UPL",
+    "BAJAJ-AUTO",
+    "SHREECEM",
+    "BANKBARODA",
+    "PNB",
+    "IOC",
+    "GAIL",
+    "VEDL",
+    "HAVELLS",
+    "PIDILITIND",
+    "DABUR",
+    "GODREJCP",
+    "MARICO",
+    "BERGEPAINT",
+    "ICICIPRULI",
+    "COLPAL",
+    "NAUKRI",
+    "MUTHOOTFIN",
+    "CHOLAFIN",
+    "TATAPOWER",
+    "DLF",
+    "SIEMENS",
+    "ABB",
 ]
 
 
@@ -282,6 +347,7 @@ def get_dynamic_symbols(count: int = 300) -> list:
     # Dynamic scan
     try:
         from src.scanner.dynamic_universe import get_dynamic_universe
+
         universe = get_dynamic_universe()
         symbols = universe.get_tradeable_stocks(count=count)
         if symbols:

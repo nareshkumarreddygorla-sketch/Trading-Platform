@@ -35,6 +35,7 @@ Configurable via env vars (CLI args take precedence):
     MIN_RETURN_PCT     minimum return % for positive label (default: adaptive)
     MODEL_DIR          output directory (default: models/)
 """
+
 import argparse
 import json
 import logging
@@ -51,6 +52,7 @@ import pandas as pd
 # Optional: Optuna for hyperparameter optimization
 try:
     import optuna
+
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     OPTUNA_AVAILABLE = True
 except ImportError:
@@ -69,16 +71,56 @@ logger = logging.getLogger("train_alpha_model")
 # Configuration
 # ---------------------------------------------------------------------------
 _NIFTY50_DEFAULT = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
-    "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS", "BAJFINANCE.NS",
-    "HCLTECH.NS", "SUNPHARMA.NS", "TITAN.NS", "WIPRO.NS", "ULTRACEMCO.NS",
-    "TATAMOTORS.NS", "NESTLEIND.NS", "ONGC.NS", "NTPC.NS", "POWERGRID.NS",
-    "M&M.NS", "JSWSTEEL.NS", "TATASTEEL.NS", "ADANIENT.NS", "ADANIPORTS.NS",
-    "TECHM.NS", "INDUSINDBK.NS", "BAJAJFINSV.NS", "HDFCLIFE.NS", "SBILIFE.NS",
-    "GRASIM.NS", "DIVISLAB.NS", "BRITANNIA.NS", "CIPLA.NS", "EICHERMOT.NS",
-    "DRREDDY.NS", "APOLLOHOSP.NS", "COALINDIA.NS", "BPCL.NS", "TATACONSUM.NS",
-    "HEROMOTOCO.NS", "UPL.NS", "BAJAJ-AUTO.NS", "HINDALCO.NS", "LTIM.NS",
+    "RELIANCE.NS",
+    "TCS.NS",
+    "HDFCBANK.NS",
+    "INFY.NS",
+    "ICICIBANK.NS",
+    "HINDUNILVR.NS",
+    "ITC.NS",
+    "SBIN.NS",
+    "BHARTIARTL.NS",
+    "KOTAKBANK.NS",
+    "LT.NS",
+    "AXISBANK.NS",
+    "ASIANPAINT.NS",
+    "MARUTI.NS",
+    "BAJFINANCE.NS",
+    "HCLTECH.NS",
+    "SUNPHARMA.NS",
+    "TITAN.NS",
+    "WIPRO.NS",
+    "ULTRACEMCO.NS",
+    "TATAMOTORS.NS",
+    "NESTLEIND.NS",
+    "ONGC.NS",
+    "NTPC.NS",
+    "POWERGRID.NS",
+    "M&M.NS",
+    "JSWSTEEL.NS",
+    "TATASTEEL.NS",
+    "ADANIENT.NS",
+    "ADANIPORTS.NS",
+    "TECHM.NS",
+    "INDUSINDBK.NS",
+    "BAJAJFINSV.NS",
+    "HDFCLIFE.NS",
+    "SBILIFE.NS",
+    "GRASIM.NS",
+    "DIVISLAB.NS",
+    "BRITANNIA.NS",
+    "CIPLA.NS",
+    "EICHERMOT.NS",
+    "DRREDDY.NS",
+    "APOLLOHOSP.NS",
+    "COALINDIA.NS",
+    "BPCL.NS",
+    "TATACONSUM.NS",
+    "HEROMOTOCO.NS",
+    "UPL.NS",
+    "BAJAJ-AUTO.NS",
+    "HINDALCO.NS",
+    "LTIM.NS",
 ]
 
 INTERVAL = os.environ.get("TRAIN_INTERVAL", "5m")
@@ -88,9 +130,7 @@ MODEL_DIR = Path(os.environ.get("MODEL_DIR", "models"))
 
 def _parse_args() -> argparse.Namespace:
     """Parse CLI arguments (take precedence over env vars)."""
-    parser = argparse.ArgumentParser(
-        description="Train production-grade XGBoost alpha model"
-    )
+    parser = argparse.ArgumentParser(description="Train production-grade XGBoost alpha model")
     parser.add_argument(
         "--symbols-count",
         type=int,
@@ -118,6 +158,7 @@ def _resolve_symbols(symbols_count: int) -> list:
     if env_val.strip().lower() == "all":
         try:
             from src.scanner.nse_universe import get_universe
+
             symbols = get_universe(yfinance_suffix=True)
             logger.info("Using full NSE universe: %d symbols", len(symbols))
             return symbols
@@ -142,8 +183,13 @@ def fetch_data_batch(symbols: list, period: str) -> Dict[str, pd.DataFrame]:
     batch_size = 50
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i : i + batch_size]
-        logger.info("Fetching batch %d-%d / %d  (%d symbols)",
-                    i + 1, min(i + batch_size, len(symbols)), len(symbols), len(batch))
+        logger.info(
+            "Fetching batch %d-%d / %d  (%d symbols)",
+            i + 1,
+            min(i + batch_size, len(symbols)),
+            len(symbols),
+            len(batch),
+        )
         try:
             data = yf.download(
                 batch,
@@ -193,6 +239,7 @@ def fetch_market_context_data() -> Dict[str, float]:
     """Fetch NIFTY50 context features for training enrichment."""
     try:
         from src.ai.market_context import fetch_market_context
+
         return fetch_market_context(interval=INTERVAL, period="120d")
     except Exception as e:
         logger.debug("Market context unavailable for training: %s", e)
@@ -232,18 +279,15 @@ def compute_adaptive_min_return(
         all_returns.extend(np.abs(fwd_returns).tolist())
 
     if len(all_returns) < 100:
-        logger.warning(
-            "Insufficient data for adaptive threshold (%d returns), "
-            "falling back to 0.3%%", len(all_returns)
-        )
+        logger.warning("Insufficient data for adaptive threshold (%d returns), falling back to 0.3%%", len(all_returns))
         return 0.3
 
     median_abs_return = np.median(all_returns) * 100.0  # convert to percentage
     threshold = 0.5 * median_abs_return
     logger.info(
-        "Adaptive MIN_RETURN_PCT: median |5-bar return| = %.4f%%, "
-        "threshold = 0.5x = %.4f%%",
-        median_abs_return, threshold,
+        "Adaptive MIN_RETURN_PCT: median |5-bar return| = %.4f%%, threshold = 0.5x = %.4f%%",
+        median_abs_return,
+        threshold,
     )
     return threshold
 
@@ -419,7 +463,8 @@ def objective(
         w_tr = sample_weights[train_idx]
 
         model.fit(
-            X_tr, y_tr,
+            X_tr,
+            y_tr,
             sample_weight=w_tr,
             eval_set=[(X_val, y_val)],
             verbose=False,
@@ -442,8 +487,7 @@ def run_optuna_optimization(
     """Run Optuna HPO and return best XGBoost params."""
     if not OPTUNA_AVAILABLE:
         logger.warning(
-            "Optuna not installed — falling back to hardcoded hyperparameters. "
-            "Install with: pip install optuna>=3.0.0"
+            "Optuna not installed — falling back to hardcoded hyperparameters. Install with: pip install optuna>=3.0.0"
         )
         return {
             "max_depth": 5,
@@ -482,8 +526,7 @@ def train_model(
     from xgboost import XGBClassifier
     from scipy.stats import spearmanr
 
-    logger.info("Training ensemble  X=%s  class balance: %.2f%% positive",
-                X.shape, y.mean() * 100)
+    logger.info("Training ensemble  X=%s  class balance: %.2f%% positive", X.shape, y.mean() * 100)
 
     # ── XGBoost with Optuna-tuned params ──
     xgb_model = XGBClassifier(
@@ -500,6 +543,7 @@ def train_model(
     lgb_model = None
     try:
         from lightgbm import LGBMClassifier
+
         lgb_model = LGBMClassifier(
             n_estimators=500,
             max_depth=xgb_params.get("max_depth", 5),
@@ -528,8 +572,7 @@ def train_model(
         w_tr = sample_weights[train_idx]
 
         # XGBoost
-        xgb_model.fit(X_tr, y_tr, sample_weight=w_tr,
-                       eval_set=[(X_val, y_val)], verbose=False)
+        xgb_model.fit(X_tr, y_tr, sample_weight=w_tr, eval_set=[(X_val, y_val)], verbose=False)
         xgb_proba = xgb_model.predict_proba(X_val)[:, 1]
         xgb_ic, _ = spearmanr(xgb_proba, y_val)
         if np.isnan(xgb_ic):
@@ -541,8 +584,7 @@ def train_model(
         lgb_ic = 0.0
         lgb_acc = 0.0
         if lgb_model is not None:
-            lgb_model.fit(X_tr, y_tr, sample_weight=w_tr,
-                          eval_set=[(X_val, y_val)])
+            lgb_model.fit(X_tr, y_tr, sample_weight=w_tr, eval_set=[(X_val, y_val)])
             lgb_proba = lgb_model.predict_proba(X_val)[:, 1]
             lgb_ic, _ = spearmanr(lgb_proba, y_val)
             if np.isnan(lgb_ic):
@@ -551,17 +593,23 @@ def train_model(
             lgb_acc = (lgb_model.predict(X_val) == y_val).mean()
 
         if lgb_model:
-            logger.info("  Fold %d  XGB IC=%.4f acc=%.3f  |  LGB IC=%.4f acc=%.3f  (purged, embargo=%d)",
-                        fold + 1, xgb_ic, xgb_acc, lgb_ic, lgb_acc, FORWARD_BARS)
+            logger.info(
+                "  Fold %d  XGB IC=%.4f acc=%.3f  |  LGB IC=%.4f acc=%.3f  (purged, embargo=%d)",
+                fold + 1,
+                xgb_ic,
+                xgb_acc,
+                lgb_ic,
+                lgb_acc,
+                FORWARD_BARS,
+            )
         else:
-            logger.info("  Fold %d  XGB IC=%.4f  accuracy=%.3f  (purged, embargo=%d)",
-                        fold + 1, xgb_ic, xgb_acc, FORWARD_BARS)
+            logger.info(
+                "  Fold %d  XGB IC=%.4f  accuracy=%.3f  (purged, embargo=%d)", fold + 1, xgb_ic, xgb_acc, FORWARD_BARS
+            )
 
-    logger.info("XGBoost walk-forward mean IC=%.4f (std=%.4f)",
-                np.mean(xgb_ics), np.std(xgb_ics))
+    logger.info("XGBoost walk-forward mean IC=%.4f (std=%.4f)", np.mean(xgb_ics), np.std(xgb_ics))
     if lgb_ics:
-        logger.info("LightGBM walk-forward mean IC=%.4f (std=%.4f)",
-                    np.mean(lgb_ics), np.std(lgb_ics))
+        logger.info("LightGBM walk-forward mean IC=%.4f (std=%.4f)", np.mean(lgb_ics), np.std(lgb_ics))
 
     # Final refit with early stopping using last fold as time-series validation set
     # Use last 15% of data as validation set for early stopping (temporal split)
@@ -571,19 +619,20 @@ def train_model(
     w_train_final = sample_weights[:-val_split]
 
     xgb_model.fit(
-        X_train_final, y_train_final,
+        X_train_final,
+        y_train_final,
         sample_weight=w_train_final,
         eval_set=[(X_val_final, y_val_final)],
         verbose=False,
     )
     if lgb_model is not None:
         lgb_model.fit(
-            X_train_final, y_train_final,
+            X_train_final,
+            y_train_final,
             sample_weight=w_train_final,
             eval_set=[(X_val_final, y_val_final)],
         )
-    logger.info("Final refit with early stopping (train=%d, val=%d)",
-                len(X_train_final), val_split)
+    logger.info("Final refit with early stopping (train=%d, val=%d)", len(X_train_final), val_split)
 
     # ── Post-training calibration (Platt scaling on held-out calibration set) ──
     # Split off a separate calibration set (last 12% of training data) that was
@@ -601,14 +650,16 @@ def train_model(
         w_calib = sample_weights[-calib_size:]
 
         logger.info(
-            "Applying Platt scaling calibration on held-out set "
-            "(train=%d, calib=%d, %.0f%% of training data)...",
-            len(X_train_pre_calib), calib_size, calib_fraction * 100,
+            "Applying Platt scaling calibration on held-out set (train=%d, calib=%d, %.0f%% of training data)...",
+            len(X_train_pre_calib),
+            calib_size,
+            calib_fraction * 100,
         )
 
         # Refit XGBoost on pre-calibration training data, then calibrate on calib set
         xgb_model.fit(
-            X_train_pre_calib, y_train_pre_calib,
+            X_train_pre_calib,
+            y_train_pre_calib,
             sample_weight=w_train_pre_calib,
             eval_set=[(X_calib, y_calib)],
             verbose=False,
@@ -619,7 +670,8 @@ def train_model(
 
         if lgb_model is not None:
             lgb_model.fit(
-                X_train_pre_calib, y_train_pre_calib,
+                X_train_pre_calib,
+                y_train_pre_calib,
                 sample_weight=w_train_pre_calib,
                 eval_set=[(X_calib, y_calib)],
             )
@@ -734,8 +786,7 @@ def validate_model(
     # Gate 1: IC threshold (raised to 0.05 for institutional quality)
     if ic < IC_GATE:
         logger.error(
-            "VALIDATION FAILED: holdout IC=%.4f < %.2f minimum. "
-            "Model has insufficient predictive power.", ic, IC_GATE
+            "VALIDATION FAILED: holdout IC=%.4f < %.2f minimum. Model has insufficient predictive power.", ic, IC_GATE
         )
         reasons.append(f"IC too low: {ic:.4f} < {IC_GATE}")
         passed = False
@@ -744,18 +795,12 @@ def validate_model(
 
     # Gate 2: Bias check
     if buy_pct > 0.90:
-        logger.error(
-            "VALIDATION FAILED: buy_pct=%.1f%% > 90%%. "
-            "Model is biased toward BUY.", buy_pct * 100
-        )
-        reasons.append(f"Buy bias too high: {buy_pct*100:.1f}% > 90%")
+        logger.error("VALIDATION FAILED: buy_pct=%.1f%% > 90%%. Model is biased toward BUY.", buy_pct * 100)
+        reasons.append(f"Buy bias too high: {buy_pct * 100:.1f}% > 90%")
         passed = False
     elif buy_pct < 0.10:
-        logger.error(
-            "VALIDATION FAILED: buy_pct=%.1f%% < 10%%. "
-            "Model is biased toward SELL.", buy_pct * 100
-        )
-        reasons.append(f"Buy bias too low: {buy_pct*100:.1f}% < 10%")
+        logger.error("VALIDATION FAILED: buy_pct=%.1f%% < 10%%. Model is biased toward SELL.", buy_pct * 100)
+        reasons.append(f"Buy bias too low: {buy_pct * 100:.1f}% < 10%")
         passed = False
     else:
         logger.info("Validation gate bias: PASSED (buy_pct=%.1f%%)", buy_pct * 100)
@@ -763,18 +808,18 @@ def validate_model(
     # Gate 3: Transaction cost hurdle
     if net_of_costs <= 0:
         logger.error(
-            "VALIDATION FAILED: mean predicted return %.4f%% does not exceed "
-            "transaction cost %.4f%%. Net=%.4f%%",
-            mean_predicted_return * 100, TRANSACTION_COST_PCT * 100, net_of_costs * 100,
+            "VALIDATION FAILED: mean predicted return %.4f%% does not exceed transaction cost %.4f%%. Net=%.4f%%",
+            mean_predicted_return * 100,
+            TRANSACTION_COST_PCT * 100,
+            net_of_costs * 100,
         )
-        reasons.append(
-            f"Transaction cost hurdle failed: net return {net_of_costs*100:.4f}% <= 0"
-        )
+        reasons.append(f"Transaction cost hurdle failed: net return {net_of_costs * 100:.4f}% <= 0")
         passed = False
     else:
         logger.info(
             "Validation gate transaction cost: PASSED (net=%.4f%% after %.2f%% costs)",
-            net_of_costs * 100, TRANSACTION_COST_PCT * 100,
+            net_of_costs * 100,
+            TRANSACTION_COST_PCT * 100,
         )
 
     results["passed"] = passed
@@ -797,7 +842,11 @@ def main():
     logger.info("=" * 60)
     logger.info(
         "Config: symbols=%d  period=%s  interval=%s  forward=%d  optuna_trials=%d",
-        len(SYMBOLS), PERIOD, INTERVAL, FORWARD_BARS, args.optuna_trials,
+        len(SYMBOLS),
+        PERIOD,
+        INTERVAL,
+        FORWARD_BARS,
+        args.optuna_trials,
     )
     if OPTUNA_AVAILABLE:
         logger.info("Optuna %s available for hyperparameter optimization", optuna.__version__)
@@ -806,9 +855,12 @@ def main():
 
     # Fetch market context for enrichment
     market_ctx = fetch_market_context_data()
-    logger.info("Market context: NIFTY RSI=%.1f, vol=%.4f, trend=%.0f",
-                market_ctx.get("nifty_rsi", 0), market_ctx.get("nifty_volatility", 0),
-                market_ctx.get("nifty_trend", 0))
+    logger.info(
+        "Market context: NIFTY RSI=%.1f, vol=%.4f, trend=%.0f",
+        market_ctx.get("nifty_rsi", 0),
+        market_ctx.get("nifty_volatility", 0),
+        market_ctx.get("nifty_trend", 0),
+    )
 
     logger.info("Downloading data for %d symbols...", len(SYMBOLS))
     dataframes = fetch_data_batch(SYMBOLS, period=PERIOD)
@@ -824,7 +876,9 @@ def main():
         try:
             bars = bars_from_df(df)
             X, y, w, fnames = build_feature_rows(
-                bars, min_return_pct=min_return_pct, market_ctx=market_ctx,
+                bars,
+                min_return_pct=min_return_pct,
+                market_ctx=market_ctx,
             )
             if X.size == 0:
                 continue
@@ -844,8 +898,9 @@ def main():
     X_full = np.vstack(all_X)
     y_full = np.concatenate(all_y)
     w_full = np.concatenate(all_w)
-    logger.info("Combined dataset: %d samples, %d features, %d symbols",
-                X_full.shape[0], X_full.shape[1], len(dataframes))
+    logger.info(
+        "Combined dataset: %d samples, %d features, %d symbols", X_full.shape[0], X_full.shape[1], len(dataframes)
+    )
     logger.info("Overall class balance: %.2f%% positive", y_full.mean() * 100)
 
     # ── True holdout: last 20% of data, never touched during training/validation ──
@@ -859,7 +914,9 @@ def main():
     w_holdout = w_full[-holdout_size:]
     logger.info(
         "True holdout split: train/val=%d samples, holdout=%d samples (%.0f%%)",
-        len(X), holdout_size, holdout_fraction * 100,
+        len(X),
+        holdout_size,
+        holdout_fraction * 100,
     )
 
     # Optuna hyperparameter optimization (on train/val only, holdout untouched)
@@ -887,8 +944,8 @@ def main():
 
     if not passed:
         logger.error(
-            "MODEL DID NOT PASS VALIDATION GATES — NOT saving model. "
-            "Reasons: %s", "; ".join(validation_results["failure_reasons"])
+            "MODEL DID NOT PASS VALIDATION GATES — NOT saving model. Reasons: %s",
+            "; ".join(validation_results["failure_reasons"]),
         )
         logger.error("Previous model (if any) is preserved at models/alpha_xgb.joblib")
         sys.exit(1)
@@ -896,49 +953,58 @@ def main():
     # Save model (only if passed all gates)
     out_path = MODEL_DIR / "alpha_xgb.joblib"
     import joblib
+
     joblib.dump(model, out_path)
     logger.info("Model saved to %s  (%.1f KB)", out_path, out_path.stat().st_size / 1024)
 
     # Final ensemble output distribution (on full dataset for statistics)
     ensemble_probs = model.predict_proba(X_full)[:, 1]
     ensemble_buy_pct = (ensemble_probs > 0.5).mean()
-    logger.info("Ensemble output: %.1f%% BUY, mean=%.4f, std=%.4f",
-                ensemble_buy_pct * 100, ensemble_probs.mean(), ensemble_probs.std())
+    logger.info(
+        "Ensemble output: %.1f%% BUY, mean=%.4f, std=%.4f",
+        ensemble_buy_pct * 100,
+        ensemble_probs.mean(),
+        ensemble_probs.std(),
+    )
 
     # Save feature names alongside model for inference consistency
     meta_path = MODEL_DIR / "alpha_xgb_meta.json"
     with open(meta_path, "w") as f:
-        json.dump({
-            "feature_names": feature_names,
-            "forward_bars": FORWARD_BARS,
-            "interval": INTERVAL,
-            "min_return_pct": min_return_pct,
-            "min_return_pct_adaptive": True,
-            "n_features": len(feature_names),
-            "n_samples": int(X.shape[0]),
-            "n_symbols": len(dataframes),
-            "positive_rate": float(y.mean()),
-            "ensemble": True,
-            "calibrated": True,
-            "ensemble_buy_pct": float(ensemble_buy_pct),
-            "ensemble_mean_prob": float(ensemble_probs.mean()),
-            "ensemble_std_prob": float(ensemble_probs.std()),
-            "xgb_params": best_params,
-            "optuna_optimized": OPTUNA_AVAILABLE,
-            "optuna_trials": args.optuna_trials,
-            "purged_cv_embargo": FORWARD_BARS,
-            "training_timestamp": datetime.utcnow().isoformat(),
-        }, f, indent=2)
+        json.dump(
+            {
+                "feature_names": feature_names,
+                "forward_bars": FORWARD_BARS,
+                "interval": INTERVAL,
+                "min_return_pct": min_return_pct,
+                "min_return_pct_adaptive": True,
+                "n_features": len(feature_names),
+                "n_samples": int(X.shape[0]),
+                "n_symbols": len(dataframes),
+                "positive_rate": float(y.mean()),
+                "ensemble": True,
+                "calibrated": True,
+                "ensemble_buy_pct": float(ensemble_buy_pct),
+                "ensemble_mean_prob": float(ensemble_probs.mean()),
+                "ensemble_std_prob": float(ensemble_probs.std()),
+                "xgb_params": best_params,
+                "optuna_optimized": OPTUNA_AVAILABLE,
+                "optuna_trials": args.optuna_trials,
+                "purged_cv_embargo": FORWARD_BARS,
+                "training_timestamp": datetime.utcnow().isoformat(),
+            },
+            f,
+            indent=2,
+        )
     logger.info("Feature metadata saved to %s (%d features)", meta_path, len(feature_names))
 
     # ── P0-3: Save FeatureNormalizer (z-score stats from training data) ──
     try:
         from src.ai.feature_engine import FeatureNormalizer
+
         normalizer = FeatureNormalizer()
         # Build feature dicts from X_full + feature_names
         feature_dicts = [
-            {feature_names[j]: float(X_full[i, j]) for j in range(X_full.shape[1])}
-            for i in range(X_full.shape[0])
+            {feature_names[j]: float(X_full[i, j]) for j in range(X_full.shape[1])} for i in range(X_full.shape[0])
         ]
         normalizer.fit(feature_dicts)
         normalizer_path = str(MODEL_DIR / "feature_normalizer.json")
@@ -964,6 +1030,7 @@ def main():
     # ── P1-7: Save XGB calibration data (predictions vs realized returns) ──
     try:
         from src.ai.feature_engine import FeatureEngine
+
         # Use holdout predictions and compute realized returns for calibration
         # We already have holdout probs; compute forward returns for holdout subset
         # For simplicity: map labels back to approximate returns

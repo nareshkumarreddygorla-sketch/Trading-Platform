@@ -7,6 +7,7 @@ Usage:
     PYTHONPATH=. python scripts/download_nse_data.py
     PYTHONPATH=. python scripts/download_nse_data.py --symbols RELIANCE,INFY,TCS --period 2y
 """
+
 import argparse
 import logging
 import os
@@ -19,16 +20,56 @@ logger = logging.getLogger(__name__)
 
 # Top NSE stocks by market cap
 TOP_NSE_SYMBOLS = [
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-    "HINDUNILVR", "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK",
-    "LT", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
-    "TITAN", "SUNPHARMA", "ULTRACEMCO", "WIPRO", "HCLTECH",
-    "NESTLEIND", "BAJAJFINSV", "ONGC", "NTPC", "POWERGRID",
-    "ADANIENT", "ADANIPORTS", "JSWSTEEL", "TATAMOTORS", "TATASTEEL",
-    "TECHM", "INDUSINDBK", "HINDALCO", "COALINDIA", "DRREDDY",
-    "DIVISLAB", "GRASIM", "CIPLA", "EICHERMOT", "APOLLOHOSP",
-    "HEROMOTOCO", "BPCL", "BRITANNIA", "TATACONSUM", "SBILIFE",
-    "HDFCLIFE", "M&M", "UPL", "BAJAJ-AUTO", "SHREECEM",
+    "RELIANCE",
+    "TCS",
+    "HDFCBANK",
+    "INFY",
+    "ICICIBANK",
+    "HINDUNILVR",
+    "SBIN",
+    "BHARTIARTL",
+    "ITC",
+    "KOTAKBANK",
+    "LT",
+    "AXISBANK",
+    "BAJFINANCE",
+    "ASIANPAINT",
+    "MARUTI",
+    "TITAN",
+    "SUNPHARMA",
+    "ULTRACEMCO",
+    "WIPRO",
+    "HCLTECH",
+    "NESTLEIND",
+    "BAJAJFINSV",
+    "ONGC",
+    "NTPC",
+    "POWERGRID",
+    "ADANIENT",
+    "ADANIPORTS",
+    "JSWSTEEL",
+    "TATAMOTORS",
+    "TATASTEEL",
+    "TECHM",
+    "INDUSINDBK",
+    "HINDALCO",
+    "COALINDIA",
+    "DRREDDY",
+    "DIVISLAB",
+    "GRASIM",
+    "CIPLA",
+    "EICHERMOT",
+    "APOLLOHOSP",
+    "HEROMOTOCO",
+    "BPCL",
+    "BRITANNIA",
+    "TATACONSUM",
+    "SBILIFE",
+    "HDFCLIFE",
+    "M&M",
+    "UPL",
+    "BAJAJ-AUTO",
+    "SHREECEM",
 ]
 
 # Nifty 50 index
@@ -50,8 +91,13 @@ def download_stock(symbol: str, period: str = "2y", interval: str = "1d") -> pd.
         df.columns = ["open", "high", "low", "close", "volume"]
         df.index.name = "timestamp"
         df["symbol"] = symbol
-        logger.info("Downloaded %s: %d bars (%s to %s)", symbol, len(df),
-                     df.index[0].strftime("%Y-%m-%d"), df.index[-1].strftime("%Y-%m-%d"))
+        logger.info(
+            "Downloaded %s: %d bars (%s to %s)",
+            symbol,
+            len(df),
+            df.index[0].strftime("%Y-%m-%d"),
+            df.index[-1].strftime("%Y-%m-%d"),
+        )
         return df
     except Exception as e:
         logger.error("Failed to download %s: %s", symbol, e)
@@ -60,12 +106,9 @@ def download_stock(symbol: str, period: str = "2y", interval: str = "1d") -> pd.
 
 def main():
     parser = argparse.ArgumentParser(description="Download NSE historical data")
-    parser.add_argument("--symbols", type=str, default=None,
-                        help="Comma-separated symbols (default: top 50 NSE)")
-    parser.add_argument("--period", type=str, default="2y",
-                        help="Data period: 1y, 2y, 5y, max (default: 2y)")
-    parser.add_argument("--interval", type=str, default="1d",
-                        help="Bar interval: 1m, 5m, 1h, 1d (default: 1d)")
+    parser.add_argument("--symbols", type=str, default=None, help="Comma-separated symbols (default: top 50 NSE)")
+    parser.add_argument("--period", type=str, default="2y", help="Data period: 1y, 2y, 5y, max (default: 2y)")
+    parser.add_argument("--interval", type=str, default="1d", help="Bar interval: 1m, 5m, 1h, 1d (default: 1d)")
     args = parser.parse_args()
 
     symbols = args.symbols.split(",") if args.symbols else TOP_NSE_SYMBOLS
