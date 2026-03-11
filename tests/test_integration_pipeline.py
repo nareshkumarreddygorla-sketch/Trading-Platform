@@ -358,34 +358,34 @@ class TestAIModels:
         assert result is not None
 
     def test_lstm_predictor_no_model(self):
-        """LSTM should return neutral prediction when model file missing."""
+        """LSTM should return None when model file missing (can't predict)."""
         from src.ai.models.lstm_predictor import LSTMPredictor
 
         pred = LSTMPredictor(model_path="/nonexistent/lstm.pt")
         assert pred._loaded is False
         result = pred.predict(features=None)
-        assert result.prob_up == pytest.approx(0.5, abs=0.01)
-        assert result.confidence == pytest.approx(0.0, abs=0.01)
+        # No model loaded → predict() returns None (cannot produce a prediction)
+        assert result is None
 
     def test_transformer_predictor_no_model(self):
-        """Transformer should return neutral prediction when model file missing."""
+        """Transformer should return None when model file missing (can't predict)."""
         from src.ai.models.transformer_predictor import TransformerPredictor
 
         pred = TransformerPredictor(model_path="/nonexistent/transformer.pt")
         assert pred._loaded is False
         result = pred.predict(features=None)
-        assert result.prob_up == pytest.approx(0.5, abs=0.01)
-        assert result.confidence == pytest.approx(0.0, abs=0.01)
+        # No model loaded → predict() returns None
+        assert result is None
 
     def test_rl_predictor_no_model(self):
-        """RL should return neutral prediction when model file missing."""
+        """RL should return None when model file missing (can't predict)."""
         from src.ai.models.rl_agent import RLPredictor
 
         pred = RLPredictor(model_path="/nonexistent/rl.zip")
         assert pred._loaded is False
         result = pred.predict(features=None)
-        assert result.prob_up == pytest.approx(0.5, abs=0.01)
-        assert result.confidence == pytest.approx(0.0, abs=0.01)
+        # No model loaded → predict() returns None
+        assert result is None
 
     @pytest.mark.slow
     def test_sentiment_predictor_no_headlines(self):
@@ -398,7 +398,7 @@ class TestAIModels:
         assert result.prob_up == pytest.approx(0.5, abs=0.15)
 
     def test_ensemble_with_no_models(self):
-        """Ensemble should return neutral when no models are loaded."""
+        """Ensemble should return None when no models are loaded."""
         from src.ai.models.ensemble import EnsembleEngine
         from src.ai.models.registry import ModelRegistry
 
@@ -409,7 +409,8 @@ class TestAIModels:
             weights={"nonexistent": 1.0},
         )
         result = ensemble.predict(features=None)
-        assert result.prob_up == pytest.approx(0.5, abs=0.01)
+        # No models in registry → no predictions → returns None
+        assert result is None
 
 
 # ────────────────────────────────────────────────────────
