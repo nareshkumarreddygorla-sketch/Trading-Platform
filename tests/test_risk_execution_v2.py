@@ -550,11 +550,13 @@ class TestCircuitBreakerHalfOpenPromotion:
             rm = RiskManager(equity=100_000, load_persisted_state=False)
             cb = CircuitBreaker(rm)
             cb.trip()
-            cb._half_open_observation_secs = 0
+            # Prevent time-based promotion (OR condition: time OR trades)
+            cb._half_open_observation_secs = 99999
             cb.reset(current_equity=100_000)
 
-            # Don't execute enough trades
-            cb.allow_order()  # only 1 of 3
+            # Don't execute enough trades — only 1 of 3
+            # (use allow_order with auto-promotion disabled to avoid side effects)
+            cb._half_open_trade_count = 1
 
             cb.check_half_open_promotion()
             assert cb.state == CircuitState.HALF_OPEN
