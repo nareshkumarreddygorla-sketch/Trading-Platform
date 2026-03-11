@@ -150,8 +150,11 @@ async def test_paper_mode_place_order_returns_immediately():
 @pytest.mark.asyncio
 async def test_market_status_endpoint():
     """GET /api/v1/market/status returns connected, healthy, last_tick_ts, symbols."""
+    import os
+    import time
     from contextlib import asynccontextmanager
 
+    import jwt
     from fastapi.testclient import TestClient
 
     from src.api.app import create_app
@@ -160,11 +163,28 @@ async def test_market_status_endpoint():
     async def _noop_lifespan(a):
         yield
 
+    # Generate a valid JWT for test requests
+    jwt_secret = os.environ.get("JWT_SECRET", "dev-secret-key-change-in-production")
+    now = int(time.time())
+    token = jwt.encode(
+        {
+            "sub": "testuser",
+            "user_id": "testuser",
+            "roles": ["user", "admin"],
+            "type": "access",
+            "iat": now,
+            "exp": now + 1800,
+        },
+        jwt_secret,
+        algorithm="HS256",
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
     app = create_app()
     # Replace lifespan with no-op to avoid connecting to real services in tests
     app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
     with TestClient(app, raise_server_exceptions=False) as client:
-        r = client.get("/api/v1/market/status")
+        r = client.get("/api/v1/market/status", headers=headers)
         assert r.status_code == 200
         data = r.json()
         assert "connected" in data
@@ -183,7 +203,7 @@ async def test_market_status_endpoint():
     }
     with TestClient(app) as client:
         app.state.market_data_service = mock_svc
-        r = client.get("/api/v1/market/status")
+        r = client.get("/api/v1/market/status", headers=headers)
         assert r.status_code == 200
         data = r.json()
         assert data["connected"] is True
