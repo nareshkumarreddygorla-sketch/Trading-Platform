@@ -66,7 +66,7 @@ def test_sector_breach_rejection(limits):
 
 def test_leverage_breach_rejection(limits):
     """Order rejected when total notional exposure exceeds leverage limit (200% of equity)."""
-    limits.max_sector_concentration_pct = 100.0
+    limits.max_sector_concentration_pct = 300.0  # must exceed 210% so sector check doesn't fire first
     limits.max_open_positions = 10
     limits.max_position_pct = 100.0  # allow large positions
     limits.max_per_symbol_pct = 100.0
