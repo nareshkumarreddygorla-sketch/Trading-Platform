@@ -210,7 +210,7 @@ class TestLSTMPredictor:
     def test_model_id_and_version(self):
         predictor = LSTMPredictor()
         assert predictor.model_id == "lstm_ts"
-        assert predictor.version == "v2"
+        assert predictor.version == "v3"
 
 
 class TestTransformerPredictor:
