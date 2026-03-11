@@ -20,6 +20,14 @@ def _isolate_circuit_state(tmp_path, monkeypatch):
     monkeypatch.setattr(rm_mod, "_CIRCUIT_STATE_PATH", test_state_dir / "circuit_state.json")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_kill_switch_state(tmp_path, monkeypatch):
+    """Prevent kill switch state from leaking between tests."""
+    import src.execution.order_entry.kill_switch as ks_mod
+
+    monkeypatch.setattr(ks_mod, "_KILL_STATE_PATH", str(tmp_path / "kill_switch_state.json"))
+
+
 @pytest.fixture
 def app():
     _app = create_app()
