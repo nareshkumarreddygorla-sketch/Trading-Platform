@@ -4,7 +4,7 @@ Rolling window: train [t-T, t), test [t, t+O).
 Stability score: S = (mean_Sharpe / (std_Sharpe + ε)) * (1 - mean_dd/dd_limit) * I(frac_positive_Sharpe >= 0.7)
 Replacement rule: replace only if Sharpe improves, drawdown not worse, S above threshold, N consecutive positive windows.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np

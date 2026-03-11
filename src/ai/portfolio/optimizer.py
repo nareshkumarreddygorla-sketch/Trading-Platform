@@ -4,7 +4,7 @@ Rolling correlation matrix; MCR, portfolio heat, concentration;
 risk parity / vol target / Kelly cap / correlation penalty;
 max gross, net, sector, correlated cluster exposure (vs effective_equity).
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np

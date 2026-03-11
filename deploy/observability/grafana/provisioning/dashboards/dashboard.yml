@@ -1,0 +1,26 @@
+# Grafana dashboard provisioning for AlphaForge Trading Platform
+#
+# Dashboard JSON files live in deploy/observability/grafana/dashboards/
+# and are mounted into the container at /etc/grafana/provisioning/dashboards/json
+# via docker-compose volume mapping.
+#
+# Files:
+#   - trading_overview.json  : Comprehensive trading overview (performance, risk, execution, system health)
+#   - trading-overview.json  : Legacy compact overview
+#   - execution-metrics.json : Execution pipeline deep-dive
+#   - risk-overview.json     : Risk management detail
+#   - ai-models.json         : AI/ML model monitoring
+apiVersion: 1
+
+providers:
+  - name: AlphaForge
+    orgId: 1
+    folder: AlphaForge
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
+      foldersFromFilesStructure: false

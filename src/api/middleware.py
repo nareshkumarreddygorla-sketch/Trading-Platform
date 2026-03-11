@@ -2,11 +2,11 @@
 Security middleware: headers, rate limiting (Redis-backed with in-memory fallback), request logging.
 """
 import logging
-import math
 import os
+import secrets
 import time
 from collections import defaultdict
-from typing import Callable, Optional, Tuple
+from typing import Callable, Tuple
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -21,39 +21,52 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
+        # X-XSS-Protection is deprecated; CSP provides superior XSS protection
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        # Prevent caching of API responses containing sensitive data
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+            response.headers["Pragma"] = "no-cache"
+        # Nonce-based CSP: eliminates unsafe-inline/unsafe-eval for XSS protection
+        nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = nonce
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-            "style-src 'self' 'unsafe-inline'; "
+            f"script-src 'self' 'nonce-{nonce}'; "
+            f"style-src 'self' 'nonce-{nonce}'; "
             "img-src 'self' data: blob:; "
             "font-src 'self' data:; "
             "connect-src 'self' ws: wss:; "
             "frame-ancestors 'none'"
         )
         # HSTS only in production
-        if os.environ.get("ENV", "").lower() == "production":
+        if os.environ.get("ENV", os.environ.get("ENVIRONMENT", "")).lower() == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
 
-# Per-endpoint rate limits (requests per minute)
+# Per-endpoint rate limits (requests per minute).
+# More specific paths are checked first to ensure login/register get the
+# strictest limit (5/min) rather than the generic auth limit (10/min).
 _ENDPOINT_LIMITS = {
+    "/api/v1/auth/login": 5,       # Brute-force protection: 5 login attempts/min per IP
+    "/api/v1/auth/register": 5,    # Prevent mass account creation
+    "/api/v1/auth/refresh": 10,    # Token refresh is less sensitive
+    "/api/v1/auth": 10,            # Other auth endpoints
     "/api/v1/orders": 30,
     "/api/v1/health": 600,
-    "/api/v1/auth": 20,
 }
 
 
 def _get_limit_for_path(path: str, default_limit: int, auth_limit: int) -> int:
     """Determine rate limit based on path. More specific paths checked first."""
-    if "/auth/" in path:
-        return auth_limit
-    for prefix, limit in _ENDPOINT_LIMITS.items():
+    # Check exact/prefix matches from most-specific to least-specific
+    for prefix in sorted(_ENDPOINT_LIMITS.keys(), key=len, reverse=True):
         if path.startswith(prefix):
-            return limit
+            return _ENDPOINT_LIMITS[prefix]
+    if "/auth/" in path or "/auth" == path.rstrip("/").split("?")[0].rsplit("/", 1)[-1]:
+        return auth_limit
     return default_limit
 
 
@@ -68,7 +81,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     - Automatic fallback to in-memory when Redis is unavailable
     """
 
-    def __init__(self, app, requests_per_minute: int = 120, auth_requests_per_minute: int = 20,
+    def __init__(self, app, requests_per_minute: int = 120, auth_requests_per_minute: int = 10,
                  trust_proxy: bool = False, max_tracked_ips: int = 10_000):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
@@ -111,33 +124,56 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         for ip in stale:
             del self._requests[ip]
 
-    def _check_rate_memory(self, client_ip: str, limit: int) -> Tuple[bool, int]:
+    @staticmethod
+    def _rate_key_for_path(path: str) -> str:
+        """Derive a rate-limit bucket key from the request path.
+
+        Auth-sensitive endpoints (login, register, refresh) get their own
+        per-IP bucket so the strict 5/min limit is enforced independently.
+        Other paths share a bucket per top-level resource.
+        """
+        parts = path.rstrip("/").split("/")
+        # /api/v1/auth/login -> "auth/login", /api/v1/auth/register -> "auth/register"
+        if len(parts) >= 5 and parts[3] == "auth":
+            return f"auth/{parts[4]}"
+        if len(parts) > 3:
+            return parts[3]
+        return "default"
+
+    def _check_rate_memory(self, client_ip: str, limit: int, path: str = "") -> Tuple[bool, int]:
         """In-memory rate check. Returns (is_limited, remaining)."""
         now = time.time()
         window_start = now - 60
         self._cleanup_stale_ips(now)
+        rate_key = f"{client_ip}:{self._rate_key_for_path(path)}"
         # Safety valve: don't track new IPs when at capacity
-        if len(self._requests) > self._max_tracked_ips and client_ip not in self._requests:
+        if len(self._requests) > self._max_tracked_ips and rate_key not in self._requests:
             return False, limit
-        # Clean old entries for this IP
-        self._requests[client_ip] = [t for t in self._requests[client_ip] if t > window_start]
-        count = len(self._requests[client_ip])
+        # Clean old entries for this key
+        self._requests[rate_key] = [t for t in self._requests[rate_key] if t > window_start]
+        count = len(self._requests[rate_key])
         if count >= limit:
             return True, 0
-        self._requests[client_ip].append(now)
+        self._requests[rate_key].append(now)
         return False, max(0, limit - count - 1)
 
     def _check_rate_redis(self, client_ip: str, limit: int, path: str) -> Tuple[bool, int]:
-        """Redis-backed rate check with sliding window. Returns (is_limited, remaining)."""
+        """Redis-backed rate check using a fixed-window counter. Returns (is_limited, remaining).
+
+        This is a fixed-window rate limiter: each key gets a 60-second TTL via EXPIRE.
+        A client could theoretically burst up to 2x the limit across a window boundary.
+        This trade-off is acceptable for simplicity and low Redis overhead. For stricter
+        guarantees, consider a sliding-window log or token-bucket algorithm.
+        """
         try:
-            key = f"rl:{client_ip}:{path.split('/')[3] if len(path.split('/')) > 3 else 'default'}"
+            key = f"rl:{client_ip}:{self._rate_key_for_path(path)}"
             pipe = self._redis.pipeline()
             pipe.incr(key)
             pipe.expire(key, 60)
             results = pipe.execute()
             count = results[0]
             remaining = max(0, limit - count)
-            return count > limit, remaining
+            return count >= limit, remaining
         except Exception:
             # Fallback to in-memory on Redis error
             return self._check_rate_memory(client_ip, limit)
@@ -153,7 +189,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if self._redis_available and self._redis:
             is_limited, remaining = self._check_rate_redis(client_ip, limit, path)
         else:
-            is_limited, remaining = self._check_rate_memory(client_ip, limit)
+            is_limited, remaining = self._check_rate_memory(client_ip, limit, path)
 
         if is_limited:
             logger.warning("Rate limited: %s on %s", client_ip, path)
@@ -193,9 +229,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        import uuid
+        from src.api.logging_config import set_correlation_id
+        correlation_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        set_correlation_id(correlation_id)
+
         path = request.url.path
         if path in _LOG_SKIP_PATHS:
-            return await call_next(request)
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = correlation_id
+            return response
 
         client_ip = request.client.host if request.client else "unknown"
         method = request.method
@@ -213,6 +256,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         duration_ms = round((time.time() - start) * 1000, 1)
         status = response.status_code
+
+        response.headers["X-Request-ID"] = correlation_id
 
         if status >= 500:
             logger.error(

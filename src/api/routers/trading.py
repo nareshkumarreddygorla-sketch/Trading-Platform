@@ -177,7 +177,6 @@ async def trading_mode(request: Request, current_user: dict = Depends(get_curren
     kill_switch_armed = False
     if kill_switch is not None:
         try:
-            import asyncio
             state = await kill_switch.get_state()
             kill_switch_armed = getattr(state, "armed", False)
         except Exception:

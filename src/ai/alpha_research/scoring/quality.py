@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from ..validation.validator import ICResult, ValidationResult
+from ..validation.validator import ValidationResult
 
 
 @dataclass

@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.11"]
+        python-version: ["3.11", "3.12"]
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
@@ -25,22 +25,18 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install core deps; skip heavy GPU/ML packages that are not needed for CI tests
-          pip install -r requirements.txt || true
-          # Ensure test tooling is always installed
-          pip install pytest pytest-asyncio pytest-timeout httpx ruff
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-timeout pytest-cov httpx ruff
 
-      - name: Syntax check (py_compile)
+      - name: Syntax check
         run: |
-          python -m py_compile src/api/app.py
-          python -m py_compile src/execution/autonomous_loop.py
-          python -m py_compile src/persistence/trade_store.py
+          python -m py_compile src/**/*.py || find src -name "*.py" -exec python -m py_compile {} +
 
       - name: Ruff lint
-        run: ruff check src tests --output-format=github || true
+        run: ruff check src tests --output-format=github
 
       - name: Pytest
-        run: pytest tests/ -v --tb=short --timeout=60 -x -m "not slow"
+        run: pytest tests/ -v --tb=short --timeout=60 -x -m "not slow" --cov=src --cov-fail-under=80
         env:
           PYTHONPATH: .
           ENV: test
@@ -49,7 +45,21 @@ jobs:
       - name: Check for hardcoded secrets
         run: |
           # Fail if any obvious secrets patterns are found in source
-          ! grep -rn "password.*=.*['\"].*['\"]" src/ --include="*.py" | grep -v "test" | grep -v "#" | grep -v "example" | grep -v "placeholder" | grep -v "__pycache__" || true
+          ! grep -rn "password.*=.*['\"].*['\"]" src/ --include="*.py" | grep -v "test" | grep -v "#" | grep -v "example" | grep -v "placeholder" | grep -v "__pycache__"
+
+      - name: Security scan
+        run: |
+          pip install bandit pip-audit
+          bandit -r src/ -ll --skip B101
+          pip-audit --strict --desc on
+
+      - name: Integration tests
+        run: |
+          python -m pytest tests/integration/ -v --timeout=60
+        env:
+          PYTHONPATH: .
+          ENV: test
+          PAPER_MODE: "true"
 
   frontend-lint-build:
     runs-on: ubuntu-latest

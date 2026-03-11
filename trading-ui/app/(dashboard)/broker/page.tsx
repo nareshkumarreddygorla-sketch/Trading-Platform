@@ -8,11 +8,12 @@ import { useStore } from "@/store/useStore";
 import { endpoints } from "@/lib/api/client";
 import {
   Plug, Unplug, CheckCircle, XCircle, Radio, Wifi,
-  WifiOff, RefreshCw, Clock, Key, Shield,
+  WifiOff, RefreshCw, Clock, Key, Shield, ShieldCheck,
   ArrowUpRight, ArrowDownRight, Activity,
-  Play, Square, Zap, Eye, EyeOff,
+  Play, Square, Zap, Eye, EyeOff, AlertTriangle,
 } from "lucide-react";
 import Link from "next/link";
+import { dispatchToast } from "@/components/Toaster";
 
 type RecentOrder = {
   order_id: string;
@@ -25,12 +26,16 @@ type RecentOrder = {
   ts?: string;
 };
 
+type ConfigStep = "idle" | "form" | "validating" | "confirm" | "switching";
+type TradingModeChoice = "paper" | "live";
+
 export default function BrokerPage() {
   const broker = useStore((s) => s.broker);
   const marketFeed = useStore((s) => s.marketFeed);
   const [reconnecting, setReconnecting] = useState(false);
-  const [showCredForm, setShowCredForm] = useState(false);
+  const [configStep, setConfigStep] = useState<ConfigStep>("idle");
   const [showPasswords, setShowPasswords] = useState(false);
+  const [selectedMode, setSelectedMode] = useState<TradingModeChoice>("paper");
   const [credForm, setCredForm] = useState({
     api_key: "",
     client_id: "",
@@ -39,6 +44,8 @@ export default function BrokerPage() {
   });
   const [credError, setCredError] = useState("");
   const [credSuccess, setCredSuccess] = useState("");
+  const [confirmToken, setConfirmToken] = useState<string | null>(null);
+  const [validatedClientId, setValidatedClientId] = useState("");
   const queryClient = useQueryClient();
 
   // Fetch broker status from API
@@ -69,23 +76,70 @@ export default function BrokerPage() {
     refetchInterval: 5000,
   });
 
-  // Configure broker credentials
-  const configureMutation = useMutation({
-    mutationFn: (creds: typeof credForm) => endpoints.brokerConfigure(creds),
+  // Step 1: Validate credentials (paper mode connects directly, live mode needs confirmation)
+  const validateMutation = useMutation({
+    mutationFn: (creds: typeof credForm & { mode: TradingModeChoice }) =>
+      endpoints.brokerConfigure(creds),
     onSuccess: (data) => {
-      setCredSuccess(data.message);
-      setCredError("");
-      setShowCredForm(false);
-      queryClient.invalidateQueries({ queryKey: ["broker-status"] });
-      queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
-      useStore.setState({
-        broker: { connected: true, status: "connected" },
-        tradingMode: "live",
-      });
+      if (data.confirm_token) {
+        // Live mode: two-step flow — credentials validated, awaiting confirmation
+        setConfirmToken(data.confirm_token);
+        setValidatedClientId(credForm.client_id);
+        setConfigStep("confirm");
+        setCredError("");
+        setCredSuccess("Credentials validated! Confirm to switch to LIVE mode.");
+        dispatchToast("success", "Credentials Valid", "Angel One login successful. Confirm to go live.");
+      } else {
+        // Paper mode: connected directly (or direct connect)
+        setCredSuccess(data.message || "Connected successfully!");
+        setCredError("");
+        resetForm();
+        queryClient.invalidateQueries({ queryKey: ["broker-status"] });
+        queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
+        useStore.setState({
+          broker: { connected: data.connected, status: data.connected ? "connected" : "disconnected" },
+          tradingMode: data.mode === "live" ? "live" : "paper",
+        });
+        dispatchToast(
+          "success",
+          "Paper Trading Active",
+          "Connected with real market data. Orders are simulated."
+        );
+      }
     },
     onError: (err: Error) => {
       setCredError(err.message);
       setCredSuccess("");
+      setConfigStep("form");
+    },
+  });
+
+  // Step 2: Confirm live switch
+  const confirmMutation = useMutation({
+    mutationFn: (token: string) => endpoints.brokerConfirmLive(token),
+    onSuccess: (data) => {
+      setCredSuccess(data.message);
+      setCredError("");
+      resetForm();
+      queryClient.invalidateQueries({ queryKey: ["broker-status"] });
+      queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
+      useStore.setState({
+        broker: { connected: data.connected, status: data.connected ? "connected" : "disconnected" },
+        tradingMode: data.mode === "live" ? "live" : "paper",
+      });
+      dispatchToast(
+        "success",
+        "Live Mode Active",
+        data.auto_started
+          ? "Broker connected and autonomous trading started!"
+          : "Broker connected. You can start autonomous trading."
+      );
+    },
+    onError: (err: Error) => {
+      setCredError(err.message);
+      setCredSuccess("");
+      setConfigStep("form");
+      setConfirmToken(null);
     },
   });
 
@@ -95,14 +149,14 @@ export default function BrokerPage() {
     onSuccess: (data) => {
       setCredSuccess(data.message);
       setCredError("");
-      setShowCredForm(false);
-      setCredForm({ api_key: "", client_id: "", password: "", totp_secret: "" });
+      resetForm();
       queryClient.invalidateQueries({ queryKey: ["broker-status"] });
       queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
       useStore.setState({
         broker: { connected: false, status: "disconnected" },
         tradingMode: "paper",
       });
+      dispatchToast("success", "Disconnected", "Switched back to paper trading mode.");
     },
     onError: (err: Error) => {
       setCredError(err.message);
@@ -120,42 +174,73 @@ export default function BrokerPage() {
 
   const isConnected = brokerStatus?.connected ?? broker.status === "connected";
   const isLive = brokerStatus?.mode === "live";
+  const isPaperWithCreds = isConnected && !isLive;
   const autonomousRunning = brokerStatus?.autonomous_running ?? tradingModeData?.autonomous ?? false;
   const openPositions = (risk?.positions as unknown[])?.length ?? 0;
   const recentOrders = (ordersData?.orders ?? []) as RecentOrder[];
   const tickCount = brokerStatus?.tick_count ?? 0;
   const openTrades = brokerStatus?.open_trades ?? 0;
 
+  const resetForm = () => {
+    setConfigStep("idle");
+    setCredForm({ api_key: "", client_id: "", password: "", totp_secret: "" });
+    setConfirmToken(null);
+    setValidatedClientId("");
+    setShowPasswords(false);
+    setSelectedMode("paper");
+  };
+
   const handleReconnect = async () => {
     setReconnecting(true);
     try {
       await endpoints.health();
+      const status = await endpoints.brokerStatus();
       await refetchBroker();
       useStore.setState({
-        broker: { connected: true, status: "connected" },
-        marketFeed: { connected: true, healthy: true, last_tick_ts: new Date().toISOString() },
+        broker: { connected: status.connected, status: status.connected ? "connected" : "disconnected" },
       });
-    } catch {
+    } catch (err) {
       useStore.setState({
         broker: { connected: false, status: "disconnected" },
       });
+      dispatchToast(
+        "error",
+        "Reconnect Failed",
+        err instanceof Error ? err.message : "Could not reach the trading server."
+      );
     } finally {
       setReconnecting(false);
     }
   };
 
-  const handleConfigureSubmit = (e: React.FormEvent) => {
+  const handleValidateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setCredError("");
     setCredSuccess("");
-    configureMutation.mutate(credForm);
+    setConfigStep("validating");
+    validateMutation.mutate({ ...credForm, mode: selectedMode });
   };
+
+  const handleConfirmLive = () => {
+    if (!confirmToken) return;
+    setConfigStep("switching");
+    confirmMutation.mutate(confirmToken);
+  };
+
+  const handleCancelConfirm = () => {
+    setConfirmToken(null);
+    setConfigStep("form");
+    setCredSuccess("");
+  };
+
+  const showForm = configStep === "form" || configStep === "validating";
+  const showConfirm = configStep === "confirm" || configStep === "switching";
 
   return (
     <div className="space-y-6 pb-8">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-bold tracking-tight">Broker</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Connection, credentials & autonomous trading control</p>
+        <h1 className="text-2xl font-bold tracking-tight">Broker Settings</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">Connect your broker, manage credentials & control autonomous trading</p>
       </motion.div>
 
       {/* Connection + Autonomous Control cards */}
@@ -176,14 +261,21 @@ export default function BrokerPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold">Broker Connection</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">Angel One Trading API</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Angel One SmartAPI</p>
                 </div>
               </div>
               {isConnected ? (
-                <span className="status-badge-live">
-                  <CheckCircle className="h-3 w-3" />
-                  {isLive ? "LIVE" : "PAPER"}
-                </span>
+                isLive ? (
+                  <span className="status-badge-live">
+                    <CheckCircle className="h-3 w-3" />
+                    LIVE
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/30 flex items-center gap-1.5">
+                    <CheckCircle className="h-3 w-3" />
+                    PAPER
+                  </span>
+                )
               ) : (
                 <span className="status-badge-danger">
                   <XCircle className="h-3 w-3" />
@@ -199,7 +291,7 @@ export default function BrokerPage() {
                 { label: "Client ID", value: brokerStatus?.client_id ?? "---" },
                 { label: "Last Connected", value: brokerStatus?.last_connected ? new Date(brokerStatus.last_connected).toLocaleString("en-IN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "---" },
                 { label: "Open Positions", value: String(openPositions) },
-                { label: "Daily P&L", value: `${(risk?.daily_pnl ?? 0).toFixed(2)}%` },
+                { label: "Daily P&L", value: `₹${(risk?.daily_pnl ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
               ].map((item) => (
                 <div key={item.label} className="rounded-lg bg-muted/20 p-3">
                   <div className="text-[10px] text-muted-foreground">{item.label}</div>
@@ -210,13 +302,21 @@ export default function BrokerPage() {
 
             <div className="flex gap-2 mt-4">
               <button
-                onClick={() => setShowCredForm(!showCredForm)}
+                onClick={() => {
+                  if (configStep === "idle") {
+                    setConfigStep("form");
+                    setCredError("");
+                    setCredSuccess("");
+                  } else {
+                    resetForm();
+                  }
+                }}
                 className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-primary/30 py-2.5 text-xs font-medium text-primary transition-all hover:bg-primary/5"
-                aria-label={showCredForm ? "Cancel credential configuration" : "Configure broker credentials"}
-                aria-expanded={showCredForm}
+                aria-label={configStep !== "idle" ? "Cancel credential configuration" : "Configure broker credentials"}
+                aria-expanded={configStep !== "idle"}
               >
                 <Key className="h-3.5 w-3.5" />
-                {showCredForm ? "Cancel" : "Configure Credentials"}
+                {configStep !== "idle" ? "Cancel" : "Configure Credentials"}
               </button>
               {isConnected && (
                 <button
@@ -337,8 +437,8 @@ export default function BrokerPage() {
         </motion.div>
       </div>
 
-      {/* Credential Configuration Form */}
-      {showCredForm && (
+      {/* Step 1: Credential Entry Form */}
+      {showForm && (
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
           <div className="glass-card p-6">
             <div className="flex items-center gap-3 mb-4">
@@ -346,12 +446,56 @@ export default function BrokerPage() {
               <div>
                 <h3 className="text-sm font-semibold">Angel One Credentials</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Enter your Angel One API credentials to enable live trading
+                  Enter your Angel One SmartAPI credentials to enable live trading. Credentials are validated against Angel One servers and stored securely in memory only.
                 </p>
               </div>
             </div>
 
-            <form onSubmit={handleConfigureSubmit} className="space-y-4" aria-label="Broker credentials configuration">
+            <form onSubmit={handleValidateSubmit} className="space-y-4" aria-label="Broker credentials configuration">
+              {/* Paper / Live Mode Toggle */}
+              <div className="flex items-center justify-center gap-1 p-1 rounded-xl bg-muted/20 border border-border/30">
+                <button
+                  type="button"
+                  onClick={() => setSelectedMode("paper")}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-all",
+                    selectedMode === "paper"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/20"
+                  )}
+                >
+                  <Shield className="h-4 w-4" />
+                  Paper Trading
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMode("live")}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-all",
+                    selectedMode === "live"
+                      ? "bg-warning text-black shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/20"
+                  )}
+                >
+                  <Zap className="h-4 w-4" />
+                  Live Trading
+                </button>
+              </div>
+
+              {/* Mode description */}
+              <div className={cn(
+                "rounded-lg p-3 text-xs",
+                selectedMode === "paper"
+                  ? "bg-primary/5 border border-primary/20 text-primary"
+                  : "bg-warning/5 border border-warning/20 text-warning"
+              )}>
+                {selectedMode === "paper" ? (
+                  <p><span className="font-semibold">Paper Trading:</span> Real Angel One market data feed with simulated order execution. No real money at risk. Perfect for testing strategies.</p>
+                ) : (
+                  <p><span className="font-semibold">Live Trading:</span> Real orders with real money through Angel One. Requires additional confirmation step. Ensure risk limits are configured.</p>
+                )}
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="broker-api-key" className="text-xs font-medium text-muted-foreground mb-1.5 block">API Key</label>
@@ -360,21 +504,23 @@ export default function BrokerPage() {
                     type={showPasswords ? "text" : "password"}
                     value={credForm.api_key}
                     onChange={(e) => setCredForm({ ...credForm, api_key: e.target.value })}
-                    placeholder="Your Angel One API key"
+                    placeholder="From SmartAPI developer portal"
                     required
+                    autoComplete="off"
                     aria-required="true"
                     className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-sm font-mono focus:border-primary/50 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label htmlFor="broker-client-id" className="text-xs font-medium text-muted-foreground mb-1.5 block">Client ID</label>
+                  <label htmlFor="broker-client-id" className="text-xs font-medium text-muted-foreground mb-1.5 block">Client Code</label>
                   <input
                     id="broker-client-id"
                     type="text"
                     value={credForm.client_id}
                     onChange={(e) => setCredForm({ ...credForm, client_id: e.target.value })}
-                    placeholder="e.g. A12345"
+                    placeholder="e.g. G58945700"
                     required
+                    autoComplete="off"
                     aria-required="true"
                     className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-sm font-mono focus:border-primary/50 focus:outline-none"
                   />
@@ -386,8 +532,9 @@ export default function BrokerPage() {
                     type={showPasswords ? "text" : "password"}
                     value={credForm.password}
                     onChange={(e) => setCredForm({ ...credForm, password: e.target.value })}
-                    placeholder="Trading password"
+                    placeholder="Trading password (PIN)"
                     required
+                    autoComplete="off"
                     aria-required="true"
                     className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-sm font-mono focus:border-primary/50 focus:outline-none"
                   />
@@ -399,11 +546,13 @@ export default function BrokerPage() {
                     type={showPasswords ? "text" : "password"}
                     value={credForm.totp_secret}
                     onChange={(e) => setCredForm({ ...credForm, totp_secret: e.target.value })}
-                    placeholder="Base32 TOTP secret"
+                    placeholder="Base32 TOTP secret for auto-login"
                     required
+                    autoComplete="off"
                     aria-required="true"
                     className="w-full rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-sm font-mono focus:border-primary/50 focus:outline-none"
                   />
+                  <p className="text-[10px] text-muted-foreground mt-1">The Base32 secret from your authenticator app setup, NOT the 6-digit code</p>
                 </div>
               </div>
 
@@ -425,37 +574,125 @@ export default function BrokerPage() {
                   <p className="text-xs text-loss font-medium">{credError}</p>
                 </div>
               )}
-              {credSuccess && (
-                <div className="rounded-lg bg-profit/10 border border-profit/30 p-3" role="status">
-                  <p className="text-xs text-profit font-medium">{credSuccess}</p>
-                </div>
-              )}
 
               <div className="flex gap-3">
                 <button
                   type="submit"
-                  disabled={configureMutation.isPending}
-                  aria-label={configureMutation.isPending ? "Connecting to broker" : "Connect and switch to live trading"}
-                  aria-busy={configureMutation.isPending}
+                  disabled={validateMutation.isPending || !credForm.api_key || !credForm.client_id || !credForm.password || !credForm.totp_secret}
+                  aria-label={validateMutation.isPending ? "Validating credentials" : "Validate credentials with Angel One"}
+                  aria-busy={validateMutation.isPending}
                   className={cn(
                     "flex-1 flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90",
-                    configureMutation.isPending && "opacity-50 cursor-not-allowed"
+                    (validateMutation.isPending || !credForm.api_key || !credForm.client_id || !credForm.password || !credForm.totp_secret) && "opacity-50 cursor-not-allowed"
                   )}
                 >
-                  {configureMutation.isPending ? (
+                  {validateMutation.isPending ? (
                     <RefreshCw className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Plug className="h-4 w-4" />
+                    <ShieldCheck className="h-4 w-4" />
                   )}
-                  {configureMutation.isPending ? "Connecting..." : "Connect & Switch to Live"}
+                  {validateMutation.isPending
+                    ? "Validating with Angel One..."
+                    : selectedMode === "paper"
+                      ? "Validate & Start Paper Trading"
+                      : "Validate & Connect"
+                  }
                 </button>
               </div>
 
               <p className="text-[10px] text-muted-foreground text-center">
-                Credentials are validated against Angel One API before switching to live mode.
-                They are stored in memory only — not persisted to disk.
+                Credentials are validated against Angel One API. A TOTP code is auto-generated from your secret.
+                Nothing is stored on disk — credentials live in memory only for this session.
               </p>
             </form>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Step 2: Live Mode Confirmation */}
+      {showConfirm && (
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+          <div className="glass-card p-6 border-2 border-warning/30">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-warning/10">
+                <AlertTriangle className="h-6 w-6 text-warning" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold">Confirm Live Trading</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  You are about to switch from PAPER to LIVE mode
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-warning/5 border border-warning/20 p-4 mb-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-profit shrink-0" />
+                <span className="text-sm">Credentials validated for client <span className="font-mono font-bold">{validatedClientId}</span></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-profit shrink-0" />
+                <span className="text-sm">Angel One login successful — session token acquired</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-profit shrink-0" />
+                <span className="text-sm">TOTP auto-generation working — token refresh enabled</span>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-loss/5 border border-loss/20 p-4 mb-4">
+              <p className="text-sm font-medium text-loss">
+                Once confirmed, the system will place REAL orders with REAL money through Angel One.
+                Make sure your risk limits are configured correctly.
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Confirmation expires in 5 minutes. You can disconnect at any time from the Broker panel.
+              </p>
+            </div>
+
+            {credError && (
+              <div className="rounded-lg bg-loss/10 border border-loss/30 p-3 mb-4" role="alert">
+                <p className="text-xs text-loss font-medium">{credError}</p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleCancelConfirm}
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-border/50 py-3 text-sm font-medium text-muted-foreground transition-all hover:bg-muted/10"
+              >
+                Cancel — Stay on Paper
+              </button>
+              <button
+                onClick={handleConfirmLive}
+                disabled={confirmMutation.isPending}
+                aria-label={confirmMutation.isPending ? "Switching to live mode" : "Confirm switch to live trading"}
+                aria-busy={confirmMutation.isPending}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 rounded-xl bg-warning py-3 text-sm font-bold text-black transition-all hover:bg-warning/90",
+                  confirmMutation.isPending && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                {confirmMutation.isPending ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Zap className="h-4 w-4" />
+                )}
+                {confirmMutation.isPending ? "Switching to Live..." : "Confirm — Switch to LIVE"}
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Success message */}
+      {credSuccess && configStep === "idle" && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          <div className="rounded-lg bg-profit/10 border border-profit/30 p-4" role="status">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-profit shrink-0" />
+              <p className="text-sm text-profit font-medium">{credSuccess}</p>
+            </div>
           </div>
         </motion.div>
       )}
@@ -482,7 +719,9 @@ export default function BrokerPage() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold">Market Data Feed</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Real-time price streaming</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {isLive ? "Angel One WebSocket (real-time)" : "YFinance fallback (1-min polling)"}
+                </p>
               </div>
             </div>
             {marketFeed.healthy ? (
@@ -498,9 +737,9 @@ export default function BrokerPage() {
           <div className="grid grid-cols-2 gap-3 mt-4">
             {[
               { label: "Status", value: marketFeed.healthy ? "HEALTHY" : marketFeed.connected ? "DEGRADED" : "OFFLINE" },
-              { label: "Last Tick", value: marketFeed.last_tick_ts ? new Date(marketFeed.last_tick_ts).toLocaleTimeString() : "—" },
-              { label: "Connected", value: marketFeed.connected ? "Yes" : "No" },
-              { label: "Feed Health", value: marketFeed.healthy ? "OK" : "—" },
+              { label: "Last Tick", value: marketFeed.last_tick_ts ? new Date(marketFeed.last_tick_ts).toLocaleTimeString() : "---" },
+              { label: "Source", value: isLive ? "Angel One WS" : "YFinance" },
+              { label: "Feed Health", value: marketFeed.healthy ? "OK" : "---" },
             ].map((item) => (
               <div key={item.label} className="rounded-lg bg-muted/20 p-3">
                 <div className="text-[10px] text-muted-foreground">{item.label}</div>

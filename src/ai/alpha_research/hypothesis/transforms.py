@@ -3,11 +3,9 @@ Phase A: Systematic transformation templates.
 Price, microstructure, cross-sectional, regime-conditioned, nonlinear.
 Each template has a name and params (e.g. windows); generator expands within bounds.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
-
-import numpy as np
+from typing import Any, Dict, List
 
 
 class TransformFamily(str, Enum):

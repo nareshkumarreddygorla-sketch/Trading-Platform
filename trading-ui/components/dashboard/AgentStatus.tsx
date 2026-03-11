@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Activity, Brain, Shield, Zap, BarChart3 } from "lucide-react";
+import { api } from "@/lib/api/client";
 
 interface AgentInfo {
   name: string;
@@ -34,18 +35,11 @@ export default function AgentStatus() {
   const [agents, setAgents] = useState<Record<string, AgentInfo>>({});
   const [loading, setLoading] = useState(true);
 
-  const mountedRef = useRef(false);
   useEffect(() => {
-    if (mountedRef.current) return;
-    mountedRef.current = true;
-
     const fetchAgents = async () => {
       try {
-        const res = await fetch("/api/backend/api/v1/agents/status");
-        if (res.ok) {
-          const data = await res.json();
-          setAgents(data.agents || {});
-        }
+        const data = await api.get<{ agents: Record<string, AgentInfo> }>("/api/v1/agents/status");
+        setAgents(data.agents || {});
       } catch {
         // backend unavailable
       } finally {

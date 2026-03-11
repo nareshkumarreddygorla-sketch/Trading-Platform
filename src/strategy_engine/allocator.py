@@ -65,15 +65,17 @@ class PortfolioAllocator:
             strategy_cap_pct = (self.config.strategy_cap_pct or {}).get(signal.strategy_id) or self.config.max_capital_pct_per_signal
 
             # Kelly criterion: f* = (bp - q) / b
-            # b = win/loss ratio estimate, p = win probability (signal score), q = 1-p
-            # Kelly criterion: f* = (bp - q) / b  (half-Kelly for safety)
+            # b = win/loss ratio estimate, p = win probability (from signal score), q = 1-p
+            # Applied to ALL signals (score already >= min_confidence from filter above).
+            # Higher score = higher confidence = larger position; lower score = smaller.
             kelly_pct = strategy_cap_pct
-            if self.config.use_kelly and signal.score > 0.5:
-                p = signal.score  # Win probability from model confidence
+            if self.config.use_kelly:
+                # Dampen signal score toward 50% to avoid overconfident sizing
+                p = 0.5 + (signal.score - 0.5) * 0.5
                 q = 1.0 - p
                 b = 1.5  # Assumed reward/risk ratio (1.5:1)
                 kelly_full = ((b * p) - q) / b if b > 0 else 0.0
-                kelly_half = kelly_full * self.config.kelly_fraction
+                kelly_half = max(0.0, kelly_full) * self.config.kelly_fraction
                 # Convert to % of equity, bounded by strategy cap AND max_position_pct
                 kelly_pct = min(strategy_cap_pct, max_position_pct, max(1.0, kelly_half * 100.0))
 

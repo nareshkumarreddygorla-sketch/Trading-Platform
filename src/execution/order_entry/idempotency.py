@@ -15,6 +15,17 @@ logger = logging.getLogger(__name__)
 IDEMPOTENCY_PREFIX = "idem:"
 DEFAULT_TTL_SECONDS = 86400 * 2  # 2 days
 
+# App-level flag checked by health endpoints to detect degraded idempotency.
+# When True, the idempotency store is using per-process in-memory fallback
+# which is NOT safe for multi-pod deployments (duplicate orders possible).
+_idempotency_degraded: bool = False
+
+
+def is_idempotency_degraded() -> bool:
+    """Return True if any IdempotencyStore instance fell back to in-memory mode.
+    Health endpoints should call this to surface degraded state."""
+    return _idempotency_degraded
+
 
 class IdempotencyStore:
     """
@@ -32,6 +43,7 @@ class IdempotencyStore:
         self._mem_store: dict = {}
 
     async def _get_redis(self):
+        global _idempotency_degraded
         if self._redis is None and not self._redis_checked:
             self._redis_checked = True
             try:
@@ -42,15 +54,48 @@ class IdempotencyStore:
                 self._redis_available = True
                 logger.info("IdempotencyStore: Redis connected")
             except ImportError:
-                logger.info("redis not installed; using in-memory idempotency (paper mode)")
+                logger.warning(
+                    "IdempotencyStore DEGRADED: redis package not installed; "
+                    "using in-memory idempotency — NOT SAFE for multi-pod deployment"
+                )
+                _idempotency_degraded = True
             except Exception:
-                logger.info("Redis unavailable; using in-memory idempotency (paper mode)")
+                logger.warning(
+                    "IdempotencyStore DEGRADED: Redis unavailable; "
+                    "using in-memory idempotency — NOT SAFE for multi-pod deployment"
+                )
+                _idempotency_degraded = True
         return self._redis
 
     async def is_available(self) -> bool:
-        """Always returns True — uses Redis when available, in-memory otherwise."""
-        await self._get_redis()
+        """Returns True when Redis is connected or in-memory fallback is active.
+        Periodically retries Redis connection if previously failed."""
+        client = await self._get_redis()
+        if client:
+            # Verify Redis is still healthy with a ping
+            try:
+                await client.ping()
+                return True
+            except Exception:
+                logger.warning("Redis health check failed — attempting reconnect")
+                self._redis = None
+                self._redis_checked = False
+                self._redis_available = False
+                # Try to reconnect immediately
+                client = await self._get_redis()
+                return client is not None
+        # In-memory fallback is always available (but degraded)
         return True
+
+    @property
+    def degraded(self) -> bool:
+        """True when using in-memory fallback (per-process, not multi-pod safe).
+        Duplicate orders are possible across pods in this state."""
+        return self._redis_checked and not self._redis_available
+
+    def is_redis_connected(self) -> bool:
+        """Return True only if Redis is the active backend (multi-pod safe dedup)."""
+        return self._redis_available
 
     @property
     def redis_connected(self) -> bool:
@@ -134,7 +179,12 @@ class IdempotencyStore:
         if existing:
             return False, existing
         ok = await self.set(idempotency_key, order_id, broker_order_id, status)
-        return ok, None
+        # BUG 28 FIX: If set() returns False (lost the race), re-fetch with get()
+        # and return the winner's value instead of None.
+        if not ok:
+            existing = await self.get(idempotency_key)
+            return False, existing
+        return True, None
 
     @staticmethod
     def derive_key(signal_id: str, symbol: str, side: str, quantity: int, price: Optional[float], ts_iso: str) -> str:

@@ -6,9 +6,9 @@ import { cn } from "@/lib/utils";
 import { endpoints } from "@/lib/api/client";
 import { useState } from "react";
 import {
-  FileText, Filter, Clock, AlertTriangle,
+  FileText, Clock, AlertTriangle,
   Info, CheckCircle, Shield, Zap,
-  ChevronDown, Search,
+  Search,
 } from "lucide-react";
 
 const EVENT_COLORS: Record<string, { icon: typeof Info; color: string; bg: string }> = {

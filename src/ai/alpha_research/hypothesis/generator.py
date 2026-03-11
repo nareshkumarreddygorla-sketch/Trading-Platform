@@ -3,7 +3,7 @@ Phase A: Alpha hypothesis generation engine.
 Systematic variations from templates; avoid combinatorial explosion;
 apply statistical pre-filter (univariate IC) before expensive backtest.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import numpy as np

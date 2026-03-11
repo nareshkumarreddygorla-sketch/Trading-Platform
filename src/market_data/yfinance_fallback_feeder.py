@@ -9,13 +9,28 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from src.market_data.timestamp import normalize_ts
+
 logger = logging.getLogger(__name__)
 
-# Top NSE stocks for paper trading (keep small for fast startup)
-DEFAULT_NSE_SYMBOLS = [
-    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS",
-    "SBIN.NS", "BAJFINANCE.NS", "WIPRO.NS", "ITC.NS", "HCLTECH.NS",
-]
+def _discover_symbols(count: int = 10) -> List[str]:
+    """Dynamically discover top liquid NSE symbols for paper trading feed."""
+    try:
+        from src.scanner.dynamic_universe import get_dynamic_universe
+        symbols = get_dynamic_universe().get_tradeable_stocks(count=count)
+        if symbols:
+            return [f"{s}.NS" for s in symbols]
+    except Exception:
+        pass
+    try:
+        from src.market_data.symbol_token_map import get_symbol_token_map
+        stm = get_symbol_token_map()
+        if stm.is_loaded:
+            nse = stm.get_all_nse_equity_symbols()
+            return [f"{s}.NS" for s in nse[:count]]
+    except Exception:
+        pass
+    return []
 
 
 class YFinanceFallbackFeeder:
@@ -31,7 +46,7 @@ class YFinanceFallbackFeeder:
         poll_interval_seconds: float = 60.0,
     ):
         self._bar_cache = bar_cache
-        self._symbols = symbols or DEFAULT_NSE_SYMBOLS
+        self._symbols = symbols or _discover_symbols(count=10)
         self._poll_interval = poll_interval_seconds
         self._running = False
         self._task: Optional[asyncio.Task] = None
@@ -60,7 +75,11 @@ class YFinanceFallbackFeeder:
 
     async def _poll_loop(self) -> None:
         # Initial load: fetch historical bars to fill the cache
-        await self._fetch_and_push(initial=True)
+        try:
+            await self._fetch_and_push(initial=True)
+        except asyncio.CancelledError:
+            logger.info("YFinance feeder initial fetch cancelled")
+            return
         self._initial_load_done = True
 
         while self._running:
@@ -111,8 +130,10 @@ class YFinanceFallbackFeeder:
 
                 for idx, row in data.iterrows():
                     ts = idx.to_pydatetime()
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
+                    # yfinance .NS symbols return IST timestamps (often
+                    # naive or incorrectly tagged).  Use canonical
+                    # normalize_ts with IST assumption for naive values.
+                    ts = normalize_ts(ts, source_tz="Asia/Kolkata")
 
                     # Skip bars we've already pushed
                     if last_ts is not None and ts <= last_ts:

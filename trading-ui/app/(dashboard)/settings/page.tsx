@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils";
 import { endpoints, clearAuthTokens } from "@/lib/api/client";
 import { useStore } from "@/store/useStore";
 import {
-  Settings, User, Shield, Bell, Palette, Key,
-  Save, LogOut, Moon, Sun, Monitor, AlertTriangle,
+  User, Shield, Bell, Key,
+  Save, LogOut, AlertTriangle,
 } from "lucide-react";
 
 export default function SettingsPage() {
@@ -25,6 +25,8 @@ export default function SettingsPage() {
   const [maxDailyLoss, setMaxDailyLoss] = useState<number | null>(null);
   const [maxPositions, setMaxPositions] = useState<number | null>(null);
   const [maxPositionPct, setMaxPositionPct] = useState<number | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const updateLimitsMutation = useMutation({
     mutationFn: (body: { max_daily_loss_pct?: number; max_open_positions?: number; max_position_pct?: number }) =>
@@ -34,6 +36,13 @@ export default function SettingsPage() {
       setMaxDailyLoss(null);
       setMaxPositions(null);
       setMaxPositionPct(null);
+      setValidationError(null);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    },
+    onError: (err: Error) => {
+      setValidationError(err.message);
+      setSaveSuccess(false);
     },
   });
 
@@ -114,11 +123,27 @@ export default function SettingsPage() {
               </div>
               <button
                 onClick={() => {
+                  setValidationError(null);
+                  setSaveSuccess(false);
                   const body: Record<string, number> = {};
                   if (maxDailyLoss !== null) body.max_daily_loss_pct = maxDailyLoss;
                   if (maxPositions !== null) body.max_open_positions = maxPositions;
                   if (maxPositionPct !== null) body.max_position_pct = maxPositionPct;
-                  if (Object.keys(body).length > 0) updateLimitsMutation.mutate(body);
+                  if (Object.keys(body).length === 0) return;
+                  // Validate ranges before submitting
+                  if (body.max_daily_loss_pct !== undefined && (body.max_daily_loss_pct < 0.5 || body.max_daily_loss_pct > 10)) {
+                    setValidationError("Max Daily Loss must be between 0.5% and 10%");
+                    return;
+                  }
+                  if (body.max_open_positions !== undefined && (body.max_open_positions < 1 || body.max_open_positions > 50)) {
+                    setValidationError("Max Positions must be between 1 and 50");
+                    return;
+                  }
+                  if (body.max_position_pct !== undefined && (body.max_position_pct < 1 || body.max_position_pct > 50)) {
+                    setValidationError("Max Position % must be between 1% and 50%");
+                    return;
+                  }
+                  updateLimitsMutation.mutate(body);
                 }}
                 disabled={updateLimitsMutation.isPending || (maxDailyLoss === null && maxPositions === null && maxPositionPct === null)}
                 aria-label="Save risk configuration"
@@ -143,7 +168,7 @@ export default function SettingsPage() {
                 <input
                   type="range" min="0.5" max="10" step="0.5"
                   value={maxDailyLoss ?? lim.max_daily_loss_pct}
-                  onChange={(e) => setMaxDailyLoss(Number(e.target.value))}
+                  onChange={(e) => { setMaxDailyLoss(Number(e.target.value)); setValidationError(null); setSaveSuccess(false); }}
                   className="w-full h-2 rounded-full appearance-none cursor-pointer accent-warning bg-muted"
                 />
               </div>
@@ -155,7 +180,7 @@ export default function SettingsPage() {
                 <input
                   type="range" min="1" max="50" step="1"
                   value={maxPositions ?? lim.max_open_positions}
-                  onChange={(e) => setMaxPositions(Number(e.target.value))}
+                  onChange={(e) => { setMaxPositions(Number(e.target.value)); setValidationError(null); setSaveSuccess(false); }}
                   className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary bg-muted"
                 />
               </div>
@@ -167,11 +192,37 @@ export default function SettingsPage() {
                 <input
                   type="range" min="1" max="50" step="1"
                   value={maxPositionPct ?? lim.max_position_pct}
-                  onChange={(e) => setMaxPositionPct(Number(e.target.value))}
+                  onChange={(e) => { setMaxPositionPct(Number(e.target.value)); setValidationError(null); setSaveSuccess(false); }}
                   className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary bg-muted"
                 />
               </div>
             </div>
+
+            {/* Validation error */}
+            {validationError && (
+              <div className="rounded-lg bg-loss/10 border border-loss/30 p-3 mt-4" role="alert">
+                <p className="text-xs text-loss font-medium">{validationError}</p>
+              </div>
+            )}
+
+            {/* Mutation error */}
+            {updateLimitsMutation.isError && !validationError && (
+              <div className="rounded-lg bg-loss/10 border border-loss/30 p-3 mt-4" role="alert">
+                <p className="text-xs text-loss font-medium">
+                  Failed to save: {(updateLimitsMutation.error as Error)?.message || "Unknown error"}
+                </p>
+              </div>
+            )}
+
+            {/* Save success */}
+            {saveSuccess && (
+              <div className="rounded-lg bg-profit/10 border border-profit/30 p-3 mt-4 flex items-center gap-2" role="status">
+                <svg className="h-4 w-4 text-profit shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <p className="text-xs text-profit font-medium">Risk limits saved successfully</p>
+              </div>
+            )}
           </div>
         </motion.div>
 
@@ -209,10 +260,9 @@ export default function SettingsPage() {
                     />
                     <label
                       htmlFor={`notif-${item.label}`}
-                      className="flex h-6 w-11 cursor-pointer items-center rounded-full bg-muted transition-colors peer-checked:bg-primary/80"
-                    >
-                      <span className="ml-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
-                    </label>
+                      className="block h-6 w-11 cursor-pointer rounded-full bg-muted transition-colors peer-checked:bg-primary/80"
+                    />
+                    <span className="pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
                   </div>
                 </div>
               ))}

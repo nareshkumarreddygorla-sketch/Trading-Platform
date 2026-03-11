@@ -11,13 +11,20 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_LOCK_KEY = "trading:order_submit_lock"
-DEFAULT_TTL_SECONDS = 25
+DEFAULT_TTL_SECONDS = 30
+WATCHDOG_INTERVAL_SECONDS = 10  # Re-extend TTL every 10s while lock is held
 
 
 class RedisDistributedLock:
     """
     Acquire a Redis lock (SET NX EX). Release with DELETE.
     Use as async context manager; supports lock timeout for acquire.
+
+    Safety features:
+    - TTL on every lock (default 30s) prevents cluster-wide deadlock on pod crash.
+    - Watchdog task auto-extends TTL while the holder is alive.
+    - force_release() for operator intervention when needed.
+
     Falls back to asyncio.Lock when Redis is unavailable (paper trading).
     """
 
@@ -38,6 +45,8 @@ class RedisDistributedLock:
         # In-memory fallback lock for paper trading
         self._local_lock = asyncio.Lock()
         self._using_local = False
+        # Watchdog task that auto-extends TTL
+        self._watchdog_task: Optional[asyncio.Task] = None
 
     async def _get_redis(self):
         if self._redis is None and not self._redis_checked:
@@ -48,10 +57,49 @@ class RedisDistributedLock:
                 await client.ping()
                 self._redis = client
             except ImportError:
-                logger.info("redis not installed; using local lock (paper mode)")
+                logger.warning(
+                    "DistributedLock DEGRADED: redis package not installed; "
+                    "using local asyncio.Lock (paper mode only)"
+                )
             except Exception:
-                logger.info("Redis unavailable; using local lock (paper mode)")
+                logger.warning(
+                    "DistributedLock DEGRADED: Redis unavailable; "
+                    "using local asyncio.Lock (paper mode only)"
+                )
         return self._redis
+
+    async def _watchdog(self) -> None:
+        """Periodically extend the lock TTL while the holder is still alive.
+        Runs as a background task; cancelled on release."""
+        client = self._redis
+        token = self._token
+        if not client or not token:
+            return
+        # Lua script: only extend if we still own the lock
+        extend_script = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('expire', KEYS[1], ARGV[2])
+        end
+        return 0
+        """
+        try:
+            while True:
+                await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
+                try:
+                    result = await client.eval(
+                        extend_script, 1, self.lock_key, token, str(self.ttl_seconds)
+                    )
+                    if not result:
+                        logger.warning(
+                            "Lock watchdog: lock %s lost (token mismatch); stopping watchdog",
+                            self.lock_key,
+                        )
+                        return
+                    logger.debug("Lock watchdog: extended TTL for %s", self.lock_key)
+                except Exception as e:
+                    logger.warning("Lock watchdog: failed to extend TTL: %s", e)
+        except asyncio.CancelledError:
+            return
 
     async def acquire(self) -> bool:
         """Acquire lock. Returns True if acquired, False on timeout."""
@@ -63,6 +111,10 @@ class RedisDistributedLock:
                 await asyncio.wait_for(self._local_lock.acquire(), timeout=self.acquire_timeout_seconds)
                 return True
             except asyncio.TimeoutError:
+                logger.error(
+                    "Failed to acquire local fallback lock (timeout=%.1fs)",
+                    self.acquire_timeout_seconds,
+                )
                 return False
         self._using_local = False
         self._token = str(uuid.uuid4())
@@ -70,17 +122,40 @@ class RedisDistributedLock:
         deadline = loop.time() + self.acquire_timeout_seconds
         while loop.time() < deadline:
             try:
-                ok = await client.set(self.lock_key, self._token, nx=True, ex=self.ttl_seconds)
+                ok = await client.set(
+                    self.lock_key, self._token, nx=True, ex=self.ttl_seconds
+                )
                 if ok:
+                    # Start watchdog to auto-extend TTL
+                    self._watchdog_task = asyncio.create_task(
+                        self._watchdog(), name=f"lock-watchdog-{self.lock_key}"
+                    )
                     return True
             except Exception as e:
                 logger.warning("Redis lock acquire failed: %s", e)
                 return False
             await asyncio.sleep(0.2)
+        # Timed out waiting to acquire
+        logger.error(
+            "Failed to acquire distributed lock key=%s after %.1fs timeout; "
+            "another holder may be stuck or TTL too long",
+            self.lock_key,
+            self.acquire_timeout_seconds,
+        )
+        self._token = None
         return False
 
     async def release(self) -> None:
-        """Release lock."""
+        """Release lock. Cancels watchdog and deletes key if we still own it."""
+        # Stop watchdog first
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self._watchdog_task = None
+
         if self._using_local:
             try:
                 self._local_lock.release()
@@ -94,6 +169,7 @@ class RedisDistributedLock:
         if not client:
             return
         try:
+            # Lua: only delete if we still own the lock (compare token)
             script = """
             if redis.call('get', KEYS[1]) == ARGV[1] then
                 return redis.call('del', KEYS[1])
@@ -105,10 +181,44 @@ class RedisDistributedLock:
             logger.warning("Redis lock release failed: %s", e)
         self._token = None
 
+    async def force_release(self) -> bool:
+        """Unconditionally delete the lock key — for operator intervention only.
+        Returns True if a key was deleted, False otherwise.
+        WARNING: This does NOT check ownership. Use only when you are certain
+        the current holder is dead/stuck."""
+        client = await self._get_redis()
+        if not client:
+            # For local lock, force-release by creating a new lock instance
+            if self._local_lock.locked():
+                try:
+                    self._local_lock.release()
+                except RuntimeError:
+                    pass
+                logger.warning("force_release: released local fallback lock")
+                return True
+            return False
+        try:
+            result = await client.delete(self.lock_key)
+            if result:
+                logger.warning(
+                    "force_release: deleted lock key %s — operator intervention",
+                    self.lock_key,
+                )
+                return True
+            else:
+                logger.info("force_release: lock key %s did not exist", self.lock_key)
+                return False
+        except Exception as e:
+            logger.error("force_release failed for key %s: %s", self.lock_key, e)
+            return False
+
     async def __aenter__(self) -> "RedisDistributedLock":
         ok = await self.acquire()
         if not ok:
-            raise RuntimeError("Failed to acquire distributed submission lock (timeout)")
+            raise RuntimeError(
+                f"Failed to acquire distributed lock key={self.lock_key} "
+                f"(timeout={self.acquire_timeout_seconds}s)"
+            )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

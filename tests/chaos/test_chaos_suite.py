@@ -56,6 +56,7 @@ async def test_idempotency_storm_identical_keys():
         client = await store._get_redis()
         if not client:
             pytest.skip("Redis not available")
+        await client.ping()
     except Exception:
         pytest.skip("Redis not available")
     key = "chaos_storm_key_001"
@@ -77,6 +78,7 @@ async def test_redis_distributed_lock_expiry():
         r = await lock._get_redis()
         if not r:
             pytest.skip("Redis not available")
+        await r.ping()
     except Exception:
         pytest.skip("Redis not available")
     ok1 = await lock.acquire()
@@ -95,6 +97,7 @@ async def test_cluster_reservation_over_reservation_prevented():
         r = await res._get_redis()
         if not r:
             pytest.skip("Redis not available")
+        await r.ping()
     except Exception:
         pytest.skip("Redis not available")
     await res.reserve("oid_chaos_1", 1)

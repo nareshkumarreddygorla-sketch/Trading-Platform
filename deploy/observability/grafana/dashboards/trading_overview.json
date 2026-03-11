@@ -1,0 +1,1652 @@
+{
+  "dashboard": {
+    "uid": "alphaforge-trading-overview",
+    "title": "AlphaForge Trading Overview",
+    "description": "Comprehensive trading platform dashboard: performance, risk, execution quality, system health, and market data.",
+    "tags": ["trading", "alphaforge", "overview", "sre"],
+    "timezone": "Asia/Kolkata",
+    "refresh": "10s",
+    "schemaVersion": 39,
+    "version": 1,
+    "editable": true,
+    "fiscalYearStartMonth": 4,
+    "graphTooltip": 1,
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "datasource",
+          "type": "datasource",
+          "query": "prometheus",
+          "current": {
+            "text": "Prometheus",
+            "value": "Prometheus"
+          },
+          "hide": 0,
+          "label": "Datasource"
+        },
+        {
+          "name": "job",
+          "type": "query",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "query": "label_values(up, job)",
+          "current": {
+            "text": "trading-api",
+            "value": "trading-api"
+          },
+          "refresh": 2,
+          "sort": 1,
+          "hide": 0,
+          "label": "Job"
+        },
+        {
+          "name": "rate_interval",
+          "type": "custom",
+          "query": "1m,5m,10m,15m,30m,1h",
+          "current": {
+            "text": "5m",
+            "value": "5m"
+          },
+          "hide": 0,
+          "label": "Rate Interval"
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "panels": [
+
+      {
+        "id": 100,
+        "title": "Trading Performance",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+        "collapsed": false
+      },
+
+      {
+        "id": 1,
+        "title": "Equity Curve",
+        "description": "Portfolio equity over time",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_equity{job=\"$job\"}",
+            "legendFormat": "Equity",
+            "refId": "A"
+          },
+          {
+            "expr": "trading_peak_equity{job=\"$job\"}",
+            "legendFormat": "Peak Equity",
+            "refId": "B"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 10, "x": 0, "y": 1},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyINR",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "gradientMode": "scheme",
+              "showPoints": "never",
+              "axisCenteredZero": false,
+              "axisLabel": "",
+              "scaleDistribution": {"type": "linear"}
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Peak Equity"},
+              "properties": [
+                {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}},
+                {"id": "custom.fillOpacity", "value": 0},
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "light-orange"}}
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 2,
+        "title": "Daily PnL",
+        "description": "Current day profit and loss",
+        "type": "barchart",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_daily_pnl{job=\"$job\"}",
+            "legendFormat": "Daily PnL",
+            "refId": "A",
+            "instant": false
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 10, "y": 1},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyINR",
+            "color": {"mode": "continuous-GrYlRd"},
+            "custom": {
+              "fillOpacity": 80,
+              "gradientMode": "scheme",
+              "axisCenteredZero": true
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "red", "value": -10000},
+                {"color": "yellow", "value": -1000},
+                {"color": "green", "value": 0},
+                {"color": "dark-green", "value": 10000}
+              ]
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "single"},
+          "legend": {"displayMode": "hidden"}
+        }
+      },
+
+      {
+        "id": 3,
+        "title": "Win Rate",
+        "description": "Ratio of filled orders to total orders",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "orders_filled_total{job=\"$job\"} / clamp_min(orders_total{job=\"$job\"}, 1) * 100",
+            "legendFormat": "Win Rate",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "red", "value": 0},
+                {"color": "orange", "value": 40},
+                {"color": "yellow", "value": 55},
+                {"color": "green", "value": 70}
+              ]
+            },
+            "min": 0,
+            "max": 100
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 4,
+        "title": "Sharpe Ratio",
+        "description": "Rolling annualized Sharpe ratio",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_sharpe_rolling{job=\"$job\"}",
+            "legendFormat": "Sharpe",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "red", "value": -1},
+                {"color": "orange", "value": 0},
+                {"color": "yellow", "value": 0.5},
+                {"color": "green", "value": 1},
+                {"color": "dark-green", "value": 2}
+              ]
+            },
+            "decimals": 2
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 5,
+        "title": "Max Drawdown",
+        "description": "Current drawdown percentage from peak equity",
+        "type": "gauge",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_drawdown_pct{job=\"$job\"}",
+            "legendFormat": "Drawdown",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 5},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 5},
+                {"color": "orange", "value": 10},
+                {"color": "red", "value": 20}
+              ]
+            },
+            "min": 0,
+            "max": 50
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true
+        }
+      },
+
+      {
+        "id": 6,
+        "title": "Cumulative PnL",
+        "description": "Total cumulative profit and loss",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_pnl_total{job=\"$job\"}",
+            "legendFormat": "PnL",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 5},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyINR",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "red", "value": -100000},
+                {"color": "orange", "value": -10000},
+                {"color": "yellow", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 200,
+        "title": "Risk Management",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9},
+        "collapsed": false
+      },
+
+      {
+        "id": 7,
+        "title": "VaR / Drawdown Trend",
+        "description": "Value at Risk and drawdown percentage over time",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_drawdown_pct{job=\"$job\"}",
+            "legendFormat": "Drawdown %",
+            "refId": "A"
+          },
+          {
+            "expr": "trading_portfolio_heat{job=\"$job\"}",
+            "legendFormat": "Portfolio Heat",
+            "refId": "B"
+          },
+          {
+            "expr": "trading_drift_psi{job=\"$job\"}",
+            "legendFormat": "Drift PSI",
+            "refId": "C"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 10},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 5,
+              "showPoints": "never",
+              "axisLabel": ""
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Drawdown %"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}},
+                {"id": "unit", "value": "percent"}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "Portfolio Heat"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "Drift PSI"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}},
+                {"id": "custom.axisPlacement", "value": "right"}
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 8,
+        "title": "Circuit Breaker State",
+        "description": "Trading circuit breaker: CLOSED = normal, OPEN = halted",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_circuit_open{job=\"$job\"}",
+            "legendFormat": "Circuit Breaker",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 8, "y": 10},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "type": "value",
+                "options": {
+                  "0": {"text": "CLOSED", "color": "green", "index": 0},
+                  "1": {"text": "OPEN", "color": "red", "index": 1}
+                }
+              }
+            ],
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 1}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 9,
+        "title": "Kill Switch",
+        "description": "Kill switch state: SAFE = normal, ARMED = trading halted",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_kill_switch_armed{job=\"$job\"}",
+            "legendFormat": "Kill Switch",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 12, "y": 10},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "type": "value",
+                "options": {
+                  "0": {"text": "SAFE", "color": "green", "index": 0},
+                  "1": {"text": "ARMED", "color": "red", "index": 1}
+                }
+              }
+            ],
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 1}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 10,
+        "title": "Open Positions",
+        "description": "Number of currently open positions",
+        "type": "gauge",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_open_positions{job=\"$job\"}",
+            "legendFormat": "Positions",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 10},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 10},
+                {"color": "orange", "value": 20},
+                {"color": "red", "value": 30}
+              ]
+            },
+            "min": 0,
+            "max": 50
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true
+        }
+      },
+
+      {
+        "id": 11,
+        "title": "Portfolio Heat",
+        "description": "Portfolio heat: sum of absolute position values / equity",
+        "type": "gauge",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_portfolio_heat{job=\"$job\"}",
+            "legendFormat": "Heat",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 10},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 0.5},
+                {"color": "orange", "value": 0.75},
+                {"color": "red", "value": 1.0}
+              ]
+            },
+            "min": 0,
+            "max": 1.5
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true
+        }
+      },
+
+      {
+        "id": 12,
+        "title": "Risk Rejections by Reason",
+        "description": "Order rejections by the risk engine, broken down by reason",
+        "type": "piechart",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "increase(risk_rejection_total{job=\"$job\"}[$rate_interval])",
+            "legendFormat": "{{reason}}",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 8, "x": 8, "y": 14},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"}
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "legend": {"displayMode": "table", "placement": "right", "values": ["value", "percent"]},
+          "tooltip": {"mode": "single"},
+          "pieType": "donut"
+        }
+      },
+
+      {
+        "id": 13,
+        "title": "Safe Mode",
+        "description": "Whether platform is operating in safe/degraded mode",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_safe_mode{job=\"$job\"}",
+            "legendFormat": "Safe Mode",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 14},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "type": "value",
+                "options": {
+                  "0": {"text": "NORMAL", "color": "green", "index": 0},
+                  "1": {"text": "SAFE MODE", "color": "orange", "index": 1}
+                }
+              }
+            ],
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "orange", "value": 1}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 14,
+        "title": "Kill Switch Events",
+        "description": "Kill switch trigger events by reason",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "increase(kill_switch_triggered_total{job=\"$job\"}[$rate_interval])",
+            "legendFormat": "{{reason}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 14},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "bars",
+              "fillOpacity": 80,
+              "showPoints": "never",
+              "stacking": {"mode": "normal"}
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi"},
+          "legend": {"displayMode": "hidden"}
+        }
+      },
+
+      {
+        "id": 300,
+        "title": "Execution Quality",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18},
+        "collapsed": false
+      },
+
+      {
+        "id": 15,
+        "title": "Order Latency (p50 / p95 / p99)",
+        "description": "Order submission pipeline latency percentiles",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(order_submission_latency_seconds_bucket{job=\"$job\"}[$rate_interval]))",
+            "legendFormat": "p50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(order_submission_latency_seconds_bucket{job=\"$job\"}[$rate_interval]))",
+            "legendFormat": "p95",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(order_submission_latency_seconds_bucket{job=\"$job\"}[$rate_interval]))",
+            "legendFormat": "p99",
+            "refId": "C"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 19},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "showPoints": "never"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.5},
+                {"color": "red", "value": 2}
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "p99"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}},
+                {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "p95"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "p50"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 16,
+        "title": "Fill Rate",
+        "description": "Ratio of filled orders to total submitted orders",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "rate(orders_filled_total{job=\"$job\"}[$rate_interval]) / clamp_min(rate(orders_total{job=\"$job\"}[$rate_interval]), 0.001) * 100",
+            "legendFormat": "Fill Rate",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 8, "y": 19},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "red", "value": 0},
+                {"color": "orange", "value": 50},
+                {"color": "yellow", "value": 75},
+                {"color": "green", "value": 90}
+              ]
+            },
+            "min": 0,
+            "max": 100,
+            "decimals": 1
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 17,
+        "title": "Slippage Ratio",
+        "description": "Realized vs expected slippage ratio (1.0 = on target, >1.5 = degraded)",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_slippage_ratio{job=\"$job\"}",
+            "legendFormat": "Slippage Ratio",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 12, "y": 19},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "continuous-GrYlRd"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 15,
+              "gradientMode": "scheme",
+              "showPoints": "never",
+              "thresholdsStyle": {"mode": "dashed"}
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 1.2},
+                {"color": "red", "value": 1.5}
+              ]
+            },
+            "decimals": 2
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "single"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 18,
+        "title": "Orders per Minute",
+        "description": "Rate of order submissions, fills, and rejections",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "rate(orders_total{job=\"$job\"}[$rate_interval]) * 60",
+            "legendFormat": "Submitted/min",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(orders_filled_total{job=\"$job\"}[$rate_interval]) * 60",
+            "legendFormat": "Filled/min",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(orders_rejected_total{job=\"$job\"}[$rate_interval]) * 60",
+            "legendFormat": "Rejected/min",
+            "refId": "C"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 4, "x": 20, "y": 19},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "opm",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 1,
+              "fillOpacity": 20,
+              "showPoints": "never",
+              "stacking": {"mode": "none"}
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Rejected/min"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "Filled/min"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 19,
+        "title": "Rejection Rate",
+        "description": "Current order rejection rate from execution quality tracker",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_rejection_rate{job=\"$job\"} * 100",
+            "legendFormat": "Rejection Rate",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 8, "y": 23},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 5},
+                {"color": "orange", "value": 10},
+                {"color": "red", "value": 20}
+              ]
+            },
+            "min": 0,
+            "max": 100,
+            "decimals": 1
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 400,
+        "title": "System Health",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
+        "collapsed": false
+      },
+
+      {
+        "id": 20,
+        "title": "Broker API Latency (p95)",
+        "description": "Broker API call latency by operation at the 95th percentile",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(broker_latency_seconds_bucket{job=\"$job\"}[$rate_interval]))",
+            "legendFormat": "{{operation}} p50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(broker_latency_seconds_bucket{job=\"$job\"}[$rate_interval]))",
+            "legendFormat": "{{operation}} p95",
+            "refId": "B"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 28},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "showPoints": "never",
+              "thresholdsStyle": {"mode": "dashed"}
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 5}
+              ]
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 21,
+        "title": "Fill Latency (p50 / p95)",
+        "description": "Time from fill at broker to fill applied in the system",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(fill_latency_seconds_bucket{job=\"$job\"}[$rate_interval]))",
+            "legendFormat": "p50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(fill_latency_seconds_bucket{job=\"$job\"}[$rate_interval]))",
+            "legendFormat": "p95",
+            "refId": "B"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 28},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "showPoints": "never"
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "p95"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "p50"},
+              "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 22,
+        "title": "Error Rate (5xx / Broker)",
+        "description": "Broker errors and failures over time",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "rate(broker_error_total{job=\"$job\"}[$rate_interval]) * 60",
+            "legendFormat": "Broker Error: {{type}}",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(broker_failure_total{job=\"$job\"}[$rate_interval]) * 60",
+            "legendFormat": "Broker Failure: {{operation}}/{{reason}}",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(orders_persist_failed_total{job=\"$job\"}[$rate_interval]) * 60",
+            "legendFormat": "Persist Failures",
+            "refId": "C"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 28},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "opm",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "showPoints": "never",
+              "stacking": {"mode": "normal"}
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 23,
+        "title": "Memory Usage",
+        "description": "Process resident memory bytes (RSS)",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "process_resident_memory_bytes{job=\"$job\"}",
+            "legendFormat": "RSS",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 36},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "color": {"mode": "continuous-blues"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "gradientMode": "scheme",
+              "showPoints": "never"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 536870912},
+                {"color": "red", "value": 1073741824}
+              ]
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "single"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 24,
+        "title": "CPU Usage",
+        "description": "Process CPU seconds consumption rate",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "rate(process_cpu_seconds_total{job=\"$job\"}[$rate_interval])",
+            "legendFormat": "CPU Cores Used",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 36},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "continuous-GrYlRd"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "gradientMode": "scheme",
+              "showPoints": "never"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.8},
+                {"color": "red", "value": 1.5}
+              ]
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "single"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 25,
+        "title": "API Health",
+        "description": "Whether the trading API target is up",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "up{job=\"$job\"}",
+            "legendFormat": "API",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 36},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "type": "value",
+                "options": {
+                  "0": {"text": "DOWN", "color": "red", "index": 0},
+                  "1": {"text": "UP", "color": "green", "index": 1}
+                }
+              }
+            ],
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "green", "value": 1}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 26,
+        "title": "WebSocket Connections",
+        "description": "Active WebSocket connections",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_ws_connections{job=\"$job\"}",
+            "legendFormat": "WS Conns",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 36},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "blue", "value": null},
+                {"color": "blue", "value": 0},
+                {"color": "green", "value": 1},
+                {"color": "yellow", "value": 50},
+                {"color": "red", "value": 100}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 27,
+        "title": "Reconciliation Mismatches",
+        "description": "Position reconciliation and fill mismatches",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "reconciliation_mismatches_total{job=\"$job\"}",
+            "legendFormat": "Position Mismatches",
+            "refId": "A"
+          },
+          {
+            "expr": "fill_reconciliation_mismatch_total{job=\"$job\"}",
+            "legendFormat": "Fill Mismatches",
+            "refId": "B"
+          },
+          {
+            "expr": "fill_mismatch_total{job=\"$job\"}",
+            "legendFormat": "Recon Mismatches",
+            "refId": "C"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 40},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "showPoints": "auto"
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi"},
+          "legend": {"displayMode": "hidden"}
+        }
+      },
+
+      {
+        "id": 28,
+        "title": "Startup Recovery p95",
+        "description": "Cold start recovery duration at the 95th percentile",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, startup_recovery_duration_seconds_bucket{job=\"$job\"})",
+            "legendFormat": "Recovery p95",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 40},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 5},
+                {"color": "red", "value": 30}
+              ]
+            },
+            "decimals": 1
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "value",
+          "graphMode": "none",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 500,
+        "title": "Market Data & AI",
+        "type": "row",
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": 44},
+        "collapsed": false
+      },
+
+      {
+        "id": 29,
+        "title": "Fill Events Rate",
+        "description": "Rate of fill events by type (live, paper, simulated)",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "rate(fill_events_total{job=\"$job\"}[$rate_interval]) * 60",
+            "legendFormat": "{{fill_type}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 45},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "opm",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "bars",
+              "fillOpacity": 80,
+              "showPoints": "never",
+              "stacking": {"mode": "normal"}
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 30,
+        "title": "AI Model Confidence",
+        "description": "Ensemble and individual model confidence scores",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_ai_model_confidence{job=\"$job\"}",
+            "legendFormat": "{{model_id}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 45},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 5,
+              "showPoints": "never"
+            },
+            "min": 0,
+            "max": 1,
+            "decimals": 2
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 31,
+        "title": "ML Models Loaded",
+        "description": "Number of ML models currently loaded in memory",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_models_loaded{job=\"$job\"}",
+            "legendFormat": "Models",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 45},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 1},
+                {"color": "green", "value": 3}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "graphMode": "none",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 32,
+        "title": "Drift Events",
+        "description": "Concept drift detection events (cumulative)",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "increase(trading_ai_drift_detected_total{job=\"$job\"}[1h])",
+            "legendFormat": "Drift Events (1h)",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 45},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 1},
+                {"color": "orange", "value": 3},
+                {"color": "red", "value": 5}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 33,
+        "title": "Autonomous Loop Ticks",
+        "description": "Number of autonomous trading loop ticks",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_autonomous_ticks{job=\"$job\"}",
+            "legendFormat": "Ticks",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 49},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "blue", "value": null}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "value",
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 34,
+        "title": "Open Trades (Auto Loop)",
+        "description": "Trades currently tracked by the autonomous loop",
+        "type": "stat",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_open_trades{job=\"$job\"}",
+            "legendFormat": "Open Trades",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 49},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 10},
+                {"color": "red", "value": 25}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {"calcs": ["lastNotNull"]},
+          "colorMode": "background",
+          "graphMode": "area",
+          "textMode": "auto"
+        }
+      },
+
+      {
+        "id": 35,
+        "title": "Model Retrains",
+        "description": "Model retraining events showing which models were retrained and whether they replaced the old model",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "increase(trading_ai_retrain_total{job=\"$job\"}[1h])",
+            "legendFormat": "{{model_id}} (replaced={{replaced}})",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 53},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "bars",
+              "fillOpacity": 80,
+              "showPoints": "never",
+              "stacking": {"mode": "normal"}
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 36,
+        "title": "Current Regime",
+        "description": "Current market regime detected by AI models",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "trading_ai_regime{job=\"$job\"}",
+            "legendFormat": "{{regime}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 53},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 30,
+              "showPoints": "never",
+              "stacking": {"mode": "normal"}
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+
+      {
+        "id": 37,
+        "title": "Duplicate Prevention",
+        "description": "Duplicate orders and fills prevented by idempotency checks",
+        "type": "timeseries",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "targets": [
+          {
+            "expr": "rate(duplicate_order_prevented_total{job=\"$job\"}[$rate_interval]) * 60",
+            "legendFormat": "Dup Orders Prevented",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(duplicate_fill_total{job=\"$job\"}[$rate_interval]) * 60",
+            "legendFormat": "Dup Fills Skipped",
+            "refId": "B"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 53},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "opm",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "bars",
+              "fillOpacity": 80,
+              "showPoints": "never",
+              "stacking": {"mode": "normal"}
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      }
+    ]
+  }
+}

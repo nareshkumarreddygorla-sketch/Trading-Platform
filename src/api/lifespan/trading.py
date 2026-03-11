@@ -5,7 +5,6 @@ Lifespan: Autonomous loop, strategies, agents, background tasks
 import asyncio
 import logging
 import os
-import sys
 import time
 
 from fastapi import FastAPI
@@ -35,8 +34,15 @@ async def init_trading(app: FastAPI) -> None:
             from src.ai.regime.classifier import RegimeClassifier
             from src.ai.alpha_model import AlphaModel, AlphaStrategy
 
-            # Load trained XGBoost model if available
-            _model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "models", "alpha_xgb.joblib")
+            # ── AI Ensemble Engine: create BEFORE joblib.load to avoid torch/joblib deadlock ──
+            _models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "models")
+            _ensemble_engine, model_registry, _rl_predictor = setup_ensemble_engine(
+                app, None, None, _models_dir
+            )
+
+            # Load trained XGBoost model if available (uses joblib.load — must happen AFTER
+            # setup_ensemble_engine to avoid torch load_state_dict deadlock on macOS/Py3.9)
+            _model_path = os.path.join(_models_dir, "alpha_xgb.joblib")
             _alpha_model = AlphaModel(strategy_id="ai_alpha")
             if os.path.exists(_model_path):
                 if _alpha_model.load(_model_path):
@@ -122,6 +128,16 @@ async def init_trading(app: FastAPI) -> None:
             strategy_runner = StrategyRunner(registry)
             feature_engine = FeatureEngine()
             regime_classifier = RegimeClassifier()
+            app.state.regime_classifier = regime_classifier
+
+            # P0-3: Load feature normalizer (z-score normalization for model safety)
+            from src.ai.feature_engine import FeatureNormalizer
+            _normalizer_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                "models", "feature_normalizer.json",
+            )
+            _feature_normalizer = FeatureNormalizer.load(_normalizer_path)
+            app.state.feature_normalizer = _feature_normalizer
 
             # Enhanced allocator: more concurrent signals, strategy-level caps
             allocator = PortfolioAllocator(AllocatorConfig(
@@ -135,6 +151,8 @@ async def init_trading(app: FastAPI) -> None:
                     "rsi": 5.0,
                     "momentum_breakout": 5.0,
                     "mean_reversion": 5.0,
+                    "ml_predictor": 5.0,            # ML ensemble (LSTM+Transformer+XGB)
+                    "rl_agent": 5.0,                # Reinforcement learning agent
                 },
             ))
 
@@ -206,6 +224,7 @@ async def init_trading(app: FastAPI) -> None:
 
                 return {
                     "equity": rm.equity,
+                    "daily_pnl": rm.daily_pnl,
                     "exposure_multiplier": composite_mult,
                     "max_position_pct": rm.limits.max_position_pct,
                     "drawdown_scale": drawdown_scale,
@@ -235,11 +254,34 @@ async def init_trading(app: FastAPI) -> None:
             except Exception as e:
                 logger.warning("MarketScanner not configured: %s", e)
 
-            # ── AI Ensemble Engine: LSTM + Transformer + RL + Sentiment + XGBoost ──
-            _models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "models")
-            _ensemble_engine, model_registry, _rl_predictor = setup_ensemble_engine(
-                app, _alpha_model, feature_engine, _models_dir
-            )
+            # ── Wire XGBoost into ensemble (after AlphaModel loaded via joblib) ──
+            if _alpha_model and model_registry:
+                try:
+                    from src.ai.models.base import BasePredictor, PredictionOutput
+                    class XGBoostPredictor(BasePredictor):
+                        model_id = "xgboost_alpha"
+                        version = "v1"
+                        def __init__(self_xgb, alpha_model):
+                            self_xgb._alpha = alpha_model
+                            self_xgb.path = ""
+                        def predict(self_xgb, features, context=None):
+                            try:
+                                score = self_xgb._alpha.score(features)
+                                prob_up = 0.5 + score * 0.3
+                                return PredictionOutput(
+                                    prob_up=min(0.95, max(0.05, prob_up)),
+                                    expected_return=score * 0.01,
+                                    confidence=min(1.0, abs(score)),
+                                    model_id="xgboost_alpha", version="v1",
+                                    metadata={"raw_score": score},
+                                )
+                            except Exception:
+                                return PredictionOutput(0.5, 0.0, 0.0, "xgboost_alpha", "v1", {})
+                    xgb_pred = XGBoostPredictor(_alpha_model)
+                    model_registry.register(xgb_pred)
+                    logger.info("XGBoost predictor wired into ensemble (post-joblib)")
+                except Exception as e:
+                    logger.debug("XGBoost predictor wiring failed: %s", e)
 
             # ── Register ML strategies (connect to real models) ──
             try:
@@ -320,6 +362,11 @@ async def init_trading(app: FastAPI) -> None:
                 poll_interval_seconds=60.0,
                 paper_mode=getattr(gateway, "paper", True),
             )
+            # P0-3: Wire feature normalizer into autonomous loop
+            if _feature_normalizer and _feature_normalizer._fitted:
+                _autonomous_loop.set_feature_normalizer(_feature_normalizer)
+                logger.info("Feature normalizer wired to autonomous loop (%d features)", len(_feature_normalizer._means))
+
             # Wire open trade persistence (write-ahead for SL/TP tracking)
             # Try PostgreSQL first (if DATABASE_URL set), fall back to SQLite TradeStore
             _trade_repo_wired = False
@@ -346,6 +393,16 @@ async def init_trading(app: FastAPI) -> None:
                 except Exception as e:
                     logger.warning("SQLite trade persistence not available: %s", e)
 
+            # ── Wire Trade Outcome Repository (self-learning feedback loop) ──
+            try:
+                from src.persistence.trade_outcome_repo import TradeOutcomeRepository
+                _trade_outcome_repo = TradeOutcomeRepository()
+                _autonomous_loop.set_trade_outcome_repo(_trade_outcome_repo)
+                app.state.trade_outcome_repo = _trade_outcome_repo
+                logger.info("Trade outcome repository wired to autonomous loop (self-learning feedback)")
+            except Exception as e:
+                logger.warning("Trade outcome repository not wired: %s", e)
+
             _autonomous_loop.start()
             app.state.autonomous_loop = _autonomous_loop
             logger.info("Autonomous loop started (multi-strategy→regime→scanner→allocator→risk→execution)")
@@ -357,7 +414,7 @@ async def init_trading(app: FastAPI) -> None:
                     ks = getattr(app.state, "kill_switch", None)
                     if ks is None:
                         return False
-                    return ks.is_armed()
+                    return await ks.is_armed()
                 _autonomous_loop.set_kill_switch(_kill_switch_check)
                 logger.info("Kill switch wired to autonomous loop (auto-close on arm)")
 
@@ -540,18 +597,122 @@ async def init_trading(app: FastAPI) -> None:
                             except Exception as e:
                                 logger.debug("Daily report error: %s", e)
 
-                    _report_task = asyncio.get_event_loop().create_task(_daily_report_loop())
+                    _report_task = asyncio.get_running_loop().create_task(_daily_report_loop())
                     app.state._report_task = _report_task
                     logger.info("Daily report scheduler active (generates at 16:00 IST)")
             except Exception as e:
                 logger.debug("Daily report scheduler not configured: %s", e)
+
+            # ── Nightly Simulation Scheduler (16:30 IST after market close) ──
+            try:
+                async def _nightly_simulation_loop():
+                    """Run nightly strategy simulation at 16:30 IST."""
+                    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                    _IST = _tz(_td(hours=5, minutes=30))
+                    _last_sim_date = None
+                    while True:
+                        await asyncio.sleep(300)
+                        try:
+                            now_ist = _dt.now(_IST)
+                            today = now_ist.strftime("%Y-%m-%d")
+                            if now_ist.hour != 16 or now_ist.minute < 25 or now_ist.minute > 35:
+                                continue
+                            if now_ist.weekday() >= 5:
+                                continue
+                            if _last_sim_date == today:
+                                continue
+                            _last_sim_date = today
+                            logger.info("Starting nightly simulation pipeline...")
+                            from src.simulation.orchestrator import SimulationOrchestrator
+                            sim_orch = SimulationOrchestrator()
+                            results = await sim_orch.run_nightly_pipeline(intervals=["15m", "1h"])
+                            logger.info("Nightly simulation complete: %d results", len(results) if results else 0)
+                            from src.api.ws_manager import get_ws_manager
+                            mgr = get_ws_manager()
+                            if mgr:
+                                await mgr.broadcast({"type": "simulation_complete", "result_count": len(results) if results else 0})
+                        except asyncio.CancelledError:
+                            break
+                        except Exception as e:
+                            logger.warning("Nightly simulation error: %s", e)
+
+                _sim_task = asyncio.get_running_loop().create_task(_nightly_simulation_loop())
+                app.state._sim_task = _sim_task
+                logger.info("Nightly simulation scheduler active (runs at 16:30 IST)")
+            except Exception as e:
+                logger.debug("Nightly simulation scheduler not configured: %s", e)
+
+            # ── Pre-Market Briefing Scheduler (9:00 IST before market open) ──
+            try:
+                async def _pre_market_briefing_loop():
+                    """Generate pre-market briefing at 9:00 IST."""
+                    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                    _IST = _tz(_td(hours=5, minutes=30))
+                    _last_brief_date = None
+                    while True:
+                        await asyncio.sleep(300)
+                        try:
+                            now_ist = _dt.now(_IST)
+                            today = now_ist.strftime("%Y-%m-%d")
+                            if now_ist.hour != 9 or now_ist.minute > 5:
+                                continue
+                            if now_ist.weekday() >= 5:
+                                continue
+                            if _last_brief_date == today:
+                                continue
+                            _last_brief_date = today
+                            logger.info("Generating pre-market briefing...")
+                            from src.ai.llm.pre_market_brief import PreMarketBriefing
+                            briefing_engine = PreMarketBriefing()
+                            briefing = await briefing_engine.generate_briefing()
+                            # Apply exposure multiplier to risk manager
+                            rm = getattr(app.state, "risk_manager", None)
+                            if rm and briefing and hasattr(briefing, "exposure_multiplier"):
+                                rm._exposure_multiplier = briefing.exposure_multiplier
+                                logger.info("Pre-market briefing: outlook=%s, exposure_mult=%.2f",
+                                            getattr(briefing, "outlook", "unknown"), briefing.exposure_multiplier)
+                            from src.api.ws_manager import get_ws_manager
+                            mgr = get_ws_manager()
+                            if mgr and briefing:
+                                await mgr.broadcast({
+                                    "type": "pre_market_briefing",
+                                    "outlook": getattr(briefing, "outlook", "neutral"),
+                                    "confidence": getattr(briefing, "confidence", 0.5),
+                                    "exposure_multiplier": getattr(briefing, "exposure_multiplier", 1.0),
+                                    "key_risks": getattr(briefing, "key_risks", []),
+                                })
+                        except asyncio.CancelledError:
+                            break
+                        except Exception as e:
+                            logger.warning("Pre-market briefing error: %s", e)
+
+                _brief_task = asyncio.get_running_loop().create_task(_pre_market_briefing_loop())
+                app.state._brief_task = _brief_task
+                logger.info("Pre-market briefing scheduler active (runs at 9:00 IST)")
+            except Exception as e:
+                logger.debug("Pre-market briefing scheduler not configured: %s", e)
 
         except Exception as e:
             logger.warning("Autonomous loop not started: %s", e)
 
 
 async def shutdown_trading(app: FastAPI) -> None:
-    """Shutdown: stop agent orchestrator, autonomous loop, snapshot open trades."""
+    """Shutdown: stop self-learning, agent orchestrator, autonomous loop, snapshot open trades."""
+
+    # ── Stop self-learning scheduler gracefully ──
+    _sls = getattr(app.state, "self_learning_scheduler", None)
+    if _sls is not None:
+        try:
+            _sls.stop()
+            logger.info("SelfLearningScheduler stopped")
+        except Exception as ex:
+            logger.warning("SelfLearningScheduler stop: %s", ex)
+
+    # Cancel walk-forward background task
+    _wf_task = getattr(app.state, "_walk_forward_task", None)
+    if _wf_task is not None and not _wf_task.done():
+        _wf_task.cancel()
+        logger.debug("Walk-forward revalidation task cancelled")
 
     _orch = getattr(app.state, "agent_orchestrator", None)
     if _orch is not None:

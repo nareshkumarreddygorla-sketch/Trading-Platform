@@ -2,7 +2,7 @@
 Price-based features: returns, volatility, ATR, Bollinger width, momentum, z-score.
 Input: OHLCV series (close, high, low, volume); periods configurable.
 """
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 

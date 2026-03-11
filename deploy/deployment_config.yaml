@@ -1,0 +1,101 @@
+# ================================================================
+# AlphaForge Trading Platform — Deployment Configuration
+# ================================================================
+# Used by deploy/blue_green.sh and CI/CD pipelines.
+
+deployment:
+  strategy: blue-green
+  compose_file: docker-compose.yml
+
+# ── Health Check Configuration ──
+health_check:
+  endpoint: /health
+  ready_endpoint: /ready
+  retries: 10
+  interval_seconds: 5
+  timeout_seconds: 10
+  # Deep health: verify all subsystems (DB, Redis, models) are operational
+  deep_check: true
+  # Required health response fields
+  required_fields:
+    - status
+
+# ── Rollback Criteria ──
+# If any of these conditions are true after deployment,
+# an automatic rollback is triggered.
+rollback:
+  enabled: true
+  criteria:
+    # Health check must pass within this window after traffic switch
+    health_check_window_seconds: 60
+    # Maximum error rate in the first N minutes after deploy
+    max_error_rate_pct: 5.0
+    error_rate_window_minutes: 5
+    # API latency p95 must stay below this threshold
+    max_p95_latency_ms: 1000
+    # If the circuit breaker trips within N minutes of deploy, rollback
+    circuit_breaker_trip_rollback: true
+    circuit_breaker_window_minutes: 10
+
+# ── Traffic Switch Rules ──
+traffic:
+  # Drain timeout: seconds to wait for in-flight requests to complete
+  drain_timeout_seconds: 30
+  # Nginx reload method
+  nginx_reload: true
+  # Port mapping
+  api_port: 8000
+  staging_port: 8001
+
+# ── Pre-deployment Checks ──
+pre_deploy:
+  # Verify database migrations are current
+  check_db_migrations: true
+  # Verify ML models can be loaded by new code
+  check_model_compatibility: true
+  # Run smoke tests against staging slot before switching traffic
+  smoke_tests: true
+  smoke_test_endpoints:
+    - path: /health
+      method: GET
+      expected_status: 200
+    - path: /ready
+      method: GET
+      expected_status: 200
+    - path: /metrics
+      method: GET
+      expected_status: 200
+    - path: /api/v1/market/status
+      method: GET
+      expected_status: [200, 401]  # 401 OK if auth required
+
+# ── Post-deployment Actions ──
+post_deploy:
+  # Clear application caches after deploy
+  clear_caches: false
+  # Notify via webhook (Slack, Telegram, etc.)
+  notify:
+    enabled: false
+    webhook_url: "${DEPLOY_WEBHOOK_URL}"
+    # Template variables: ${SLOT}, ${VERSION}, ${TIMESTAMP}
+    message_template: "AlphaForge deployed to ${SLOT} at ${TIMESTAMP}"
+
+# ── Resource Limits ──
+resources:
+  api:
+    cpus: "2.0"
+    memory: "4G"
+    memory_reservation: "1G"
+  redis:
+    cpus: "0.5"
+    memory: "512M"
+  postgres:
+    cpus: "1.0"
+    memory: "2G"
+
+# ── Backup Policy ──
+backup:
+  # Snapshot database before migration
+  pre_migration_snapshot: true
+  # Keep N previous deployment images
+  keep_previous_images: 3

@@ -1,3 +1,38 @@
+/* ── Error typing ── */
+
+export interface ApiErrorResponse {
+  detail: string | Array<{ msg?: string; loc?: unknown[] }>;
+  status?: number;
+}
+
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+  constructor(message: string, status: number, detail?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail ?? message;
+  }
+}
+
+export class NetworkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NetworkError";
+  }
+}
+
+export class TimeoutError extends Error {
+  constructor(url: string) {
+    super(`Request timed out: ${url}`);
+    this.name = "TimeoutError";
+  }
+}
+
+/* ── Default request timeout (ms) ── */
+const DEFAULT_TIMEOUT_MS = 15_000;
+
 /** In the browser we use Next.js rewrite (same-origin) to avoid CORS and "Failed to fetch". */
 function getApiBase(): string {
   if (typeof window !== "undefined") {
@@ -40,15 +75,15 @@ async function tryRefreshToken(): Promise<boolean> {
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
     if (!res.ok) return false;
-    const data = await res.json() as { access_token: string };
-    setAuthTokens(data.access_token);
+    const data = await res.json() as { access_token: string; refresh_token?: string };
+    setAuthTokens(data.access_token, data.refresh_token);
     return true;
   } catch {
     return false;
   }
 }
 
-let isRefreshing = false;
+let refreshPromise: Promise<boolean> | null = null;
 
 async function request<T>(
   path: string,
@@ -66,23 +101,41 @@ async function request<T>(
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
+  // AbortController for request timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+
   let res: Response;
   try {
-    res = await fetch(url, { ...options, headers });
-  } catch {
-    throw new Error(
-      "Cannot reach server. Is the backend running? Start it with: npm run dev:all"
+    res = await fetch(url, { ...options, headers, signal: controller.signal });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new TimeoutError(url);
+    }
+    // Provide a user-friendly network error message
+    const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+    if (isOffline) {
+      throw new NetworkError(
+        "You appear to be offline. Please check your internet connection."
+      );
+    }
+    throw new NetworkError(
+      "Unable to connect to the trading server. Please verify the backend is running and try again."
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
-  // On 401: try refresh token once before redirecting to login
+
+  // On 401: try refresh token once before redirecting to login.
+  // Use a shared promise so concurrent 401s wait for the same refresh attempt.
   if (res.status === 401 && !_isRetry) {
-    if (!isRefreshing) {
-      isRefreshing = true;
-      const refreshed = await tryRefreshToken();
-      isRefreshing = false;
-      if (refreshed) {
-        return request<T>(path, options, true);
-      }
+    if (!refreshPromise) {
+      refreshPromise = tryRefreshToken().finally(() => { refreshPromise = null; });
+    }
+    const refreshed = await refreshPromise;
+    if (refreshed) {
+      return request<T>(path, options, true);
     }
     if (typeof window !== "undefined") {
       clearAuthTokens();
@@ -90,19 +143,32 @@ async function request<T>(
         window.location.href = "/login";
       }
     }
-    throw new Error("Unauthorized");
+    throw new ApiError("Session expired. Please log in again.", 401);
   }
+
+  // Handle 403 specifically
+  if (res.status === 403) {
+    throw new ApiError("You do not have permission to perform this action.", 403);
+  }
+
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    const d = (err as { detail?: string | Array<{ msg?: string; loc?: unknown[] }> }).detail;
+    const err = await res.json().catch(() => ({ detail: res.statusText }) as ApiErrorResponse);
+    const d = (err as ApiErrorResponse).detail;
     const message =
       typeof d === "string"
         ? d
         : Array.isArray(d) && d.length > 0
           ? d.map((e) => e.msg ?? JSON.stringify(e)).join(", ")
-          : "Request failed";
-    throw new Error(message);
+          : `Request failed (${res.status})`;
+    throw new ApiError(message, res.status, message);
   }
+
+  // Handle empty responses (204 No Content, etc.)
+  const contentType = res.headers.get("content-type");
+  if (res.status === 204 || !contentType?.includes("application/json")) {
+    return {} as T;
+  }
+
   return res.json() as Promise<T>;
 }
 
@@ -131,7 +197,7 @@ export const endpoints = {
   login: (body: { username: string; password: string }) =>
     api.post<{ access_token: string; refresh_token?: string; token_type: string; expires_in?: number }>("/api/v1/auth/login", body),
   refreshToken: (refreshToken: string) =>
-    api.post<{ access_token: string; token_type: string; expires_in?: number }>("/api/v1/auth/refresh", { refresh_token: refreshToken }),
+    api.post<{ access_token: string; refresh_token?: string; token_type: string; expires_in?: number }>("/api/v1/auth/refresh", { refresh_token: refreshToken }),
 
   // Risk
   risk: () => api.get<{ equity: number; daily_pnl: number; positions: unknown[] }>("/api/v1/risk/snapshot"),
@@ -243,8 +309,10 @@ export const endpoints = {
       has_credentials: boolean; client_id: string | null; last_connected: string | null;
       autonomous_running: boolean; tick_count: number; open_trades: number;
     }>("/api/v1/broker/status"),
-  brokerConfigure: (body: { api_key: string; client_id: string; password: string; totp_secret: string }) =>
-    api.post<{ status: string; message: string; mode?: string; connected: boolean; auto_started?: boolean }>("/api/v1/broker/configure", body),
+  brokerConfigure: (body: { api_key: string; client_id: string; password: string; totp_secret: string; mode?: "paper" | "live" }) =>
+    api.post<{ status: string; message: string; mode?: string; connected: boolean; auto_started?: boolean; confirm_token?: string }>("/api/v1/broker/configure", body),
+  brokerConfirmLive: (confirmToken: string) =>
+    api.post<{ status: string; message: string; mode?: string; connected: boolean; auto_started?: boolean }>("/api/v1/broker/confirm-live", { confirm_token: confirmToken }),
   brokerDisconnect: () =>
     api.post<{ status: string; message: string; mode: string; connected: boolean }>("/api/v1/broker/disconnect"),
   brokerValidate: (body: { api_key: string; client_id: string; password: string; totp_secret: string }) =>
@@ -265,4 +333,59 @@ export const endpoints = {
     api.post<{ status: string; pid: number; mode: string }>("/api/v1/training/start", body),
   trainingStop: () =>
     api.post<{ status: string }>("/api/v1/training/stop"),
+
+  // Attribution
+  attributionByDimension: (dimension: string, days = 30) =>
+    api.get<{ dimension: string; rows: Array<{ label: string; pnl: number; trades: number; win_rate: number; sharpe: number; contribution_pct: number }>; total_pnl: number; days: number }>(
+      `/api/v1/attribution/by-dimension?dimension=${dimension}&days=${days}`
+    ),
+  attributionFull: (days = 30) =>
+    api.get<{ dimensions: Record<string, Array<{ label: string; pnl: number; trades: number; win_rate: number; sharpe: number; contribution_pct: number }>>; total_pnl: number; total_trades: number; win_rate: number; best_model: string; days: number }>(
+      `/api/v1/attribution/full?days=${days}`
+    ),
+  featureImportance: (topN = 15) =>
+    api.get<{ features: Array<{ feature: string; importance: number; correlation: number }> }>(
+      `/api/v1/attribution/feature-importance?top_n=${topN}`
+    ),
+  tradeOutcomes: (limit = 100) =>
+    api.get<{ trades: Array<{ id: string; symbol: string; strategy: string; model: string; pnl: number; entry_time: string; exit_time: string; sector: string; regime: string }> }>(
+      `/api/v1/attribution/trade-outcomes?limit=${limit}`
+    ),
+
+  // Simulation
+  simulationRun: () =>
+    api.post<{ status: string; job_id?: string }>("/api/v1/simulation/run"),
+  simulationStatus: () =>
+    api.get<{
+      running: boolean; last_run: string | null; total_permutations: number;
+      progress?: number; current_step?: string;
+    }>("/api/v1/simulation/status"),
+  simulationResults: (limit = 50, selectedOnly = false) =>
+    api.get<{
+      results: Array<{
+        rank: number; strategy_id: string; params: Record<string, unknown>;
+        interval: string; sharpe: number; sortino: number; max_dd: number;
+        win_rate: number; profit_factor: number; trades: number; selected: boolean;
+      }>;
+      total_tested: number; qualified: number; top_sharpe: number; top_win_rate: number;
+      run_ts?: string;
+    }>(`/api/v1/simulation/results?limit=${limit}&selected_only=${selectedOnly}`),
+
+  // Data
+  dataRefresh: () =>
+    api.post<{ status: string; message: string }>("/api/v1/data/refresh"),
+  dataQuality: () =>
+    api.get<{ quality: Record<string, unknown> }>("/api/v1/data/quality"),
+  dataSymbols: (interval = "1d", minBars = 0) =>
+    api.get<{ symbols: Array<{ symbol: string; bars: number; first_date: string; last_date: string }> }>(
+      `/api/v1/data/symbols?interval=${interval}&min_bars=${minBars}`
+    ),
+  dataBars: (symbol: string, interval = "1d", limit = 500) =>
+    api.get<{ symbol: string; interval: string; bars: Array<Record<string, unknown>> }>(
+      `/api/v1/data/bars/${symbol}?interval=${interval}&limit=${limit}`
+    ),
+  dataInstrumentMap: () =>
+    api.get<{ loaded: boolean; total_instruments: number; nse_equity_count: number; last_updated?: string }>(
+      "/api/v1/data/instrument-map"
+    ),
 };

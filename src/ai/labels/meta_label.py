@@ -3,7 +3,7 @@ Meta-labeling: given primary prediction (e.g. +1/-1), meta-label = 1 if actual t
 would have been profitable after costs, else 0. Trained only on samples where primary predicted a trade.
 """
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 

@@ -6,12 +6,12 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from src.core.events import Bar, Exchange, OrderBookSnapshot
+from src.core.events import Bar, OrderBookSnapshot
 
 from src.feature_store.schema import FeatureVector
 from src.feature_store.store import FeatureStore
 
-from .specs import FEATURE_SPECS, FEATURE_VERSION, FeatureGroup
+from .specs import FEATURE_VERSION, FeatureGroup
 from .price import compute_price_features
 from .microstructure import compute_microstructure_features
 from .regime_features import compute_regime_features

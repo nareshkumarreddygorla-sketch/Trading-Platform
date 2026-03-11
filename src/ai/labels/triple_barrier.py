@@ -4,7 +4,7 @@ Volatility-adjusted barriers; cost-aware variant.
 No lookahead: only information at t and future prices for barrier touch (no future in features).
 """
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 

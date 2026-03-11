@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "@/store/useStore";
 import { Switch } from "@/components/ui/switch";
-import { cn, formatCurrency, formatPercent } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { endpoints } from "@/lib/api/client";
 import {
   ArrowUpRight,
@@ -34,12 +34,8 @@ export function Topbar() {
   const isProfit = dailyPnl >= 0;
   const isPaper = tradingMode === "paper";
 
-  // Poll /trading/mode on mount + every 10 seconds (stable interval)
-  const mountedRef = useRef(false);
+  // Poll /trading/mode on mount + every 10 seconds
   useEffect(() => {
-    if (mountedRef.current) return;
-    mountedRef.current = true;
-
     const fetchMode = async () => {
       try {
         const res = await endpoints.tradingMode();
@@ -62,7 +58,7 @@ export function Topbar() {
 
     fetchMode();
     fetchEquity();
-    const interval = setInterval(fetchMode, 10_000);
+    const interval = setInterval(() => { fetchMode(); fetchEquity(); }, 10_000);
     return () => clearInterval(interval);
   }, []);
 
@@ -242,7 +238,7 @@ export function Topbar() {
                 "font-mono text-sm font-bold",
                 isProfit ? "text-profit" : "text-loss"
               )}>
-                {formatPercent(dailyPnl)}
+                {formatCurrency(dailyPnl)}
               </span>
             </div>
           </motion.div>

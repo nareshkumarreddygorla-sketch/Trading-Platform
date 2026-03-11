@@ -1,8 +1,11 @@
 """Execution gateway contract: place/cancel orders, fetch positions/order status."""
+import logging
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from src.core.events import Order, OrderStatus, Position
+
+logger = logging.getLogger(__name__)
 
 
 class BaseExecutionGateway(ABC):
@@ -46,3 +49,19 @@ class BaseExecutionGateway(ABC):
     @abstractmethod
     async def get_orders(self, status: Optional[str] = None, limit: int = 100) -> List[Order]:
         ...
+
+    async def health_check(self) -> Dict[str, object]:
+        """Verify gateway connectivity and return health status.
+
+        Returns a dict with at minimum:
+            {"healthy": bool, "broker": str, "detail": str}
+
+        Subclasses should override to perform a real connectivity check
+        (e.g. fetch profile or order book). The default implementation
+        returns a basic status based on whether connect() has been called.
+        """
+        return {
+            "healthy": False,
+            "broker": self.__class__.__name__,
+            "detail": "health_check not implemented by subclass",
+        }

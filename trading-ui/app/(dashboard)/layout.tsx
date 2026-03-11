@@ -37,14 +37,13 @@ function OnboardingRedirect({ children }: { children: React.ReactNode }) {
         if (!status.connected) {
           router.replace("/onboarding");
         } else {
-          // Broker already connected, mark onboarding as done
           localStorage.setItem("onboarding_complete", "true");
-          setChecked(true);
         }
+        setChecked(true);
       })
       .catch(() => {
-        // Backend unreachable -- still redirect to onboarding for setup
         router.replace("/onboarding");
+        setChecked(true);
       });
   }, [pathname, router]);
 

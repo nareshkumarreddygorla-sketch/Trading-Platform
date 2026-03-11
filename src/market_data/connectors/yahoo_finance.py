@@ -28,10 +28,25 @@ class YahooFinanceConnector:
     - Caches quotes for `cache_ttl_seconds` to avoid rate limiting.
     """
 
+    MAX_CACHE_SIZE = 200  # Maximum entries per cache dict
+
     def __init__(self, cache_ttl_seconds: int = 60):
         self.cache_ttl = cache_ttl_seconds
         self._quote_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}  # key -> (timestamp, data)
         self._bars_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+
+    def _evict_stale(self, cache: Dict[str, Tuple[float, Any]]) -> None:
+        """Remove stale entries and cap cache size."""
+        now = time.time()
+        # Remove expired entries
+        expired = [k for k, (ts, _) in cache.items() if (now - ts) >= self.cache_ttl]
+        for k in expired:
+            del cache[k]
+        # If still over limit, drop oldest entries
+        if len(cache) > self.MAX_CACHE_SIZE:
+            sorted_keys = sorted(cache, key=lambda k: cache[k][0])
+            for k in sorted_keys[: len(cache) - self.MAX_CACHE_SIZE]:
+                del cache[k]
 
     @staticmethod
     def _yf_symbol(symbol: str, exchange: str = "NSE") -> str:
@@ -71,12 +86,14 @@ class YahooFinanceConnector:
             day_low = float(getattr(info, "day_low", price) or price)
             volume = int(getattr(info, "last_volume", 0) or 0)
 
+            # Yahoo Finance does not provide real-time bid/ask data.
+            # Set bid and ask to the last traded price rather than fabricating a spread.
             quote = {
                 "symbol": symbol,
                 "exchange": exchange,
                 "last": round(price, 2),
-                "bid": round(price - 0.05, 2),
-                "ask": round(price + 0.05, 2),
+                "bid": round(price, 2),
+                "ask": round(price, 2),
                 "prev_close": round(prev_close, 2),
                 "day_high": round(day_high, 2),
                 "day_low": round(day_low, 2),
@@ -87,6 +104,7 @@ class YahooFinanceConnector:
                 "source": "yahoo_finance",
             }
             self._quote_cache[cache_key] = (time.time(), quote)
+            self._evict_stale(self._quote_cache)
             return quote
         except Exception as e:
             logger.debug("Yahoo Finance quote failed for %s: %s", symbol, e)
@@ -156,6 +174,7 @@ class YahooFinanceConnector:
 
             if bars:
                 self._bars_cache[cache_key] = (time.time(), bars)
+                self._evict_stale(self._bars_cache)
             return bars
         except Exception as e:
             logger.debug("Yahoo Finance bars failed for %s: %s", symbol, e)

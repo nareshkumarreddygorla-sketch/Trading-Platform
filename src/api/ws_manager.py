@@ -1,19 +1,35 @@
 """
 WebSocket connection manager: hold authenticated clients and broadcast events.
-Events: order_created, order_filled, position_updated, equity_updated,
-risk_updated, circuit_open, kill_switch_armed.
+
+Real-time event types broadcasted to all connected clients:
+  - snapshot           (periodic 5s: equity, PnL, positions, circuit/kill/feed state)
+  - position_update    (when positions change)
+  - pnl_update         (periodic PnL updates)
+  - signal_generated   (when strategies produce signals)
+  - order_submitted    (when an order is submitted)
+  - order_filled       (when an order fills)
+  - risk_alert         (when risk limits are breached)
+  - circuit_state      (when circuit breaker state changes)
+  - market_feed_status (market data health status)
+
+Legacy types (still supported):
+  order_created, position_updated, equity_updated, risk_updated,
+  circuit_open, kill_switch_armed.
+
 JWT validated on connect when JWT_SECRET is set.
 
 Features:
   - Heartbeat ping/pong (30s interval, 90s timeout)
   - Per-client message queue (max 100 messages) for replay on reconnect
   - Graceful disconnect on pong timeout
+  - Periodic snapshot broadcast every 5 seconds with full dashboard state
 """
 import asyncio
 import logging
 import time
 from collections import deque
-from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, Optional
 
 from fastapi import WebSocket
 
@@ -23,6 +39,9 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL_SECONDS = 30
 HEARTBEAT_TIMEOUT_SECONDS = 90
 MAX_MESSAGE_QUEUE = 100
+
+# Snapshot broadcast interval
+SNAPSHOT_INTERVAL_SECONDS = 5
 
 
 class _ClientState:
@@ -36,21 +55,34 @@ class _ClientState:
 
 
 class ConnectionManager:
-    """Hold WebSocket connections with user identity tracking, heartbeat, and message queue."""
+    """Hold WebSocket connections with user identity tracking, heartbeat, message queue,
+    and periodic snapshot broadcast."""
 
     def __init__(self):
         self._connections: Dict[WebSocket, _ClientState] = {}
         self._lock = asyncio.Lock()
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._snapshot_task: Optional[asyncio.Task] = None
+        self._snapshot_provider: Optional[Callable[[], Dict[str, Any]]] = None
+
+    # ── Connection lifecycle ──
 
     async def connect(self, websocket: WebSocket, user_id: Optional[str] = None, subprotocol: Optional[str] = None) -> None:
-        await websocket.accept(subprotocol=subprotocol)
+        try:
+            await websocket.accept(subprotocol=subprotocol)
+        except TypeError:
+            # Fallback for Starlette versions / mocks that don't support subprotocol kwarg
+            await websocket.accept()
         state = _ClientState(user_id or "anonymous")
         async with self._lock:
             self._connections[websocket] = state
             # Start heartbeat if not running
             if self._heartbeat_task is None or self._heartbeat_task.done():
                 self._heartbeat_task = asyncio.ensure_future(self._heartbeat_loop())
+            # Start snapshot broadcaster if provider is set and not running
+            if self._snapshot_provider is not None:
+                if self._snapshot_task is None or self._snapshot_task.done():
+                    self._snapshot_task = asyncio.ensure_future(self._snapshot_loop())
         logger.debug("WebSocket connected user=%s; total=%s", user_id, len(self._connections))
 
     async def disconnect(self, websocket: WebSocket) -> None:
@@ -63,10 +95,14 @@ class ConnectionManager:
         if state:
             state.last_pong = time.monotonic()
 
+    # ── Broadcasting ──
+
     async def broadcast(self, message: dict[str, Any]) -> None:
         """Send message to all connected clients. Non-blocking; failures logged."""
         async with self._lock:
             conns = list(self._connections.items())
+        if not conns:
+            return
         dead = []
         for ws, state in conns:
             try:
@@ -78,6 +114,22 @@ class ConnectionManager:
                 dead.append(ws)
         for ws in dead:
             await self.disconnect(ws)
+
+    async def broadcast_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """Broadcast a structured event to all connected clients.
+
+        Sends:
+            {"type": event_type, "data": data, "timestamp": "<ISO 8601>"}
+
+        Handles disconnected clients gracefully: dead connections are removed
+        and send errors are logged without crashing.
+        """
+        message = {
+            "type": event_type,
+            "data": data,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self.broadcast(message)
 
     async def send_to_user(self, user_id: str, message: dict[str, Any]) -> None:
         """Send message only to a specific user's connections."""
@@ -119,6 +171,53 @@ class ConnectionManager:
             except Exception:
                 break
         return count
+
+    # ── Snapshot provider ──
+
+    def set_snapshot_provider(self, provider: Callable[[], Dict[str, Any]]) -> None:
+        """Register a callable that returns the current dashboard snapshot dict.
+
+        The provider is called every SNAPSHOT_INTERVAL_SECONDS and the result
+        is broadcast as a ``snapshot`` event to all connected clients.
+
+        Args:
+            provider: Synchronous callable returning a dict with keys like
+                equity, daily_pnl, open_positions_count, circuit_open,
+                kill_switch_armed, market_feed_healthy.
+        """
+        self._snapshot_provider = provider
+        # Start snapshot loop immediately if there are already connections
+        if self._connections and (self._snapshot_task is None or self._snapshot_task.done()):
+            self._snapshot_task = asyncio.ensure_future(self._snapshot_loop())
+
+    async def _snapshot_loop(self) -> None:
+        """Broadcast a dashboard snapshot to all clients every SNAPSHOT_INTERVAL_SECONDS."""
+        while True:
+            try:
+                await asyncio.sleep(SNAPSHOT_INTERVAL_SECONDS)
+
+                async with self._lock:
+                    if not self._connections:
+                        # No connections; stop snapshot loop (will restart on next connect)
+                        return
+
+                if self._snapshot_provider is None:
+                    return
+
+                try:
+                    snapshot_data = self._snapshot_provider()
+                except Exception as e:
+                    logger.debug("Snapshot provider error: %s", e)
+                    continue
+
+                await self.broadcast_event("snapshot", snapshot_data)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Snapshot loop error: %s", e)
+
+    # ── Heartbeat ──
 
     async def _heartbeat_loop(self) -> None:
         """Send ping to all clients every HEARTBEAT_INTERVAL_SECONDS; disconnect stale ones."""

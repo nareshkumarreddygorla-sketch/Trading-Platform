@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api/client";
-import { Zap, ArrowRight, Eye, EyeOff, UserPlus, CheckCircle } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, UserPlus, CheckCircle } from "lucide-react";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -20,6 +20,17 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // Redirect to login after successful registration
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => {
+        router.push("/login");
+        router.refresh();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [success, router]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -27,10 +38,6 @@ export default function RegisterPage() {
     try {
       await api.post("/api/v1/auth/register", { username, email, password });
       setSuccess(true);
-      setTimeout(() => {
-        router.push("/login");
-        router.refresh();
-      }, 1500);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Registration failed";
       setError(msg);
@@ -156,7 +163,7 @@ export default function RegisterPage() {
 
             <Button
               type="submit"
-              disabled={loading || success}
+              disabled={loading || success || !username.trim() || !password.trim()}
               aria-label={loading ? "Creating account" : "Create account"}
               aria-busy={loading}
               className="relative w-full h-11 rounded-xl bg-gradient-to-r from-[hsl(258,90%,66%)] to-primary font-semibold text-white shadow-lg transition-all hover:shadow-xl hover:shadow-primary/20 hover:brightness-110 disabled:opacity-50"

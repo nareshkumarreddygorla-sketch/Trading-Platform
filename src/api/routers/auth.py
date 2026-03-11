@@ -1,14 +1,14 @@
 """
 Auth: login, register, token refresh, logout. Issues JWT for get_current_user.
 When DATABASE_URL is set, users are persisted (UserRepository). Else hashed in-memory fallback.
-Access tokens: 30 minutes. Refresh tokens: 7 days.
+Access tokens: 1 hour. Refresh tokens: 7 days.
 Logout blacklists the token. Refresh rotation blacklists old refresh tokens.
 """
 import os
-import hashlib
 import hmac
 import logging
 import re
+import threading
 import time
 from typing import Optional
 
@@ -23,13 +23,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Auth"])
 _bearer_scheme = HTTPBearer(auto_error=False)
 
-# Access token: short-lived (30 min). Refresh token: long-lived (7 days).
-ACCESS_TOKEN_EXPIRY_SECONDS = 30 * 60  # 30 minutes
+# Access token: short-lived (1 hour). Refresh token: long-lived (7 days).
+ACCESS_TOKEN_EXPIRY_SECONDS = 60 * 60  # 1 hour
 REFRESH_TOKEN_EXPIRY_SECONDS = 7 * 24 * 3600  # 7 days
 MIN_PASSWORD_LENGTH = 12  # Production-grade minimum
 
 # In-memory fallback (dev only) - passwords are hashed, never stored plaintext
 _users: dict[str, dict] = {}
+_users_lock = threading.Lock()
 
 # Account lockout: 5 failures in 15 minutes
 from collections import defaultdict
@@ -38,12 +39,34 @@ import time as _time
 _failed_attempts: dict = defaultdict(list)
 _MAX_FAILED_ATTEMPTS = 5
 _LOCKOUT_DURATION_SECONDS = 900  # 15 minutes
+_MAX_TRACKED_USERNAMES = 10_000  # Bound the dict to prevent unbounded memory growth
+_last_cleanup_time: float = 0.0
+
+def _cleanup_failed_attempts() -> None:
+    """Remove entries where all timestamps are older than the lockout window."""
+    global _last_cleanup_time
+    now = _time.time()
+    # Run cleanup at most once per 60 seconds
+    if now - _last_cleanup_time < 60:
+        return
+    _last_cleanup_time = now
+    cutoff = now - _LOCKOUT_DURATION_SECONDS
+    stale_keys = [k for k, ts_list in _failed_attempts.items() if not ts_list or all(t <= cutoff for t in ts_list)]
+    for k in stale_keys:
+        _failed_attempts.pop(k, None)
+    # Safety valve: if still over capacity, evict oldest entries
+    if len(_failed_attempts) > _MAX_TRACKED_USERNAMES:
+        sorted_keys = sorted(_failed_attempts.keys(), key=lambda uname: max(_failed_attempts[uname]) if _failed_attempts[uname] else 0)
+        evict_count = len(_failed_attempts) - _MAX_TRACKED_USERNAMES
+        for k in sorted_keys[0:evict_count]:
+            _failed_attempts.pop(k, None)
 
 def _check_lockout(username: str) -> bool:
     """Return True if account is locked out."""
     now = _time.time()
     cutoff = now - _LOCKOUT_DURATION_SECONDS
     _failed_attempts[username] = [t for t in _failed_attempts[username] if t > cutoff]
+    _cleanup_failed_attempts()
     return len(_failed_attempts[username]) >= _MAX_FAILED_ATTEMPTS
 
 def _record_failed_attempt(username: str) -> None:
@@ -53,13 +76,25 @@ def _clear_failed_attempts(username: str) -> None:
     _failed_attempts.pop(username, None)
 
 
+async def _blacklist_token_persistent(token: str, ttl: int = 1800):
+    """Persist token to Redis blacklist for cross-restart survival."""
+    try:
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), socket_connect_timeout=2)
+        await r.set(f"blacklist:{token}", "1", ex=ttl)
+        await r.aclose()
+    except Exception:
+        pass  # Redis not available, in-memory only
+
+
 def _hash_inmemory(password: str) -> str:
     """Hash password for in-memory store using bcrypt (salted, secure)."""
     try:
         from passlib.hash import bcrypt as _bcrypt
-        return _bcrypt.hash(password)
-    except ImportError:
-        # Fallback if passlib not installed; use PBKDF2 from stdlib
+        # bcrypt has a 72-byte limit; truncate safely
+        return _bcrypt.hash(password[:72])
+    except Exception:
+        # Fallback: use PBKDF2 from stdlib (works everywhere)
         import hashlib as _hl
         import os
         salt = os.urandom(16).hex()
@@ -107,27 +142,31 @@ def _validate_password_strength(password: str) -> Optional[str]:
 def _issue_token(username: str, roles: list[str], token_type: str = "access") -> str:
     import jwt
     import time
+    import uuid as _uuid
     secret = _get_secret()
     expiry = ACCESS_TOKEN_EXPIRY_SECONDS if token_type == "access" else REFRESH_TOKEN_EXPIRY_SECONDS
+    now = int(time.time())
     payload = {
         "sub": username,
         "user_id": username,
         "roles": roles,
         "type": token_type,
-        "exp": int(time.time()) + expiry,
-        "iat": int(time.time()),
+        "exp": now + expiry,
+        "iat": now,
+        "nbf": now,  # Not valid before issuance time
+        "jti": _uuid.uuid4().hex,  # Unique token ID for revocation tracking
     }
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=128)
+    username: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9._@-]+$")
     password: str = Field(..., min_length=1, max_length=256)
 
 
 class RegisterRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=128)
-    email: Optional[str] = Field(None, max_length=256)
+    username: str = Field(..., min_length=3, max_length=128, pattern=r"^[a-zA-Z0-9._@-]+$")
+    email: Optional[str] = Field(None, max_length=256, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=256,
                           description="Min 12 chars, must include upper, lower, digit, and special char")
 
@@ -138,7 +177,7 @@ class RefreshRequest(BaseModel):
 
 @router.post("/login")
 def login(request: Request, body: LoginRequest):
-    """Login with username and password. Returns access_token (30m) and refresh_token (7d)."""
+    """Login with username and password. Returns access_token (1h) and refresh_token (7d)."""
     # Account lockout check
     if _check_lockout(body.username):
         raise HTTPException(
@@ -149,15 +188,23 @@ def login(request: Request, body: LoginRequest):
     env_user = os.environ.get("AUTH_USERNAME")
     env_pass = os.environ.get("AUTH_PASSWORD")
     # Use constant-time comparison to prevent timing attacks on password
-    if env_user and env_pass and hmac.compare_digest(body.username, env_user) and hmac.compare_digest(body.password, env_pass):
-        roles = ["user", "admin"] if os.environ.get("AUTH_ADMIN") == "1" else ["user"]
-        _clear_failed_attempts(body.username)
-        return {
-            "access_token": _issue_token(body.username, roles, "access"),
-            "refresh_token": _issue_token(body.username, roles, "refresh"),
-            "token_type": "bearer",
-            "expires_in": ACCESS_TOKEN_EXPIRY_SECONDS,
-        }
+    if env_user and env_pass and hmac.compare_digest(body.username, env_user):
+        if hmac.compare_digest(body.password, env_pass):
+            roles = ["user", "admin"] if os.environ.get("AUTH_ADMIN") == "1" else ["user"]
+            _clear_failed_attempts(body.username)
+            return {
+                "access_token": _issue_token(body.username, roles, "access"),
+                "refresh_token": _issue_token(body.username, roles, "refresh"),
+                "token_type": "bearer",
+                "expires_in": ACCESS_TOKEN_EXPIRY_SECONDS,
+            }
+        # Username matched env credentials but password didn't — reject immediately
+        # so the request doesn't fall through to DB check with a different password.
+        _record_failed_attempt(body.username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+        )
     # Persisted users (when DATABASE_URL set)
     user_repo = getattr(request.app.state, "user_repo", None)
     if user_repo is not None:
@@ -171,8 +218,10 @@ def login(request: Request, body: LoginRequest):
                 "expires_in": ACCESS_TOKEN_EXPIRY_SECONDS,
             }
     # In-memory fallback (dev only, hashed)
-    if body.username in _users and _verify_inmemory(body.password, _users[body.username].get("password_hash", "")):
-        roles = _users[body.username].get("roles", ["user"])
+    with _users_lock:
+        user_data = _users.get(body.username)
+    if user_data and _verify_inmemory(body.password, user_data.get("password_hash", "")):
+        roles = user_data.get("roles", ["user"])
         _clear_failed_attempts(body.username)
         return {
             "access_token": _issue_token(body.username, roles, "access"),
@@ -188,7 +237,7 @@ def login(request: Request, body: LoginRequest):
 
 
 @router.post("/refresh")
-def refresh_token(body: RefreshRequest):
+async def refresh_token(body: RefreshRequest):
     """
     Exchange a valid refresh_token for a new access_token AND a new refresh_token.
     The old refresh token is blacklisted immediately (rotation) to prevent replay attacks.
@@ -212,6 +261,7 @@ def refresh_token(body: RefreshRequest):
     # Blacklist the OLD refresh token (rotation — prevents replay)
     old_exp = payload.get("exp", time.time() + REFRESH_TOKEN_EXPIRY_SECONDS)
     blacklist_token(body.refresh_token, float(old_exp))
+    await _blacklist_token_persistent(body.refresh_token, ttl=int(old_exp - time.time()))
 
     # Issue both new access AND new refresh tokens
     new_access = _issue_token(username, roles, "access")
@@ -245,15 +295,16 @@ def register(request: Request, body: RegisterRequest):
         logger.info("Registered user (persisted): %s", body.username)
         return {"message": "Registered. Use /auth/login to get a token."}
     # In-memory fallback (dev only) - store hashed password
-    if body.username in _users:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken")
-    _users[body.username] = {"password_hash": _hash_inmemory(body.password), "email": body.email, "roles": ["user"]}
+    with _users_lock:
+        if body.username in _users:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken")
+        _users[body.username] = {"password_hash": _hash_inmemory(body.password), "email": body.email, "roles": ["user"]}
     logger.info("Registered user (in-memory): %s", body.username)
     return {"message": "Registered. Use /auth/login to get a token."}
 
 
 @router.post("/logout")
-def logout(
+async def logout(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
 ):
     """
@@ -279,5 +330,6 @@ def logout(
         expires_at = time.time() + ACCESS_TOKEN_EXPIRY_SECONDS
 
     blacklist_token(token, expires_at)
+    await _blacklist_token_persistent(token, ttl=max(int(expires_at - time.time()), 1))
     logger.info("Token blacklisted via /auth/logout")
     return {"message": "Logged out successfully"}

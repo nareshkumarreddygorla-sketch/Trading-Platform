@@ -281,7 +281,6 @@ def train(
     """
     try:
         from stable_baselines3 import PPO
-        from stable_baselines3.common.callbacks import EvalCallback
     except ImportError:
         logger.error(
             "stable-baselines3 is required.  Install with:\n"

@@ -1,51 +1,101 @@
-# API service — Production with auto-training
-FROM python:3.11-slim
+# ================================================================
+# AlphaForge Trading Platform — Production API Dockerfile
+# Multi-stage build: builder -> security-scan -> runtime
+# ================================================================
 
-# System deps for cron + build
+# ── Stage 1: Builder ──
+# Install dependencies in isolation so only compiled artifacts carry forward.
+FROM python:3.11-slim AS builder
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cron gcc g++ && \
-    rm -rf /var/lib/apt/lists/*
+    build-essential \
+    gcc \
+    g++ \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy only requirements first for Docker layer caching.
+# Dependencies change rarely; code changes often.
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt && \
+    pip install --no-cache-dir --prefix=/install gunicorn
+
+# ── Stage 2: Security scan ──
+# Audit installed packages for known CVEs (non-blocking).
+FROM builder AS security-scan
+
+RUN pip install --no-cache-dir pip-audit 2>/dev/null && \
+    pip-audit --prefix=/install -r requirements.txt --desc 2>/dev/null || \
+    echo "WARN: pip-audit found vulnerabilities or is unavailable — review output above"
+
+# ── Stage 3: Runtime ──
+# Minimal image with no build tools, no package manager cache.
+FROM python:3.11-slim AS runtime
+
+# Runtime-only system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libpq5 \
+    tini \
+    cron \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get purge -y --auto-remove
 
 WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONPATH=/app
 
-# Install Python deps (cached layer)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy compiled Python packages from builder
+COPY --from=builder /install /usr/local
 
-# Copy application code
-COPY src ./src
-COPY scripts ./scripts
+# Copy application code (ordered by change frequency for cache efficiency)
 COPY config ./config
 COPY deploy/docker/entrypoint.sh ./entrypoint.sh
+COPY deploy/uvicorn_config.py ./deploy/uvicorn_config.py
+COPY scripts ./scripts
+COPY src ./src
+
 RUN chmod +x ./entrypoint.sh
 
-# Create non-root user
-RUN groupadd -r trading && useradd -r -g trading -u 1000 -d /app trading && \
+# Create non-root user for security
+RUN groupadd -r trading && \
+    useradd -r -g trading -u 1000 -d /app -s /usr/sbin/nologin trading && \
+    mkdir -p /app/models /app/data /app/logs && \
     chown -R trading:trading /app
 
-# Models volume (persisted across deploys)
+# Persistent volumes
 VOLUME /app/models
 VOLUME /app/logs
 
 # Environment defaults
-ENV PORT=8000
-ENV WORKERS=1
-ENV LOG_LEVEL=info
-ENV TRADING_MODE=paper
-ENV TRAIN_SYMBOLS=all
-ENV TRAIN_PERIOD=60d
-ENV TRAIN_INTERVAL=5m
-ENV MODEL_DIR=/app/models
-ENV RETRAIN_CRON="0 2 * * 0"
+ENV PYTHONPATH=/app \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8000 \
+    WORKERS=4 \
+    GRACEFUL_TIMEOUT=30 \
+    LOG_LEVEL=info \
+    TRADING_MODE=paper \
+    TRAIN_SYMBOLS=all \
+    TRAIN_PERIOD=60d \
+    TRAIN_INTERVAL=5m \
+    MODEL_DIR=/app/models \
+    RETRAIN_CRON="0 2 * * 0"
 
 EXPOSE 8000
 
 # Run as non-root
 USER trading
 
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=120s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
+# Health check: lightweight HTTP probe
+HEALTHCHECK --interval=15s --timeout=10s --retries=3 --start-period=120s \
+    CMD curl -sf http://127.0.0.1:${PORT}/health || exit 1
 
-ENTRYPOINT ["./entrypoint.sh"]
+# Use tini as init to handle signals correctly (SIGTERM -> graceful shutdown).
+# Without tini, Python may not receive SIGTERM inside containers, leading to
+# hard kills after the stop timeout instead of graceful order completion.
+ENTRYPOINT ["tini", "--"]
+
+# Default command: run via gunicorn with uvicorn workers for multi-process.
+# Falls through to entrypoint.sh for auto-training + cron setup before starting.
+CMD ["./entrypoint.sh"]

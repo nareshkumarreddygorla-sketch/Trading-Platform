@@ -4,7 +4,7 @@ Data → Hypothesis → Statistical Filter → Backtest → OOS → FDR → Clus
 Capacity Sim → Shadow → Promote → Monitor → Decay handling.
 Zero manual bias; orchestrate existing modules.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 import logging

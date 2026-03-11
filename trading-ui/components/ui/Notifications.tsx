@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useStore } from "@/store/useStore";
 import { cn } from "@/lib/utils";
 import { X, TrendingUp, AlertTriangle, ShieldAlert, Bell } from "lucide-react";
 
@@ -16,29 +15,23 @@ interface Notification {
 
 export function Notifications() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const circuitOpen = useStore((s) => s.circuitOpen);
-  const killSwitchArmed = useStore((s) => s.killSwitchArmed);
+  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   const addNotification = useCallback((type: Notification["type"], title: string, message: string) => {
     const id = Math.random().toString(36).slice(2);
     setNotifications((prev) => [{ id, type, title, message, ts: Date.now() }, ...prev].slice(0, 5));
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       setNotifications((prev) => prev.filter((n) => n.id !== id));
+      timersRef.current.delete(timer);
     }, 6000);
+    timersRef.current.add(timer);
   }, []);
 
-  // React to circuit breaker state changes
   useEffect(() => {
-    if (circuitOpen) {
-      addNotification("error", "Circuit Breaker Open", "Trading halted — daily loss limit reached");
-    }
-  }, [circuitOpen, addNotification]);
-
-  useEffect(() => {
-    if (killSwitchArmed) {
-      addNotification("warning", "Kill Switch Armed", "Reduce-only mode — no new positions");
-    }
-  }, [killSwitchArmed, addNotification]);
+    return () => {
+      timersRef.current.forEach(clearTimeout);
+    };
+  }, []);
 
   // Listen for WebSocket events dispatched from useWebSocket hook
   useEffect(() => {

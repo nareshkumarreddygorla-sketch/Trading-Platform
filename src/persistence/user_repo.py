@@ -2,8 +2,6 @@
 import logging
 from typing import List, Optional
 
-from sqlalchemy.orm import Session
-
 from .database import session_scope
 from .models import UserModel
 
@@ -36,6 +34,7 @@ def _verify_password(plain: str, hashed: str) -> bool:
         except Exception:
             pass
     # Handle PBKDF2 fallback format
+    import hmac as _hmac
     if hashed.startswith("pbkdf2:sha256:"):
         import hashlib
         parts = hashed.split("$")
@@ -43,10 +42,14 @@ def _verify_password(plain: str, hashed: str) -> bool:
             salt = bytes.fromhex(parts[1])
             expected = parts[2]
             dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt, 100_000)
-            return dk.hex() == expected
-    # Legacy SHA256 migration path
+            # Constant-time comparison to prevent timing attacks
+            return _hmac.compare_digest(dk.hex(), expected)
+    # Legacy SHA256 migration path — constant-time comparison
     import hashlib
-    return hashlib.sha256(f"trading-platform-salt-{plain}".encode()).hexdigest() == hashed
+    return _hmac.compare_digest(
+        hashlib.sha256(f"trading-platform-salt-{plain}".encode()).hexdigest(),
+        hashed,
+    )
 
 
 class UserRepository:

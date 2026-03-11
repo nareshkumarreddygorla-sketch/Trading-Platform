@@ -11,7 +11,9 @@ Features (35+):
   - Candlestick patterns (doji, hammer, engulfing)
   - Momentum (5, 10, 20 bars, rate of change)
 """
+import json
 import logging
+import os
 from typing import Any, Dict, List
 
 import numpy as np
@@ -524,6 +526,301 @@ def _mfi(high: np.ndarray, low: np.ndarray, close: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
+# LSTM-specific feature helpers
+# ---------------------------------------------------------------------------
+def _autocorrelation(closes: np.ndarray, lag: int) -> float:
+    """Autocorrelation of returns at given lag."""
+    if len(closes) < lag + 10:
+        return 0.0
+    try:
+        returns = np.diff(closes) / (closes[:-1] + 1e-12)
+        if len(returns) < lag + 5:
+            return 0.0
+        x = returns[:-lag]
+        y = returns[lag:]
+        min_len = min(len(x), len(y))
+        x, y = x[-min_len:], y[-min_len:]
+        if np.std(x) < 1e-12 or np.std(y) < 1e-12:
+            return 0.0
+        corr = np.corrcoef(x, y)[0, 1]
+        return float(corr) if np.isfinite(corr) else 0.0
+    except Exception:
+        return 0.0
+
+
+def _regime_volatility_state(closes: np.ndarray, window: int = 20) -> float:
+    """Binary regime indicator: 1 = high vol regime, 0 = low vol regime.
+    Uses median split of rolling volatility."""
+    if len(closes) < window * 2:
+        return 0.0
+    try:
+        returns = np.diff(closes) / (closes[:-1] + 1e-12)
+        # Compute rolling vol for the last 2*window returns
+        vols = []
+        for i in range(window, len(returns)):
+            vols.append(np.std(returns[i - window:i]))
+        if not vols:
+            return 0.0
+        median_vol = np.median(vols)
+        current_vol = vols[-1] if vols else 0.0
+        return 1.0 if current_vol > median_vol else 0.0
+    except Exception:
+        return 0.0
+
+
+def _regime_volatility_zscore(closes: np.ndarray, window: int = 20) -> float:
+    """Z-score of current volatility vs rolling history."""
+    if len(closes) < window * 2:
+        return 0.0
+    try:
+        returns = np.diff(closes) / (closes[:-1] + 1e-12)
+        vols = []
+        for i in range(window, len(returns)):
+            vols.append(np.std(returns[i - window:i]))
+        if len(vols) < 5:
+            return 0.0
+        vols_arr = np.array(vols)
+        mean_vol = np.mean(vols_arr)
+        std_vol = np.std(vols_arr)
+        if std_vol < 1e-12:
+            return 0.0
+        return float(np.clip((vols_arr[-1] - mean_vol) / std_vol, -3.0, 3.0))
+    except Exception:
+        return 0.0
+
+
+def _orderflow_imbalance_proxy(opens: np.ndarray, highs: np.ndarray,
+                                lows: np.ndarray, closes: np.ndarray,
+                                volumes: np.ndarray) -> float:
+    """Proxy for order flow imbalance using close-location-value (CLV) * volume."""
+    if len(closes) < 5:
+        return 0.0
+    try:
+        # CLV = ((close - low) - (high - close)) / (high - low)
+        hl_range = highs[-5:] - lows[-5:]
+        hl_range = np.where(hl_range < 1e-12, 1e-12, hl_range)
+        clv = ((closes[-5:] - lows[-5:]) - (highs[-5:] - closes[-5:])) / hl_range
+        imbalance = np.sum(clv * volumes[-5:])
+        total_vol = np.sum(volumes[-5:])
+        if total_vol < 1e-12:
+            return 0.0
+        return float(np.clip(imbalance / total_vol, -1.0, 1.0))
+    except Exception:
+        return 0.0
+
+
+def _tick_direction_ratio(closes: np.ndarray, window: int = 20) -> float:
+    """Ratio of upticks to total ticks over window."""
+    if len(closes) < window + 1:
+        return 0.5
+    try:
+        diffs = np.diff(closes[-window - 1:])
+        upticks = np.sum(diffs > 0)
+        total = np.sum(diffs != 0)
+        if total == 0:
+            return 0.5
+        return float(upticks / total)
+    except Exception:
+        return 0.5
+
+
+# ---------------------------------------------------------------------------
+# Transformer-specific feature helpers
+# ---------------------------------------------------------------------------
+def _relative_strength_proxy(closes: np.ndarray, period: int = 5) -> float:
+    """Proxy for relative strength: return vs rolling mean return."""
+    if len(closes) < period * 2:
+        return 0.0
+    try:
+        returns = np.diff(closes) / (closes[:-1] + 1e-12)
+        if len(returns) < period:
+            return 0.0
+        current_ret = returns[-1]
+        avg_ret = np.mean(returns[-period:])
+        std_ret = np.std(returns[-period:])
+        if std_ret < 1e-12:
+            return 0.0
+        return float(np.clip((current_ret - avg_ret) / std_ret, -3.0, 3.0))
+    except Exception:
+        return 0.0
+
+
+def _volume_profile_skew(closes: np.ndarray, volumes: np.ndarray, period: int = 50) -> float:
+    """Skewness of volume-weighted price distribution."""
+    if len(closes) < period or len(volumes) < period:
+        return 0.0
+    try:
+        c = closes[-period:]
+        v = volumes[-period:]
+        total_vol = np.sum(v)
+        if total_vol < 1e-12:
+            return 0.0
+        # Volume-weighted mean and std of prices
+        vw_mean = np.sum(c * v) / total_vol
+        vw_var = np.sum(v * (c - vw_mean) ** 2) / total_vol
+        vw_std = np.sqrt(vw_var)
+        if vw_std < 1e-12:
+            return 0.0
+        vw_skew = np.sum(v * ((c - vw_mean) / vw_std) ** 3) / total_vol
+        return float(np.clip(vw_skew, -3.0, 3.0))
+    except Exception:
+        return 0.0
+
+
+def _volume_concentration_ratio(volumes: np.ndarray, period: int = 20) -> float:
+    """Ratio of max volume to total volume in window (concentration)."""
+    if len(volumes) < period:
+        return 0.0
+    try:
+        v = volumes[-period:]
+        total = np.sum(v)
+        if total < 1e-12:
+            return 0.0
+        return float(np.max(v) / total)
+    except Exception:
+        return 0.0
+
+
+def _percentile_rank(series: np.ndarray, period: int = 20) -> float:
+    """Percentile rank of last value within the window (0-1)."""
+    if len(series) < period:
+        return 0.5
+    try:
+        window = series[-period:]
+        rank = np.sum(window <= window[-1]) / len(window)
+        return float(rank)
+    except Exception:
+        return 0.5
+
+
+def _mean_reversion_zscore(closes: np.ndarray, period: int = 20) -> float:
+    """Z-score of current price vs rolling mean (mean-reversion signal)."""
+    if len(closes) < period:
+        return 0.0
+    try:
+        window = closes[-period:]
+        mean_p = np.mean(window)
+        std_p = np.std(window)
+        if std_p < 1e-12:
+            return 0.0
+        return float(np.clip((closes[-1] - mean_p) / std_p, -3.0, 3.0))
+    except Exception:
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+# RL-specific feature helpers
+# ---------------------------------------------------------------------------
+def _bid_ask_spread_proxy(highs: np.ndarray, lows: np.ndarray,
+                           closes: np.ndarray) -> float:
+    """Proxy for bid-ask spread using high-low range relative to close."""
+    if len(closes) < 1:
+        return 0.0
+    try:
+        hl_range = highs[-1] - lows[-1]
+        if closes[-1] < 1e-12:
+            return 0.0
+        return float(hl_range / closes[-1])
+    except Exception:
+        return 0.0
+
+
+def _effective_spread_proxy(highs: np.ndarray, lows: np.ndarray,
+                             closes: np.ndarray, period: int = 5) -> float:
+    """Rolling average of high-low spread as effective spread proxy."""
+    if len(closes) < period:
+        return 0.0
+    try:
+        spreads = (highs[-period:] - lows[-period:]) / (closes[-period:] + 1e-12)
+        return float(np.mean(spreads))
+    except Exception:
+        return 0.0
+
+
+def _intraday_volatility(highs: np.ndarray, lows: np.ndarray,
+                          closes: np.ndarray, period: int = 5) -> float:
+    """Parkinson volatility estimator (more efficient than close-close)."""
+    if len(closes) < period:
+        return 0.0
+    try:
+        hl_ratio = np.log(highs[-period:] / (lows[-period:] + 1e-12))
+        parkinson_vol = np.sqrt(np.mean(hl_ratio ** 2) / (4.0 * np.log(2)))
+        return float(parkinson_vol)
+    except Exception:
+        return 0.0
+
+
+def _intraday_range_ratio(highs: np.ndarray, lows: np.ndarray,
+                           closes: np.ndarray) -> float:
+    """Ratio of current bar range to average bar range (last 20 bars)."""
+    if len(closes) < 20:
+        return 1.0
+    try:
+        current_range = highs[-1] - lows[-1]
+        avg_range = np.mean(highs[-20:] - lows[-20:])
+        if avg_range < 1e-12:
+            return 1.0
+        return float(np.clip(current_range / avg_range, 0.0, 5.0))
+    except Exception:
+        return 1.0
+
+
+def _slippage_estimate(highs: np.ndarray, lows: np.ndarray,
+                        closes: np.ndarray, volumes: np.ndarray,
+                        period: int = 10) -> float:
+    """Estimated slippage based on spread and volume."""
+    if len(closes) < period:
+        return 0.0
+    try:
+        spread = np.mean((highs[-period:] - lows[-period:]) / (closes[-period:] + 1e-12))
+        avg_vol = np.mean(volumes[-period:])
+        # Lower volume = higher slippage
+        vol_factor = 1.0 / (1.0 + avg_vol / 1e6)
+        return float(np.clip(spread * vol_factor, 0.0, 0.1))
+    except Exception:
+        return 0.0
+
+
+def _market_impact_estimate(volumes: np.ndarray, period: int = 20) -> float:
+    """Estimated market impact based on volume profile."""
+    if len(volumes) < period:
+        return 0.0
+    try:
+        avg_vol = np.mean(volumes[-period:])
+        if avg_vol < 1e-12:
+            return 0.0
+        # Inverse of average volume as proxy for market impact
+        return float(np.clip(1e6 / avg_vol, 0.0, 1.0))
+    except Exception:
+        return 0.0
+
+
+def _tick_velocity(closes: np.ndarray, period: int = 5) -> float:
+    """Rate of price change (momentum) over short window."""
+    if len(closes) < period + 1:
+        return 0.0
+    try:
+        returns = np.diff(closes[-period - 1:]) / (closes[-period - 1:-1] + 1e-12)
+        return float(np.mean(returns))
+    except Exception:
+        return 0.0
+
+
+def _quote_intensity(volumes: np.ndarray, period: int = 10) -> float:
+    """Ratio of recent volume to longer-term average (activity intensity)."""
+    if len(volumes) < period * 2:
+        return 1.0
+    try:
+        recent = np.mean(volumes[-period:])
+        longer = np.mean(volumes[-period * 2:-period])
+        if longer < 1e-12:
+            return 1.0
+        return float(np.clip(recent / longer, 0.0, 5.0))
+    except Exception:
+        return 1.0
+
+
+# ---------------------------------------------------------------------------
 # Feature Engine class
 # ---------------------------------------------------------------------------
 class FeatureEngine:
@@ -644,4 +941,149 @@ class FeatureEngine:
         out["close"] = float(closes[-1])
         out["volume"] = float(volumes[-1]) if len(volumes) else 0.0
 
+        # ── LSTM-specific features (12 features) ──
+        # Lagged returns for autoregressive structure
+        for lag in [1, 2, 3, 5, 10]:
+            out[f"lagged_return_{lag}"] = _returns(closes, lag) if n > lag else 0.0
+
+        # Autocorrelation features
+        for ac_window in [5, 10, 20]:
+            out[f"autocorr_{ac_window}"] = _autocorrelation(closes, ac_window)
+
+        # Regime indicators
+        out["regime_hmm_state"] = _regime_volatility_state(closes, window=20)
+        out["regime_volatility_zscore"] = _regime_volatility_zscore(closes, window=20)
+
+        # Orderflow imbalance proxies (from OHLCV)
+        out["orderflow_imbalance"] = _orderflow_imbalance_proxy(opens, highs, lows, closes, volumes)
+        out["tick_direction_ratio"] = _tick_direction_ratio(closes, window=20)
+
+        # ── Transformer-specific features (12 features) ──
+        # Relative strength vs benchmark (proxy: relative to rolling mean)
+        out["relative_strength_nifty"] = _relative_strength_proxy(closes, period=5)
+        out["relative_strength_nifty_20d"] = _relative_strength_proxy(closes, period=20)
+
+        # Sector momentum proxies (use own momentum as proxy)
+        out["sector_momentum_5d"] = _returns(closes, 5) if n > 5 else 0.0
+        out["sector_momentum_20d"] = _returns(closes, 20) if n > 20 else 0.0
+
+        # Peer correlation proxies (autocorrelation as self-proxy)
+        out["peer_correlation_5d"] = _autocorrelation(closes, 5)
+        out["peer_correlation_20d"] = _autocorrelation(closes, 20)
+
+        # Volume profile features
+        out["volume_profile_skew"] = _volume_profile_skew(closes, volumes, period=50)
+        out["volume_concentration_ratio"] = _volume_concentration_ratio(volumes, period=20)
+        out["volume_relative_to_sector"] = _volume_spike(volumes, 20)  # reuse volume spike
+
+        # Cross-sectional rank proxies (percentile position)
+        out["cross_sectional_return_rank"] = _percentile_rank(closes, period=20)
+        out["cross_sectional_volume_rank"] = _percentile_rank(volumes, period=20)
+
+        # Mean reversion z-score
+        out["mean_reversion_zscore"] = _mean_reversion_zscore(closes, period=20)
+
+        # ── RL-specific features (12 features) ──
+        # Bid-ask spread proxies (from high-low range)
+        out["bid_ask_spread_proxy"] = _bid_ask_spread_proxy(highs, lows, closes)
+        out["effective_spread_proxy"] = _effective_spread_proxy(highs, lows, closes, period=5)
+
+        # Intraday volatility features
+        out["intraday_volatility"] = _intraday_volatility(highs, lows, closes, period=5)
+        out["intraday_range_ratio"] = _intraday_range_ratio(highs, lows, closes)
+
+        # Time-of-day encoding (reuse minute-of-day, but separate keys for RL)
+        out["time_of_day_sin"] = sin_mod
+        out["time_of_day_cos"] = cos_mod
+
+        # Position heat (default 0 — set by execution context at runtime)
+        out["position_heat"] = 0.0
+
+        # Execution quality proxies
+        out["slippage_estimate"] = _slippage_estimate(highs, lows, closes, volumes, period=10)
+        out["market_impact_estimate"] = _market_impact_estimate(volumes, period=20)
+
+        # Urgency / momentum-at-execution
+        out["tick_velocity"] = _tick_velocity(closes, period=5)
+        out["quote_intensity"] = _quote_intensity(volumes, period=10)
+
+        # Inventory risk (default 0 — set by execution context at runtime)
+        out["inventory_risk_score"] = 0.0
+
         return out
+
+
+# ---------------------------------------------------------------------------
+# Feature Normalizer: z-score normalization for production safety
+# ---------------------------------------------------------------------------
+
+class FeatureNormalizer:
+    """Z-score normalizer trained on historical features. Persisted alongside models.
+
+    Prevents feature distribution mismatch between training and inference.
+    Clips outliers at +-5 sigma to prevent extreme values from destabilizing models.
+    """
+
+    def __init__(self):
+        self._means: Dict[str, float] = {}
+        self._stds: Dict[str, float] = {}
+        self._fitted: bool = False
+
+    def fit(self, feature_history: List[Dict[str, float]]) -> None:
+        """Compute per-feature mean and std from training data."""
+        if len(feature_history) < 100:
+            logger.warning("FeatureNormalizer: insufficient history (%d < 100), skipping fit", len(feature_history))
+            return
+        all_keys: set = set()
+        for fh in feature_history:
+            all_keys.update(fh.keys())
+        for key in sorted(all_keys):
+            values = [fh.get(key, 0.0) for fh in feature_history]
+            arr = np.array(values, dtype=float)
+            arr = arr[np.isfinite(arr)]
+            if len(arr) < 10:
+                continue
+            self._means[key] = float(np.mean(arr))
+            std = float(np.std(arr))
+            self._stds[key] = std if std > 1e-12 else 1.0  # avoid div-by-zero
+        self._fitted = True
+        logger.info("FeatureNormalizer fitted on %d samples, %d features", len(feature_history), len(self._means))
+
+    def normalize(self, features: Dict[str, float]) -> Dict[str, float]:
+        """Normalize features using stored statistics. Passthrough if not fitted."""
+        if not self._fitted:
+            return features
+        out: Dict[str, float] = {}
+        for k, v in features.items():
+            mean = self._means.get(k, 0.0)
+            std = self._stds.get(k, 1.0)
+            if not np.isfinite(v):
+                out[k] = 0.0
+                continue
+            normalized = (v - mean) / std
+            # Clip to [-5, 5] to prevent extreme outliers from destabilizing models
+            out[k] = float(np.clip(normalized, -5.0, 5.0))
+        return out
+
+    def save(self, path: str) -> None:
+        """Persist normalizer parameters."""
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
+            json.dump({"means": self._means, "stds": self._stds, "fitted": self._fitted}, f, indent=2)
+        logger.info("FeatureNormalizer saved to %s (%d features)", path, len(self._means))
+
+    @classmethod
+    def load(cls, path: str) -> "FeatureNormalizer":
+        """Load normalizer from disk. Returns unfitted normalizer if file missing."""
+        norm = cls()
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                norm._means = data.get("means", {})
+                norm._stds = data.get("stds", {})
+                norm._fitted = data.get("fitted", False)
+                logger.info("FeatureNormalizer loaded from %s (%d features)", path, len(norm._means))
+            except Exception as e:
+                logger.warning("FeatureNormalizer: failed to load %s: %s", path, e)
+        return norm

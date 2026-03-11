@@ -4,7 +4,7 @@ Isotonic regression: non-parametric monotonic mapping from score to probability.
 Reliability curve: binned predicted prob vs realized frequency (for monitoring).
 """
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 

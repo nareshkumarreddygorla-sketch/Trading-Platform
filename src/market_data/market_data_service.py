@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Callable, List, Optional
 
 from src.core.events import Exchange, Tick
+from src.market_data.timestamp import normalize_ts
+from src.data_pipeline.tick_validator import TickValidator
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +19,8 @@ logger = logging.getLogger(__name__)
 FEED_STALE_SECONDS = 120
 RECONNECT_BASE_DELAY = 1.0
 RECONNECT_MAX_DELAY = 60.0
-
-
-def _normalize_ts(ts) -> datetime:
-    if ts is None:
-        return datetime.now(timezone.utc)
-    if isinstance(ts, datetime):
-        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-    if isinstance(ts, (int, float)):
-        return datetime.fromtimestamp(float(ts), tz=timezone.utc)
-    return datetime.now(timezone.utc)
+# Grace period: allow this many seconds after start before requiring a tick
+SILENT_CONNECTION_GRACE_SECONDS = 30.0
 
 
 class MarketDataService:
@@ -44,6 +38,7 @@ class MarketDataService:
         *,
         on_feed_unhealthy: Optional[Callable[[], None]] = None,
         feed_stale_seconds: float = FEED_STALE_SECONDS,
+        tick_validator: Optional[TickValidator] = None,
     ):
         self.connector = connector
         self.bar_cache = bar_cache
@@ -51,18 +46,31 @@ class MarketDataService:
         self.symbols = list(symbols)
         self.on_feed_unhealthy = on_feed_unhealthy
         self.feed_stale_seconds = feed_stale_seconds
+        self._tick_validator = tick_validator or TickValidator()
         self._connected = False
         self._last_tick_ts: Optional[datetime] = None
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._reconnect_delay = RECONNECT_BASE_DELAY
         self._health_check_task: Optional[asyncio.Task] = None
+        self._started_at: Optional[datetime] = None
 
     def is_healthy(self) -> bool:
         if not self._connected:
             return False
         if self._last_tick_ts is None:
-            return True  # just connected, give time
+            # No tick ever received — check if we've exceeded the grace period
+            started = self._started_at
+            if started is not None:
+                elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                if elapsed > SILENT_CONNECTION_GRACE_SECONDS:
+                    logger.warning(
+                        "Silent connection detected: connected but no ticks received "
+                        "after %.0fs (grace=%ds)",
+                        elapsed, int(SILENT_CONNECTION_GRACE_SECONDS),
+                    )
+                    return False
+            return True  # still within grace period
         age = (datetime.now(timezone.utc) - self._last_tick_ts).total_seconds()
         return age < self.feed_stale_seconds
 
@@ -79,7 +87,7 @@ class MarketDataService:
         try:
             stream = self.connector.stream_ticks()
             async for tick in stream:
-                self._last_tick_ts = _normalize_ts(getattr(tick, "ts", None)) or datetime.now(timezone.utc)
+                self._last_tick_ts = normalize_ts(getattr(tick, "ts", None))
                 if not hasattr(tick, "ts") or tick.ts is None or not hasattr(tick.ts, "timestamp"):
                     tick = Tick(
                         symbol=tick.symbol,
@@ -88,6 +96,23 @@ class MarketDataService:
                         size=tick.size,
                         ts=self._last_tick_ts,
                     )
+
+                # Validate tick before passing to aggregator
+                vr = self._tick_validator.validate_tick(
+                    symbol=tick.symbol,
+                    price=tick.price,
+                    volume=tick.size,
+                    timestamp=tick.ts,
+                )
+                if not vr.is_valid:
+                    logger.debug(
+                        "Tick rejected for %s: price=%.2f reasons=%s",
+                        tick.symbol,
+                        tick.price,
+                        [r.value for r in vr.reject_reasons],
+                    )
+                    continue
+
                 self.aggregator.push_tick(tick)
         except asyncio.CancelledError:
             raise
@@ -129,6 +154,7 @@ class MarketDataService:
         if self._running:
             return
         self._running = True
+        self._started_at = datetime.now(timezone.utc)
         self._task = asyncio.create_task(self._run())
         self._health_check_task = asyncio.create_task(self._health_loop())
         logger.info("MarketDataService started for symbols=%s", self.symbols)

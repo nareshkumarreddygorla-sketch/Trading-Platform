@@ -1,8 +1,9 @@
 """Risk limits: position, trade, portfolio exposure, sector, VaR, per-symbol, consecutive loss."""
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+import logging
+from dataclasses import dataclass
+from typing import Optional
 
-from src.core.events import Position, Signal
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,6 +31,38 @@ class RiskLimits:
     cvar_limit_pct: float = 8.0  # CVaR (Expected Shortfall) limit as % of portfolio
     max_intraday_loss_pct: float = 1.0  # max drawdown in 60-min rolling window as % of equity
     max_per_position_loss_pct: float = 3.0  # per-position hard stop loss %
+
+    def __post_init__(self) -> None:
+        """Validate and clamp risk limit values to safe ranges."""
+        self.max_position_pct = self._clamp(
+            "max_position_pct", self.max_position_pct, 0.1, 25.0,
+        )
+        self.max_daily_loss_pct = self._clamp(
+            "max_daily_loss_pct", self.max_daily_loss_pct, 0.1, 10.0,
+        )
+        self.max_open_positions = int(self._clamp(
+            "max_open_positions", float(self.max_open_positions), 1.0, 50.0,
+        ))
+        self.max_consecutive_losses = int(self._clamp(
+            "max_consecutive_losses", float(self.max_consecutive_losses), 1.0, 20.0,
+        ))
+
+    @staticmethod
+    def _clamp(name: str, value: float, lo: float, hi: float) -> float:
+        """Clamp value to [lo, hi] and log a warning if it was out of range."""
+        if value < lo:
+            logger.warning(
+                "RiskLimits.%s=%.4f below minimum %.4f — clamped to %.4f",
+                name, value, lo, lo,
+            )
+            return lo
+        if value > hi:
+            logger.warning(
+                "RiskLimits.%s=%.4f above maximum %.4f — clamped to %.4f",
+                name, value, hi, hi,
+            )
+            return hi
+        return value
 
     def check_position_size(self, equity: float, position_value: float) -> LimitCheckResult:
         if equity <= 0:
@@ -76,15 +109,15 @@ class RiskLimits:
             return LimitCheckResult(False, f"sector {pct:.2f}% > max {self.max_sector_concentration_pct}%")
         return LimitCheckResult(True)
 
-    def check_var(self, equity: float, total_position_notional: float) -> LimitCheckResult:
-        """Simple VaR: total notional as % of equity. Real VaR would use volatility."""
-        if self.var_limit_pct is None:
-            return LimitCheckResult(True)
+    def check_leverage(self, equity: float, total_position_notional: float) -> LimitCheckResult:
+        """Check total leverage (notional / equity). Real VaR is handled by PortfolioVaR in manager.py."""
         if equity <= 0:
-            return LimitCheckResult(False, "equity <= 0, cannot check VaR")
+            return LimitCheckResult(False, "equity <= 0, cannot check leverage")
         pct = 100.0 * total_position_notional / equity
-        if pct > self.var_limit_pct:
-            return LimitCheckResult(False, f"var exposure {pct:.2f}% > limit {self.var_limit_pct}%")
+        # Allow up to 200% leverage (2x equity); real VaR limit is enforced separately
+        max_leverage_pct = 200.0
+        if pct > max_leverage_pct:
+            return LimitCheckResult(False, f"leverage {pct:.2f}% > limit {max_leverage_pct}%")
         return LimitCheckResult(True)
 
     def check_consecutive_losses(self, consecutive_loss_count: int) -> LimitCheckResult:

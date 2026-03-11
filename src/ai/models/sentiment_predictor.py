@@ -4,12 +4,15 @@ Fetches Indian market news from free RSS feeds and analyzes sentiment.
 Implements BasePredictor contract for EnsembleEngine integration.
 """
 import logging
+import re
+import threading
 import time
+import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .base import BasePredictor, PredictionOutput
+from .base import BasePredictor, PredictionOutput, estimate_empirical_return
 
 logger = logging.getLogger(__name__)
 
@@ -46,22 +49,31 @@ class SentimentCache:
     def __init__(self, ttl: int = CACHE_TTL):
         self._cache: Dict[str, Tuple[float, Dict]] = {}  # key -> (expiry, result)
         self._ttl = ttl
+        self._lock = threading.Lock()
+        self._max_size = 1000
 
     def get(self, key: str) -> Optional[Dict]:
-        if key in self._cache:
-            expiry, result = self._cache[key]
-            if time.time() < expiry:
-                return result
-            del self._cache[key]
-        return None
+        with self._lock:
+            if key in self._cache:
+                expiry, result = self._cache[key]
+                if time.time() < expiry:
+                    return result
+                del self._cache[key]
+            return None
 
     def set(self, key: str, result: Dict) -> None:
-        self._cache[key] = (time.time() + self._ttl, result)
-        # Evict old entries
-        now = time.time()
-        expired = [k for k, (exp, _) in self._cache.items() if now >= exp]
-        for k in expired:
-            del self._cache[k]
+        with self._lock:
+            self._cache[key] = (time.time() + self._ttl, result)
+            # Evict old entries
+            now = time.time()
+            expired = [k for k, (exp, _) in self._cache.items() if now >= exp]
+            for k in expired:
+                del self._cache[k]
+            # Enforce max size cap
+            if len(self._cache) > self._max_size:
+                oldest = sorted(self._cache.items(), key=lambda x: x[1][0])[:len(self._cache) - self._max_size]
+                for k, _ in oldest:
+                    del self._cache[k]
 
 
 class NewsFetcher:
@@ -79,12 +91,23 @@ class NewsFetcher:
         headlines = []
         for feed_url in self._feeds:
             try:
-                feed = self._feedparser.parse(feed_url)
+                try:
+                    req = urllib.request.Request(feed_url, headers={"User-Agent": "AlphaForge/1.0"})
+                    response = urllib.request.urlopen(req, timeout=10)
+                    feed = self._feedparser.parse(response.read())
+                except Exception as fetch_err:
+                    logger.debug("Feed fetch timeout/error for %s: %s", feed_url, fetch_err)
+                    continue
                 for entry in feed.entries[:max_items]:
                     title = entry.get("title", "")
                     if title:
-                        if symbol is None or symbol.lower() in title.lower():
+                        if symbol is None:
                             headlines.append(title)
+                        elif symbol:
+                            # Exact word boundary matching to avoid false positives
+                            pattern = r'\b' + re.escape(symbol) + r'\b'
+                            if re.search(pattern, title, re.IGNORECASE):
+                                headlines.append(title)
             except Exception as e:
                 logger.debug("Failed to fetch feed %s: %s", feed_url, e)
 
@@ -97,26 +120,34 @@ class SentimentAnalyzer:
     def __init__(self):
         self._pipeline = None
         self._initialized = False
+        self._max_texts = 10
+        self._init_lock = threading.Lock()
 
     def _init_pipeline(self):
         if self._initialized:
             return
-        self._initialized = True
-        pipeline_fn = _try_import_transformers()
-        if pipeline_fn is None:
-            logger.info("transformers not available; sentiment analyzer disabled")
-            return
-        try:
-            self._pipeline = pipeline_fn(
-                "sentiment-analysis",
-                model="ProsusAI/finbert",
-                top_k=None,
-                truncation=True,
-                max_length=512,
-            )
-            logger.info("FinBERT sentiment pipeline loaded")
-        except Exception as e:
-            logger.warning("Failed to load FinBERT: %s", e)
+        with self._init_lock:
+            if self._initialized:
+                return
+            logger.info("Loading FinBERT model (this may take several seconds on first call)...")
+            pipeline_fn = _try_import_transformers()
+            if pipeline_fn is None:
+                logger.info("transformers not available; sentiment analyzer disabled")
+                self._initialized = True
+                return
+            try:
+                self._pipeline = pipeline_fn(
+                    "sentiment-analysis",
+                    model="ProsusAI/finbert",
+                    top_k=None,
+                    truncation=True,
+                    max_length=512,
+                )
+                logger.info("FinBERT sentiment pipeline loaded")
+                self._initialized = True
+            except Exception as e:
+                logger.warning("Failed to load FinBERT: %s — sentiment disabled", e)
+                self._initialized = True
 
     def analyze(self, texts: List[str]) -> Dict[str, float]:
         """Analyze sentiment of texts. Returns {positive, negative, neutral} scores."""
@@ -125,7 +156,9 @@ class SentimentAnalyzer:
             return {"positive": 0.33, "negative": 0.33, "neutral": 0.34}
 
         try:
-            results = self._pipeline(texts[:10])  # Limit to 10 texts for speed
+            if len(texts) > self._max_texts:
+                logger.debug("Sentiment analysis: truncating %d texts to %d", len(texts), self._max_texts)
+            results = self._pipeline(texts[:self._max_texts])
             pos_scores = []
             neg_scores = []
             neu_scores = []
@@ -157,13 +190,20 @@ class SentimentPredictor(BasePredictor):
     model_id = "sentiment_finbert"
     version = "v1"
 
+    @property
+    def is_ready(self) -> bool:
+        return self._analyzer._pipeline is not None or not self._analyzer._initialized
+
+    def __repr__(self) -> str:
+        return f"<SentimentPredictor model_id={self.model_id!r} version={self.version!r} ready={self.is_ready}>"
+
     def __init__(self):
         self.path = ""
         self._analyzer = SentimentAnalyzer()
         self._fetcher = NewsFetcher()
         self._cache = SentimentCache()
 
-    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> PredictionOutput:
+    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> Optional[PredictionOutput]:
         symbol = None
         if context:
             symbol = context.get("symbol")
@@ -183,26 +223,35 @@ class SentimentPredictor(BasePredictor):
         # Fetch and analyze
         headlines = self._fetcher.fetch_headlines(symbol=symbol, max_items=15)
         if not headlines:
-            return PredictionOutput(
-                prob_up=0.5, expected_return=0.0, confidence=0.0,
-                model_id=self.model_id, version=self.version,
-                metadata={"reason": "no_headlines", "symbol": symbol},
-            )
+            return None
 
         sentiment = self._analyzer.analyze(headlines)
 
         # Map sentiment to prediction
         pos = sentiment["positive"]
         neg = sentiment["negative"]
-        # Weighted: positive pushes prob_up higher, negative pushes it lower
-        prob_up = 0.5 + (pos - neg) * 0.3  # Scale sentiment to +-30%
-        prob_up = float(np.clip(prob_up, 0.1, 0.9))
+        # Calibrated mapping: cap sentiment contribution at +/- 15%
+        # (empirical studies show sentiment has low signal-to-noise on Indian markets)
+        sentiment_edge = (pos - neg) * 0.15  # Was 0.3, halved for production safety
+        prob_up = 0.5 + sentiment_edge
+        prob_up = float(np.clip(prob_up, 0.35, 0.65))  # Hard cap (was 0.1-0.9)
 
-        # Confidence based on sentiment strength
-        confidence = abs(pos - neg)
-        confidence = float(np.clip(confidence, 0.0, 1.0))
+        # Confidence: sentiment is inherently noisy, cap at 0.6
+        confidence = abs(pos - neg) * 0.5  # Was 1.0, halved
+        confidence = float(np.clip(confidence, 0.0, 0.6))
 
-        expected_return = (prob_up - 0.5) * 0.015
+        # Require minimum headline count for statistical significance
+        if len(headlines) < 3:
+            confidence *= 0.3  # Heavily penalize predictions from few headlines
+
+        # Validate prediction meets minimum quality standards
+        if not self.validate_prediction(prob_up, confidence):
+            return None
+
+        # Expected return estimate using empirical calibration
+        expected_return = estimate_empirical_return(prob_up, self._empirical_returns)
+        if expected_return is None:
+            return None
 
         result = {
             "prob_up": prob_up,

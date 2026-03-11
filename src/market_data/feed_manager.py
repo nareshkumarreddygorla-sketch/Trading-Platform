@@ -76,7 +76,7 @@ class FeedManager:
         bar_cache,
         primary_feed=None,
         secondary_feed=None,
-        stale_threshold_seconds: float = 120.0,
+        stale_threshold_seconds: float = 30.0,  # Production: 30s (was 120s)
     ):
         self._bar_cache = bar_cache
         self._primary = primary_feed
@@ -299,15 +299,21 @@ class FeedManager:
         # (YFinanceFallbackFeeder pushes into bar_cache directly)
         if hasattr(feed, "_last_bar_ts") and feed._last_bar_ts:
             # _last_bar_ts is dict of symbol -> datetime or str (YahooBarFeeder stores str)
-            most_recent = max(feed._last_bar_ts.values())
-            if isinstance(most_recent, str):
-                from datetime import datetime as _dt
-                try:
-                    most_recent = _dt.fromisoformat(most_recent)
-                except (ValueError, TypeError):
-                    return True  # can't parse, assume healthy
-            if most_recent.tzinfo is None:
-                most_recent = most_recent.replace(tzinfo=timezone.utc)
+            # Normalize all values to datetime before calling max()
+            normalized = []
+            for v in feed._last_bar_ts.values():
+                if isinstance(v, str):
+                    try:
+                        v = datetime.fromisoformat(v)
+                    except (ValueError, TypeError):
+                        continue
+                if isinstance(v, datetime):
+                    if v.tzinfo is None:
+                        v = v.replace(tzinfo=timezone.utc)
+                    normalized.append(v)
+            if not normalized:
+                return True  # can't determine staleness, assume healthy
+            most_recent = max(normalized)
             age = (datetime.now(timezone.utc) - most_recent).total_seconds()
             return age < self._stale_threshold
 
@@ -339,17 +345,19 @@ class FeedManager:
             if isinstance(feed._last_tick_ts, datetime):
                 last_tick_ts = feed._last_tick_ts
         elif hasattr(feed, "_last_bar_ts") and feed._last_bar_ts:
-            ts_vals = feed._last_bar_ts.values()
-            if ts_vals:
-                raw_ts = max(ts_vals)
-                if isinstance(raw_ts, str):
-                    from datetime import datetime as _dt
+            normalized_ts = []
+            for v in feed._last_bar_ts.values():
+                if isinstance(v, str):
                     try:
-                        last_tick_ts = _dt.fromisoformat(raw_ts)
+                        v = datetime.fromisoformat(v)
                     except (ValueError, TypeError):
-                        last_tick_ts = None
-                else:
-                    last_tick_ts = raw_ts
+                        continue
+                if isinstance(v, datetime):
+                    if v.tzinfo is None:
+                        v = v.replace(tzinfo=timezone.utc)
+                    normalized_ts.append(v)
+            if normalized_ts:
+                last_tick_ts = max(normalized_ts)
 
         # Calculate staleness
         if last_tick_ts is not None:

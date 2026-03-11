@@ -80,6 +80,16 @@ models/*.h5
 # Docker
 *.tar
 
+# Runtime state
+kill_switch_state.json
+data/*.db*
+data/circuit_state.json
+data/position_snapshot.json
+
+# Private keys & secrets
+deploy/nginx/certs/*.key
+*.env
+
 # Misc
 *.bak
 *.tmp

@@ -3,7 +3,6 @@ Backtesting engine: historical bars + strategy -> equity curve, metrics.
 Simulates slippage, latency, fees (broker, exchange, tax).
 """
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import List, Optional
 
 from src.core.events import Bar, Exchange, Signal, SignalSide

@@ -1,5 +1,6 @@
 import asyncio
 import math
+import re
 from enum import Enum
 from typing import List, Optional
 
@@ -9,10 +10,20 @@ from pydantic import BaseModel, Field, field_validator
 from src.core.events import Exchange, Signal, SignalSide
 from src.api.deps import get_order_entry_service, get_kill_switch
 from src.api.auth import get_current_user, require_roles
-from src.execution.order_entry import OrderEntryRequest, OrderEntryResult, RejectReason
+from src.execution.order_entry import OrderEntryRequest, RejectReason
 from src.core.events import OrderType
 
 router = APIRouter()
+
+_SYMBOL_RE = re.compile(r"^[A-Z0-9&_-]{1,20}$")
+
+
+def _validate_symbol(symbol: str) -> str:
+    """Validate and sanitize a stock symbol. Raises HTTP 400 on invalid input."""
+    symbol = symbol.strip().upper()
+    if not _SYMBOL_RE.match(symbol):
+        raise HTTPException(400, f"Invalid symbol: must match {_SYMBOL_RE.pattern}")
+    return symbol
 
 MAX_IDEMPOTENCY_KEY_LEN = 256
 MAX_KILL_SWITCH_REASON_LEN = 64
@@ -107,6 +118,24 @@ class PositionsResponse(BaseModel):
     positions: List[PositionResponse]
 
 
+class CancelOrderResponse(BaseModel):
+    order_id: str
+    status: str
+
+
+class PlaceOrderResponse(BaseModel):
+    order_id: Optional[str] = None
+    broker_order_id: Optional[str] = None
+    status: str
+    latency_ms: Optional[float] = None
+
+
+class KillSwitchResponse(BaseModel):
+    status: str
+    reason: Optional[str] = None
+    message: Optional[str] = None
+
+
 def _order_to_response(o) -> OrderResponse:
     return OrderResponse(
         order_id=getattr(o, "order_id", None),
@@ -175,7 +204,7 @@ async def get_order(request: Request, order_id: str, current_user: dict = Depend
     return _order_to_response(order)
 
 
-@router.post("/orders/{order_id}/cancel")
+@router.post("/orders/{order_id}/cancel", response_model=CancelOrderResponse)
 async def cancel_order(
     request: Request,
     order_id: str,
@@ -202,7 +231,9 @@ async def cancel_order(
     try:
         ok = await gateway.cancel_order(order_id, broker_order_id)
     except Exception as e:
-        raise HTTPException(502, f"Cancel failed: {e}")
+        import logging as _logging
+        _logging.getLogger(__name__).exception("Order cancellation failed")
+        raise HTTPException(502, "Order cancellation failed")
     if not ok:
         raise HTTPException(502, "Cancel rejected by broker")
 
@@ -258,7 +289,7 @@ async def list_positions(request: Request, current_user: dict = Depends(get_curr
     )
 
 
-@router.post("/orders")
+@router.post("/orders", response_model=PlaceOrderResponse)
 async def place_order(
     request: Request,
     body: PlaceOrderRequest,
@@ -268,6 +299,8 @@ async def place_order(
     Single order entry: ALL orders go through OrderEntryService (validate -> idempotency -> kill -> circuit -> risk -> reserve -> router -> lifecycle).
     Pydantic validates: side (BUY/SELL enum), quantity (>0, <=1M, finite), exchange (enum), order_type (enum), symbol (pattern).
     """
+    # Validate and sanitize the symbol beyond Pydantic's pattern check
+    body.symbol = _validate_symbol(body.symbol)
     side_upper = body.side.value
     qty_int = int(round(body.quantity))
     if qty_int <= 0:
@@ -358,7 +391,7 @@ async def place_order(
     return {"order_id": result.order_id, "broker_order_id": result.broker_order_id, "status": "PENDING", "latency_ms": result.latency_ms}
 
 
-@router.post("/admin/kill_switch/arm")
+@router.post("/admin/kill_switch/arm", response_model=KillSwitchResponse)
 async def kill_switch_arm(
     request: Request,
     reason: str = "manual",
@@ -386,7 +419,7 @@ async def kill_switch_arm(
     return {"status": "armed", "reason": reason}
 
 
-@router.post("/admin/kill_switch/disarm")
+@router.post("/admin/kill_switch/disarm", response_model=KillSwitchResponse)
 async def kill_switch_disarm(
     request: Request,
     current_user: dict = Depends(require_roles(["admin"])),
@@ -404,7 +437,7 @@ async def kill_switch_disarm(
     return {"status": "disarmed"}
 
 
-@router.post("/admin/safe_mode/clear")
+@router.post("/admin/safe_mode/clear", response_model=KillSwitchResponse)
 async def safe_mode_clear(
     request: Request,
     current_user: dict = Depends(require_roles(["admin"])),

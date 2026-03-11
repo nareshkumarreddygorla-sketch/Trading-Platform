@@ -7,7 +7,7 @@ Phase I: Edge preservation rules (hard constraints).
 5) Correlation with existing alpha below threshold.
 """
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import numpy as np
 

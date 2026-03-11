@@ -19,6 +19,13 @@ import {
   FlaskConical,
   History,
   Newspaper,
+  Database,
+  PieChart,
+  TestTubes,
+  Store,
+  BarChart3,
+  Brain,
+  Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -53,6 +60,13 @@ export function Sidebar() {
     { href: "/backtesting", label: "Backtesting", icon: FlaskConical, badge: null },
     { href: "/risk", label: "Risk Engine", icon: ShieldAlert, badge: null },
     { href: "/news", label: "Market News", icon: Newspaper, badge: null },
+    { href: "/options", label: "Options Chain", icon: BarChart3, badge: null },
+    { href: "/marketplace", label: "Marketplace", icon: Store, badge: null },
+    { href: "/strategy-builder", label: "AI Builder", icon: Brain, badge: null },
+    { href: "/alt-data", label: "Alt Data", icon: Globe, badge: null },
+    { href: "/attribution", label: "Attribution", icon: PieChart, badge: null },
+    { href: "/simulation", label: "Simulation", icon: TestTubes, badge: null },
+    { href: "/data", label: "Data Pipeline", icon: Database, badge: null },
     { href: "/broker", label: "Broker", icon: Plug, badge: null },
     { href: "/audit", label: "Audit Logs", icon: FileText, badge: null },
     { href: "/settings", label: "Settings", icon: Settings, badge: null },
@@ -119,7 +133,7 @@ export function Sidebar() {
               Main Menu
             </span>
           </div>
-          {nav.slice(0, 8).map((item, index) => {
+          {nav.slice(0, 15).map((item, index) => {
             const isActive =
               pathname === item.href || pathname.startsWith(item.href + "/");
             return (
@@ -164,7 +178,7 @@ export function Sidebar() {
               System
             </span>
           </div>
-          {nav.slice(8).map((item, index) => {
+          {nav.slice(15).map((item, index) => {
             const isActive =
               pathname === item.href || pathname.startsWith(item.href + "/");
             return (

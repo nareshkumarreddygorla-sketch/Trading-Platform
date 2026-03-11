@@ -197,7 +197,6 @@ function StepBroker({
       queryClient.invalidateQueries({ queryKey: ["broker-status"] });
       useStore.setState({
         broker: { connected: true, status: "connected" },
-        tradingMode: "live",
       });
       // brief delay so user sees the success state
       setTimeout(onComplete, 1200);

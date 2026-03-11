@@ -54,34 +54,58 @@ def setup_ensemble_engine(app: FastAPI, alpha_model, feature_engine, models_dir:
         model_registry.register(sentiment_pred)
         logger.info("Sentiment predictor registered")
 
-        # XGBoost (via existing alpha model wrapper)
+        # Volatility Predictor (vol regime detection + confidence scaling)
         try:
-            from src.ai.models.base import BasePredictor, PredictionOutput
-            class XGBoostPredictor(BasePredictor):
-                model_id = "xgboost_alpha"
-                version = "v1"
-                def __init__(self_xgb, alpha_model):
-                    self_xgb._alpha = alpha_model
-                    self_xgb.path = ""
-                def predict(self_xgb, features, context=None):
-                    try:
-                        score = self_xgb._alpha.score(features)
-                        prob_up = 0.5 + score * 0.3
-                        return PredictionOutput(
-                            prob_up=min(0.95, max(0.05, prob_up)),
-                            expected_return=score * 0.01,
-                            confidence=min(1.0, abs(score)),
-                            model_id="xgboost_alpha", version="v1",
-                            metadata={"raw_score": score},
-                        )
-                    except Exception:
-                        return PredictionOutput(0.5, 0.0, 0.0, "xgboost_alpha", "v1", {})
-            if alpha_model:
-                xgb_pred = XGBoostPredictor(alpha_model)
-                model_registry.register(xgb_pred)
-                logger.info("XGBoost predictor registered")
+            from src.ai.models.vol_predictor import VolPredictor
+            vol_pred = VolPredictor()
+            model_registry.register(vol_pred)
+            logger.info("Volatility predictor registered (vol_pred)")
         except Exception as e:
-            logger.debug("XGBoost predictor wrapper failed: %s", e)
+            logger.debug("VolPredictor not registered: %s", e)
+
+        # NOTE: XGBoost predictor is wired AFTER AlphaModel.load() in trading.py
+        # to avoid joblib/torch deadlock. See trading.py init_trading().
+
+        # ── Model Validation Gate (P0-2): disable models that fail validation ──
+        try:
+            from src.ai.model_validation import ModelValidator
+            import numpy as np
+            _models_dir_abs = os.path.abspath(models_dir)
+            _validation_dir = os.path.join(_models_dir_abs, "validation")
+            _validator = ModelValidator()
+            _disabled_models = []
+            for _mid in list(model_registry.list_models()):
+                _oos_path = os.path.join(_validation_dir, f"{_mid}_oos.npz")
+                if os.path.exists(_oos_path):
+                    try:
+                        _oos_data = np.load(_oos_path)
+                        _val_result = _validator.validate(
+                            _oos_data.get("predictions", np.array([])),
+                            _oos_data.get("actuals", np.array([])),
+                        )
+                        if not _val_result.passed:
+                            _pred_obj = model_registry.get(_mid)
+                            if _pred_obj and hasattr(_pred_obj, "_model"):
+                                _pred_obj._model = None
+                            elif _pred_obj and hasattr(_pred_obj, "_loaded"):
+                                _pred_obj._loaded = False
+                            _disabled_models.append(_mid)
+                            logger.critical(
+                                "MODEL VALIDATION FAILED for %s — DISABLED. %s",
+                                _mid, getattr(_val_result, "summary", ""),
+                            )
+                        else:
+                            logger.info("Model %s validated OK: %s", _mid, getattr(_val_result, "summary", "passed"))
+                    except Exception as _ve:
+                        logger.warning("Model validation error for %s: %s (model allowed)", _mid, _ve)
+                else:
+                    logger.debug("No OOS validation data for %s — model allowed without validation", _mid)
+            if _disabled_models:
+                logger.warning("Models disabled by validation gate: %s", _disabled_models)
+        except ImportError:
+            logger.debug("ModelValidator not available — skipping validation gate")
+        except Exception as _gate_err:
+            logger.warning("Model validation gate error: %s — all models allowed", _gate_err)
 
         # RL agent: set weight=0 if model not loaded (Sprint 8.10)
         _rl_weight = 0.15
@@ -89,22 +113,46 @@ def setup_ensemble_engine(app: FastAPI, alpha_model, feature_engine, models_dir:
             _rl_weight = 0.0
             logger.warning("RL model not loaded — setting ensemble weight to 0")
 
+        _ensemble_weights = {
+            "xgboost_alpha": 0.25,
+            "lstm_ts": 0.22,
+            "transformer_ts": 0.18,
+            "rl_ppo": _rl_weight,
+            "sentiment_finbert": 0.20 if _rl_weight == 0 else 0.08,
+            "vol_pred": 0.05 if _rl_weight == 0 else 0.05,
+        }
+
+        # Normalize weights to sum to 1.0
+        _total_w = sum(_ensemble_weights.values())
+        if _total_w > 0:
+            _ensemble_weights = {k: v / _total_w for k, v in _ensemble_weights.items()}
+
         _ensemble_engine = EnsembleEngine(
             registry=model_registry,
-            model_ids=["xgboost_alpha", "lstm_ts", "transformer_ts", "rl_ppo", "sentiment_finbert"],
-            weights={
-                "xgboost_alpha": 0.30,
-                "lstm_ts": 0.25,
-                "transformer_ts": 0.20,
-                "rl_ppo": _rl_weight,
-                "sentiment_finbert": 0.25 if _rl_weight == 0 else 0.10,
-            },
+            model_ids=["xgboost_alpha", "lstm_ts", "transformer_ts", "rl_ppo", "sentiment_finbert", "vol_pred"],
+            weights=_ensemble_weights,
         )
         app.state.ensemble_engine = _ensemble_engine
         app.state.model_registry = model_registry
-        logger.info("AI Ensemble Engine configured (5 models, rl_weight=%.2f)", _rl_weight)
+        logger.info("AI Ensemble Engine configured (6 models incl. vol_pred, rl_weight=%.2f)", _rl_weight)
     except Exception as e:
         logger.warning("AI Ensemble Engine not configured: %s", e)
+
+    # ── Feature Distribution Shift Detector (Sprint 11.1) ──
+    try:
+        from src.ai.feature_shift_detector import FeatureShiftDetector
+        _shift_detector = FeatureShiftDetector(
+            min_samples=100,
+            alert_callback=lambda report: logger.critical(
+                "FEATURE SHIFT ALERT: %s — recommendation=%s, shifted=%d/%d features",
+                report.max_psi_feature, report.recommendation,
+                report.features_shifted, report.total_features,
+            ),
+        )
+        app.state.feature_shift_detector = _shift_detector
+        logger.info("Feature shift detector initialized")
+    except Exception as e:
+        logger.debug("Feature shift detector not initialized: %s", e)
 
     return _ensemble_engine, model_registry, _rl_predictor
 
@@ -161,7 +209,7 @@ def setup_drift_detector(app: FastAPI):
                 except Exception as e:
                     logger.debug("Drift check error: %s", e)
 
-        _drift_task = asyncio.get_event_loop().create_task(_daily_drift_check())
+        _drift_task = asyncio.get_running_loop().create_task(_daily_drift_check())
         app.state._drift_task = _drift_task
         logger.info("Drift detection scheduler active (daily check at 15:45 IST)")
         return _drift_detector
@@ -171,58 +219,143 @@ def setup_drift_detector(app: FastAPI):
 
 
 def setup_self_learning(app: FastAPI, ensemble_engine, alpha_model, model_path, models_dir, feature_engine, bar_cache):
-    """Set up SelfLearningScheduler (Sprint 4.1 + 4.5)."""
+    """Set up SelfLearningScheduler with drift->retrain->promote pipeline.
+
+    Pipeline (daily at 15:45 IST after NSE close):
+      1. Multi-layer drift detection (feature, PSI, IC degradation).
+      2. If >=2 layers drifted -> trigger retrain for all models.
+      3. If not drifted -> IC weight update for ensemble.
+      4. Weekly (Friday): forced walk-forward revalidation regardless of drift.
+      5. Auto-promote models that pass stability checks.
+
+    Graceful: if self-learning modules fail to import, log warning and skip.
+    """
+    # ── Lazy imports with graceful fallback ──
     try:
         from src.ai.self_learning.scheduler import SelfLearningScheduler
-        from src.ai.self_learning.drift import ConceptDriftDetector, DataDistributionMonitor
+    except ImportError:
+        logger.warning("SelfLearningScheduler not available (import failed) — skipping self-learning setup")
+        app.state.self_learning_scheduler = None
+        return
 
+    try:
+        from src.ai.self_learning.drift import ConceptDriftDetector, DataDistributionMonitor
+    except ImportError:
+        logger.warning("self_learning.drift not available — skipping self-learning setup")
+        app.state.self_learning_scheduler = None
+        return
+
+    # Optional: orchestrator for structured retrain-all
+    _SelfLearningOrchestrator = None
+    try:
+        from src.ai.self_learning.orchestrator import SelfLearningOrchestrator
+        _SelfLearningOrchestrator = SelfLearningOrchestrator
+    except ImportError:
+        logger.debug("SelfLearningOrchestrator not available — using subprocess retrain fallback")
+
+    # Optional: retrain pipeline for walk-forward promotion
+    _RetrainPipeline = None
+    _RetrainConfig = None
+    try:
+        from src.ai.self_learning.retrain import RetrainPipeline, RetrainConfig
+        _RetrainPipeline = RetrainPipeline
+        _RetrainConfig = RetrainConfig
+    except ImportError:
+        logger.debug("RetrainPipeline not available — walk-forward promotion disabled")
+
+    try:
         _sl_drift = ConceptDriftDetector(threshold=0.3)
         _sl_dist_monitor = DataDistributionMonitor(window=100)
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
+        # ── Build retrain function: orchestrator-based or subprocess fallback ──
+        def _hot_reload_all_models():
+            """Hot-reload all model files after retrain."""
+            reloaded = []
+            if alpha_model and os.path.exists(model_path):
+                try:
+                    alpha_model.load(model_path)
+                    reloaded.append("xgboost_alpha")
+                except Exception as e:
+                    logger.warning("XGBoost hot-reload failed: %s", e)
+            _mr = getattr(app.state, "model_registry", None)
+            if _mr:
+                for _mid, _suffix in [
+                    ("lstm_ts", "lstm_predictor.pt"),
+                    ("transformer_ts", "transformer_predictor.pt"),
+                    ("rl_ppo", "rl_agent.zip"),
+                ]:
+                    _mp = os.path.join(models_dir, _suffix)
+                    if os.path.exists(_mp):
+                        try:
+                            _pred = _mr.get(_mid)
+                            if _pred and hasattr(_pred, 'load'):
+                                _pred.load(_mp)
+                                reloaded.append(_mid)
+                                logger.info("SL hot-reloaded model: %s", _mid)
+                        except Exception:
+                            pass
+            return reloaded
+
+        def _on_model_promote(model_id: str, version: str, metrics: dict):
+            """Callback when a model is auto-promoted: hot-load + broadcast."""
+            logger.warning("MODEL PROMOTED: %s -> %s (metrics=%s)", model_id, version, metrics)
+            _hot_reload_all_models()
+            # Broadcast promotion event via WebSocket
+            try:
+                import asyncio as _aio
+                from src.api.ws_manager import get_ws_manager
+                mgr = get_ws_manager()
+                if mgr:
+                    _loop = _aio.get_event_loop()
+                    if _loop.is_running():
+                        _aio.ensure_future(mgr.broadcast({
+                            "type": "model_promoted",
+                            "model_id": model_id,
+                            "version": version,
+                            "metrics": {k: round(v, 4) if isinstance(v, float) else v for k, v in metrics.items()},
+                        }))
+            except Exception:
+                pass
 
         def _sl_retrain_fn():
-            """Retrain all models via existing auto_train_all script."""
+            """Retrain all models via subprocess, then hot-reload."""
             import subprocess, sys as _sys
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
             env = os.environ.copy()
             env["PYTHONPATH"] = project_root
             train_script = os.path.join(project_root, "scripts", "auto_train_all.py")
             if not os.path.exists(train_script):
                 train_script = os.path.join(project_root, "scripts", "train_alpha_model.py")
+            if not os.path.exists(train_script):
+                logger.warning("No training script found — retrain skipped")
+                return {"all_models": False, "reason": "no_train_script"}
             result = subprocess.run(
                 [_sys.executable, train_script, "--quick"],
                 env=env, capture_output=True, text=True, timeout=1800,
                 cwd=project_root,
             )
             if result.returncode == 0:
-                # Hot-reload ALL models (Sprint 8.9)
-                if alpha_model and os.path.exists(model_path):
-                    alpha_model.load(model_path)
-                _mr = getattr(app.state, "model_registry", None)
-                if _mr:
-                    for _mid, _suffix in [("lstm_ts", "lstm_predictor.pt"), ("transformer_ts", "transformer_predictor.pt"), ("rl_ppo", "rl_agent.zip")]:
-                        _mp = os.path.join(models_dir, _suffix)
-                        if os.path.exists(_mp):
-                            try:
-                                _pred = _mr.get(_mid)
-                                if _pred and hasattr(_pred, 'load'):
-                                    _pred.load(_mp)
-                                    logger.info("SL hot-reloaded model: %s", _mid)
-                            except Exception:
-                                pass
-                return {"all_models": True}
-            return {"all_models": False}
+                reloaded = _hot_reload_all_models()
+                logger.info("SL retrain complete, hot-reloaded: %s", reloaded)
+                return {"all_models": True, "reloaded": reloaded}
+            logger.warning("SL retrain subprocess failed (rc=%d): %s",
+                           result.returncode, (result.stderr or "")[-300:])
+            return {"all_models": False, "returncode": result.returncode}
 
+        # ── IC update function ──
         _sl_ic_fn = None
-        if ensemble_engine:
+        if ensemble_engine and hasattr(ensemble_engine, 'update_weights_from_ic'):
             _sl_ic_fn = ensemble_engine.update_weights_from_ic
 
+        # ── Alert function ──
         _sl_alert_fn = None
         _an_sl = getattr(app.state, "alert_notifier", None)
         if _an_sl:
             _sl_alert_fn = _an_sl.send
 
+        # ── Recent features gatherer ──
         def _get_recent_features():
-            """Gather recent feature snapshots from bar cache."""
+            """Gather recent feature snapshots from bar cache for drift detection."""
             feats = []
             try:
                 from src.core.events import Exchange
@@ -237,6 +370,7 @@ def setup_self_learning(app: FastAPI, ensemble_engine, alpha_model, model_path, 
                 pass
             return feats
 
+        # ── Create and start the scheduler ──
         _self_learning_scheduler = SelfLearningScheduler(
             drift_detector=_sl_drift,
             distribution_monitor=_sl_dist_monitor,
@@ -247,15 +381,97 @@ def setup_self_learning(app: FastAPI, ensemble_engine, alpha_model, model_path, 
             post_market_hour=15,
             post_market_minute=45,
             min_drift_layers_for_retrain=2,
-            weekly_revalidation_day=4,  # Friday
+            weekly_revalidation_day=4,  # Friday = 4 (Monday=0)
         )
+
         # Wire ensemble for calibrator fitting (Sprint 8.4)
         _self_learning_scheduler._ensemble = getattr(app.state, "ensemble_engine", None)
         _self_learning_scheduler.start()
         app.state.self_learning_scheduler = _self_learning_scheduler
-        logger.info("SelfLearningScheduler started (post-market 15:45 IST, drift→retrain/IC-update)")
+
+        # ── Store drift/distribution monitors on app.state for API access ──
+        app.state.sl_drift_detector = _sl_drift
+        app.state.sl_distribution_monitor = _sl_dist_monitor
+
+        # ── Wire SelfLearningOrchestrator if available (structured retrain-all) ──
+        if _SelfLearningOrchestrator is not None:
+            try:
+                _orchestrator = _SelfLearningOrchestrator(
+                    drift_detector=_sl_drift,
+                    distribution_monitor=_sl_dist_monitor,
+                    retrain_pipelines=[],  # Pipelines added below if RetrainPipeline available
+                    on_retrain_complete=lambda mid, replaced: logger.info(
+                        "Orchestrator retrain %s: replaced=%s", mid, replaced
+                    ),
+                )
+                app.state.self_learning_orchestrator = _orchestrator
+                logger.info("SelfLearningOrchestrator wired (structured drift→retrain)")
+            except Exception as e:
+                logger.debug("SelfLearningOrchestrator init failed: %s", e)
+
+        # ── Walk-forward revalidation task (Friday 17:00 IST) ──
+        async def _weekly_walk_forward_loop():
+            """Forced walk-forward revalidation every Friday at 17:00 IST."""
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            _IST = _tz(_td(hours=5, minutes=30))
+            _last_wf_date = None
+            while True:
+                await asyncio.sleep(300)  # check every 5 min
+                try:
+                    now_ist = _dt.now(_IST)
+                    today = now_ist.strftime("%Y-%m-%d")
+                    # Friday = 4, run at 17:00-17:05 IST
+                    if now_ist.weekday() != 4:
+                        continue
+                    if now_ist.hour != 17 or now_ist.minute > 5:
+                        continue
+                    if _last_wf_date == today:
+                        continue
+                    _last_wf_date = today
+                    logger.info("Weekly walk-forward revalidation START (Friday %s)", today)
+
+                    sls = getattr(app.state, "self_learning_scheduler", None)
+                    if sls is not None:
+                        try:
+                            result = await sls.run_now()
+                            logger.info(
+                                "Weekly walk-forward revalidation DONE: action=%s, elapsed=%.1fs",
+                                result.get("action", "unknown"),
+                                result.get("elapsed_seconds", 0),
+                            )
+                            # Broadcast to WebSocket
+                            from src.api.ws_manager import get_ws_manager
+                            mgr = get_ws_manager()
+                            if mgr:
+                                await mgr.broadcast({
+                                    "type": "self_learning_weekly_revalidation",
+                                    "date": today,
+                                    "action": result.get("action", "unknown"),
+                                    "drift_layers_fired": result.get("drift_layers_fired", 0),
+                                    "elapsed_seconds": result.get("elapsed_seconds", 0),
+                                })
+                        except Exception as e:
+                            logger.warning("Weekly walk-forward run_now failed: %s", e)
+                    else:
+                        logger.debug("Weekly walk-forward: no scheduler available")
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.warning("Weekly walk-forward error: %s", e)
+
+        _wf_task = asyncio.get_running_loop().create_task(_weekly_walk_forward_loop())
+        app.state._walk_forward_task = _wf_task
+
+        logger.info(
+            "SelfLearningScheduler started: "
+            "post-market 15:45 IST daily (drift->retrain/IC-update), "
+            "walk-forward Friday 17:00 IST, "
+            "orchestrator=%s",
+            "enabled" if _SelfLearningOrchestrator else "disabled",
+        )
     except Exception as e:
         logger.warning("SelfLearningScheduler not started: %s", e)
+        app.state.self_learning_scheduler = None
 
 
 def setup_auto_retrain(app: FastAPI, alpha_model, model_path, models_dir):
@@ -296,7 +512,7 @@ def setup_auto_retrain(app: FastAPI, alpha_model, model_path, models_dir):
                     train_script = os.path.join(project_root, "scripts", "auto_train_all.py")
                     if not os.path.exists(train_script):
                         train_script = os.path.join(project_root, "scripts", "train_alpha_model.py")
-                    result = await asyncio.get_event_loop().run_in_executor(
+                    result = await asyncio.get_running_loop().run_in_executor(
                         None,
                         lambda: subprocess.run(
                             [sys.executable, train_script, "--quick"],
@@ -334,7 +550,7 @@ def setup_auto_retrain(app: FastAPI, alpha_model, model_path, models_dir):
             except Exception as e:
                 logger.exception("Auto-retrain error: %s", e)
 
-    _retrain_task = asyncio.get_event_loop().create_task(_auto_retrain_loop())
+    _retrain_task = asyncio.get_running_loop().create_task(_auto_retrain_loop())
     app.state._retrain_task = _retrain_task
     logger.info("Auto-retrain scheduler active (checks every 6h, retrains all AI models if >7 days old)")
 

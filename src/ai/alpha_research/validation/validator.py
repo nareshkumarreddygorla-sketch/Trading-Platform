@@ -3,8 +3,8 @@ Phase B: Statistical validation layer.
 IC, IC stability, turnover-adjusted IC, E[r] after cost, capacity-adjusted;
 FDR, min sample, OOS, walk-forward, permutation; reject weak/collapsed/unstable.
 """
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from dataclasses import dataclass
+from typing import List, Optional
 
 import numpy as np
 

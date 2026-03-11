@@ -6,14 +6,37 @@ Implements BasePredictor contract for EnsembleEngine integration.
 import logging
 import math
 import os
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from .base import BasePredictor, PredictionOutput
-from .lstm_predictor import FEATURE_KEYS, NUM_FEATURES, SEQ_LEN
+from .base import BasePredictor, PredictionOutput, estimate_empirical_return
+from .lstm_predictor import BASE_FEATURE_KEYS, SEQ_LEN
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Transformer-specific features: focused on cross-sectional / relational patterns.
+# Transformers excel at capturing relationships across assets and sectors.
+# ---------------------------------------------------------------------------
+TRANSFORMER_SPECIFIC_FEATURES = [
+    # Relative strength vs benchmark (2)
+    "relative_strength_nifty", "relative_strength_nifty_20d",
+    # Sector momentum (2)
+    "sector_momentum_5d", "sector_momentum_20d",
+    # Peer correlation features (2)
+    "peer_correlation_5d", "peer_correlation_20d",
+    # Volume profile features (3)
+    "volume_profile_skew", "volume_concentration_ratio", "volume_relative_to_sector",
+    # Cross-sectional rank features (2)
+    "cross_sectional_return_rank", "cross_sectional_volume_rank",
+    # Mean reversion signal (1)
+    "mean_reversion_zscore",
+]
+
+TRANSFORMER_FEATURE_KEYS = BASE_FEATURE_KEYS + TRANSFORMER_SPECIFIC_FEATURES
+TRANSFORMER_NUM_FEATURES = len(TRANSFORMER_FEATURE_KEYS)  # 39 base + 12 transformer-specific = 51
 
 
 def _try_import_torch():
@@ -28,7 +51,7 @@ def _try_import_torch():
 class TransformerModel:
     """Transformer encoder for time-series binary classification."""
 
-    def __init__(self, input_size: int = NUM_FEATURES, d_model: int = 64,
+    def __init__(self, input_size: int = TRANSFORMER_NUM_FEATURES, d_model: int = 64,
                  nhead: int = 4, num_layers: int = 2, dropout: float = 0.2):
         torch, nn = _try_import_torch()
         if torch is None:
@@ -46,7 +69,7 @@ class TransformerModel:
                 position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
                 div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
                 pe[:, 0::2] = torch.sin(position * div_term)
-                pe[:, 1::2] = torch.cos(position * div_term[:d_model // 2])
+                pe[:, 1::2] = torch.cos(position * div_term[:pe[:, 1::2].shape[1]])
                 pe = pe.unsqueeze(0)
                 self_pe.register_buffer('pe', pe)
 
@@ -72,9 +95,12 @@ class TransformerModel:
             def forward(self_net, x):
                 x = self_net.input_proj(x)
                 x = self_net.pos_encoder(x)
-                x = self_net.transformer(x)
-                # Use mean pooling over sequence
-                x = x.mean(dim=1)
+                # Generate causal mask to prevent future information leakage
+                seq_len = x.size(1)
+                causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device), diagonal=1).bool()
+                x = self_net.transformer(x, mask=causal_mask)
+                # Use last-token pooling (most recent timestep is most relevant for prediction)
+                x = x[:, -1, :]  # (batch, d_model) — last timestep
                 x = self_net.dropout(x)
                 x = self_net.relu(self_net.fc1(x))
                 x = self_net.sigmoid(self_net.fc2(x))
@@ -106,6 +132,20 @@ class TransformerModel:
         try:
             torch = self._torch
             state_dict = torch.load(path, map_location=self._device, weights_only=True)
+            # Pre-validate shapes to avoid load_state_dict hang (joblib/torch interaction)
+            model_sd = self._model.state_dict()
+            for key in model_sd:
+                if key in state_dict and model_sd[key].shape != state_dict[key].shape:
+                    logger.warning(
+                        "Failed to load Transformer model from %s: shape mismatch for %s: "
+                        "checkpoint=%s vs model=%s",
+                        path, key, state_dict[key].shape, model_sd[key].shape,
+                    )
+                    return False
+            missing = set(model_sd.keys()) - set(state_dict.keys())
+            if missing:
+                logger.warning("Failed to load Transformer model from %s: missing keys: %s", path, missing)
+                return False
             self._model.load_state_dict(state_dict)
             self._model.eval()
             logger.info("Transformer model loaded from %s", path)
@@ -119,7 +159,23 @@ class TransformerPredictor(BasePredictor):
     """Transformer for next-step direction prediction."""
 
     model_id = "transformer_ts"
-    version = "v1"
+    version = "v2"
+
+    @classmethod
+    def get_feature_keys(cls) -> List[str]:
+        """Return the full feature list for this model (base + transformer-specific).
+
+        This classmethod allows the training pipeline and feature engine to
+        query the exact feature set without instantiating the model.
+        """
+        return list(TRANSFORMER_FEATURE_KEYS)
+
+    @property
+    def is_ready(self) -> bool:
+        return self._transformer.available
+
+    def __repr__(self) -> str:
+        return f"<TransformerPredictor model_id={self.model_id!r} version={self.version!r} available={self._transformer.available}>"
 
     def __init__(self, model_path: str = ""):
         self._transformer = TransformerModel()
@@ -136,8 +192,8 @@ class TransformerPredictor(BasePredictor):
                     stats = np.load(stats_path)
                     self._feature_means = stats["means"]
                     self._feature_stds = stats["stds"]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to load normalization stats from %s: %s", stats_path, e)
 
     def _normalize_sequence(self, seq: np.ndarray) -> np.ndarray:
         """Z-score normalize using training statistics (no lookahead bias)."""
@@ -155,31 +211,32 @@ class TransformerPredictor(BasePredictor):
             normed[t] = (seq[t] - mean) / std
         return normed
 
-    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> PredictionOutput:
+    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> Optional[PredictionOutput]:
         if not self._transformer.available:
-            return PredictionOutput(
-                prob_up=0.5, expected_return=0.0, confidence=0.0,
-                model_id=self.model_id, version=self.version,
-                metadata={"reason": "torch_not_available"},
-            )
+            return None
 
+        _predict_start = time.monotonic()
         seq = None
         if context:
             seq = context.get("sequence")
             if seq is None:
                 feature_history = context.get("feature_history")
                 if feature_history and len(feature_history) >= SEQ_LEN:
+                    # Check feature availability on first dict
+                    _feature_keys = TRANSFORMER_FEATURE_KEYS
+                    sample = feature_history[-1]
+                    available = [k for k in _feature_keys if k in sample]
+                    if len(available) < len(_feature_keys) * 0.7:
+                        logger.warning("Transformer: Only %d/%d expected features available (missing: %s)",
+                                      len(available), len(_feature_keys),
+                                      [k for k in _feature_keys if k not in sample][:5])
                     rows = []
                     for fdict in feature_history[-SEQ_LEN:]:
-                        rows.append([fdict.get(k, 0.0) for k in FEATURE_KEYS])
-                    seq = np.array(rows, dtype=np.float32)
+                        rows.append([fdict.get(k, np.nan) for k in _feature_keys])
+                    seq = np.nan_to_num(np.array(rows, dtype=np.float32), nan=0.0)
 
         if seq is None or len(seq) < SEQ_LEN:
-            return PredictionOutput(
-                prob_up=0.5, expected_return=0.0, confidence=0.0,
-                model_id=self.model_id, version=self.version,
-                metadata={"reason": "no_sequence_data"},
-            )
+            return None
 
         seq_norm = self._normalize_sequence(seq[-SEQ_LEN:])
         prob_up = self._transformer.predict_proba(seq_norm)
@@ -188,13 +245,21 @@ class TransformerPredictor(BasePredictor):
         if not self._loaded:
             confidence *= 0.3
 
-        expected_return = (prob_up - 0.5) * 0.02
+        # Validate prediction meets minimum quality standards
+        if not self.validate_prediction(prob_up, confidence):
+            return None
 
+        # Expected return estimate using empirical calibration
+        expected_return = estimate_empirical_return(prob_up, self._empirical_returns)
+        if expected_return is None:
+            return None
+
+        latency_ms = (time.monotonic() - _predict_start) * 1000
         return PredictionOutput(
             prob_up=prob_up,
             expected_return=expected_return,
             confidence=confidence,
             model_id=self.model_id,
             version=self.version,
-            metadata={"seq_len": SEQ_LEN, "loaded": self._loaded},
+            metadata={"seq_len": SEQ_LEN, "loaded": self._loaded, "latency_ms": latency_ms},
         )

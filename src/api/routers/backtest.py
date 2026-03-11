@@ -3,12 +3,15 @@ Backtest API: run backtests via BacktestEngine, store results, return job status
 """
 import asyncio
 import logging
+import threading
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
+
+from src.api.auth import get_current_user
 
 from src.core.events import Bar, Exchange
 
@@ -17,7 +20,21 @@ logger = logging.getLogger(__name__)
 
 # Job store: job_id -> { status, body, result (equity_curve, metrics, trades), error }
 _backtest_jobs: Dict[str, Dict[str, Any]] = {}
-_backtest_lock = asyncio.Lock()
+_backtest_lock = threading.Lock()
+MAX_JOBS = 100  # Limit stored jobs to prevent unbounded memory growth
+
+
+def _evict_oldest_completed_jobs() -> None:
+    """Remove oldest completed/failed jobs when the store exceeds MAX_JOBS.
+    Must be called while _backtest_lock is held."""
+    if len(_backtest_jobs) <= MAX_JOBS:
+        return
+    # Collect completed/failed job ids (insertion-ordered since Python 3.7)
+    completed = [jid for jid, data in _backtest_jobs.items() if data["status"] in ("completed", "failed")]
+    # Evict oldest completed first
+    to_remove = len(_backtest_jobs) - MAX_JOBS
+    for jid in completed[:to_remove]:
+        _backtest_jobs.pop(jid, None)
 
 
 def _parse_date(s: str) -> datetime:
@@ -32,43 +49,68 @@ def _parse_date(s: str) -> datetime:
     raise ValueError(f"Invalid date: {s}")
 
 
-def _generate_synthetic_bars(
+def _fetch_bars_for_backtest(
     symbol: str,
     exchange: str,
     start: datetime,
     end: datetime,
     interval: str = "1d",
-    seed: int = 42,
 ) -> List[Bar]:
-    """Generate synthetic OHLCV bars for backtest when no market data store."""
-    import numpy as np
-    rng = np.random.default_rng(seed)
-    delta = timedelta(days=1) if interval == "1d" else timedelta(hours=1)
-    bars: List[Bar] = []
-    price = 100.0
-    current = start
+    """Fetch OHLCV bars for backtest using Yahoo Finance. Returns empty list on failure."""
     exch = Exchange(exchange) if exchange in ("NSE", "BSE", "NYSE", "NASDAQ", "LSE", "FX") else Exchange.NSE
-    while current <= end and len(bars) < 2000:
-        ret = rng.standard_normal() * 0.02
-        price = price * (1 + ret)
-        o, c = price, price
-        h = max(o, c) + abs(rng.standard_normal() * 0.5)
-        l = min(o, c) - abs(rng.standard_normal() * 0.5)
-        vol = max(1000, int(rng.exponential(50000)))
-        bars.append(Bar(
-            symbol=symbol,
-            exchange=exch,
-            interval=interval,
-            open=round(o, 2),
-            high=round(h, 2),
-            low=round(l, 2),
-            close=round(c, 2),
-            volume=float(vol),
-            ts=current,
-            source="synthetic",
-        ))
-        current += delta
-    return bars
+    try:
+        from src.market_data.connectors.yahoo_finance import get_yahoo_connector
+        yf = get_yahoo_connector()
+        if yf is not None:
+            raw_bars = yf.get_bars(
+                symbol,
+                exchange,
+                interval,
+                limit=2000,
+                from_ts=start.strftime("%Y-%m-%d"),
+                to_ts=end.strftime("%Y-%m-%d"),
+            )
+            if raw_bars:
+                bars: List[Bar] = []
+                for b in raw_bars:
+                    try:
+                        ts = b.get("ts", "")
+                        if isinstance(ts, str):
+                            # Parse ISO format; fall back to date-only
+                            for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S%z", "%Y-%m-%d"):
+                                try:
+                                    ts_dt = datetime.strptime(ts[:26].rstrip("+").rstrip("-"), fmt.rstrip("%z"))
+                                    ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+                                    break
+                                except ValueError:
+                                    continue
+                            else:
+                                ts_dt = start  # fallback
+                        else:
+                            ts_dt = ts if hasattr(ts, "year") else start
+
+                        bars.append(Bar(
+                            symbol=symbol,
+                            exchange=exch,
+                            interval=interval,
+                            open=float(b.get("open", 0)),
+                            high=float(b.get("high", 0)),
+                            low=float(b.get("low", 0)),
+                            close=float(b.get("close", 0)),
+                            volume=float(b.get("volume", 0)),
+                            ts=ts_dt,
+                            source="yahoo_finance",
+                        ))
+                    except Exception:
+                        continue
+                if bars:
+                    logger.info("Fetched %d bars from Yahoo Finance for backtest %s", len(bars), symbol)
+                    return bars
+    except ImportError:
+        logger.debug("Yahoo Finance connector not available for backtest")
+    except Exception as e:
+        logger.warning("Yahoo Finance bar fetch failed for backtest %s: %s", symbol, e)
+    return []
 
 
 def _run_backtest_sync(job_id: str, body: dict) -> None:
@@ -77,28 +119,30 @@ def _run_backtest_sync(job_id: str, body: dict) -> None:
     try:
         from src.api.routers.strategies import get_registry
         from src.backtesting.engine import BacktestEngine, BacktestConfig
-        from src.backtesting.metrics import BacktestMetrics
 
         reg = get_registry()
         strategy_id = body.get("strategy_id")
         if not strategy_id:
-            _backtest_jobs[job_id]["status"] = "failed"
-            _backtest_jobs[job_id]["error"] = "strategy_id is required"
+            with _backtest_lock:
+                _backtest_jobs[job_id]["status"] = "failed"
+                _backtest_jobs[job_id]["error"] = "strategy_id is required"
             return
         strategy = reg.get(strategy_id)
         if strategy is None:
-            _backtest_jobs[job_id]["status"] = "failed"
-            _backtest_jobs[job_id]["error"] = f"Strategy not found: {strategy_id}"
+            with _backtest_lock:
+                _backtest_jobs[job_id]["status"] = "failed"
+                _backtest_jobs[job_id]["error"] = f"Strategy not found: {strategy_id}"
             return
 
         start = _parse_date(body["start"])
         end = _parse_date(body["end"])
         if start >= end:
-            _backtest_jobs[job_id]["status"] = "failed"
-            _backtest_jobs[job_id]["error"] = "start must be before end"
+            with _backtest_lock:
+                _backtest_jobs[job_id]["status"] = "failed"
+                _backtest_jobs[job_id]["error"] = "start must be before end"
             return
 
-        bars = _generate_synthetic_bars(
+        bars = _fetch_bars_for_backtest(
             body["symbol"],
             body.get("exchange", "NSE"),
             start,
@@ -106,8 +150,12 @@ def _run_backtest_sync(job_id: str, body: dict) -> None:
             body.get("interval", "1d"),
         )
         if len(bars) < 30:
-            _backtest_jobs[job_id]["status"] = "failed"
-            _backtest_jobs[job_id]["error"] = "Not enough bars generated"
+            with _backtest_lock:
+                _backtest_jobs[job_id]["status"] = "failed"
+                _backtest_jobs[job_id]["error"] = (
+                    f"Insufficient market data for {body['symbol']}: got {len(bars)} bars, "
+                    f"need at least 30. Ensure Yahoo Finance is available and the symbol/date range is valid."
+                )
             return
 
         config = BacktestConfig(
@@ -124,8 +172,10 @@ def _run_backtest_sync(job_id: str, body: dict) -> None:
                 "total_return_pct": metrics.total_return_pct,
                 "cagr_pct": metrics.cagr_pct,
                 "sharpe": metrics.sharpe,
+                "sharpe_ratio": metrics.sharpe,
                 "max_drawdown_pct": metrics.max_drawdown_pct,
                 "win_rate_pct": metrics.win_rate_pct,
+                "win_rate": metrics.win_rate_pct,
                 "num_trades": len(result.trades),
             }
             if getattr(metrics, "risk_metrics", None):
@@ -133,17 +183,19 @@ def _run_backtest_sync(job_id: str, body: dict) -> None:
                 metrics_dict["var_95"] = getattr(rm, "var_95", 0)
                 metrics_dict["sharpe"] = getattr(rm, "sharpe", metrics.sharpe)
 
-        _backtest_jobs[job_id]["status"] = "completed"
-        _backtest_jobs[job_id]["result"] = {
-            "equity_curve": result.equity_curve,
-            "metrics": metrics_dict,
-            "trades": result.trades[:100],
-            "num_trades": len(result.trades),
-        }
+        with _backtest_lock:
+            _backtest_jobs[job_id]["status"] = "completed"
+            _backtest_jobs[job_id]["result"] = {
+                "equity_curve": result.equity_curve,
+                "metrics": metrics_dict,
+                "trades": result.trades[:100],
+                "num_trades": len(result.trades),
+            }
     except Exception as e:
-        logger.exception("Backtest run failed: %s", e)
-        _backtest_jobs[job_id]["status"] = "failed"
-        _backtest_jobs[job_id]["error"] = str(e)
+        logger.exception("Backtest run failed")
+        with _backtest_lock:
+            _backtest_jobs[job_id]["status"] = "failed"
+            _backtest_jobs[job_id]["error"] = "Backtest execution failed"
 
 
 class BacktestRunRequest(BaseModel):
@@ -157,7 +209,7 @@ class BacktestRunRequest(BaseModel):
 
 
 @router.post("/run")
-async def run_backtest(request: Request, body: BacktestRunRequest, background_tasks: BackgroundTasks):
+async def run_backtest(request: Request, body: BacktestRunRequest, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
     """Queue and run backtest; returns job_id. Runs in background."""
     try:
         _parse_date(body.start)
@@ -166,7 +218,8 @@ async def run_backtest(request: Request, body: BacktestRunRequest, background_ta
         raise HTTPException(400, str(e))
 
     job_id = f"bt_{uuid.uuid4().hex[:12]}"
-    async with _backtest_lock:
+    with _backtest_lock:
+        _evict_oldest_completed_jobs()
         _backtest_jobs[job_id] = {
             "status": "running",
             "body": body.model_dump(),
@@ -186,9 +239,9 @@ async def run_backtest(request: Request, body: BacktestRunRequest, background_ta
 
 
 @router.get("/jobs")
-async def list_backtest_jobs():
+async def list_backtest_jobs(current_user: dict = Depends(get_current_user)):
     """List all backtest jobs (id, status)."""
-    async with _backtest_lock:
+    with _backtest_lock:
         jobs = [
             {"job_id": jid, "status": data["status"], "body": data.get("body")}
             for jid, data in list(_backtest_jobs.items())
@@ -197,9 +250,9 @@ async def list_backtest_jobs():
 
 
 @router.get("/jobs/{job_id}")
-async def get_backtest_job(job_id: str):
+async def get_backtest_job(job_id: str, current_user: dict = Depends(get_current_user)):
     """Get job status and metrics."""
-    async with _backtest_lock:
+    with _backtest_lock:
         data = _backtest_jobs.get(job_id)
     if not data:
         raise HTTPException(404, "Job not found")
@@ -213,9 +266,9 @@ async def get_backtest_job(job_id: str):
 
 
 @router.get("/jobs/{job_id}/equity")
-async def get_backtest_equity(job_id: str):
+async def get_backtest_equity(job_id: str, current_user: dict = Depends(get_current_user)):
     """Get equity curve for job."""
-    async with _backtest_lock:
+    with _backtest_lock:
         data = _backtest_jobs.get(job_id)
     if not data:
         raise HTTPException(404, "Job not found")
@@ -229,9 +282,9 @@ async def get_backtest_equity(job_id: str):
 
 
 @router.get("/jobs/{job_id}/trades")
-async def get_backtest_trades(job_id: str, limit: int = 100):
+async def get_backtest_trades(job_id: str, limit: int = 100, current_user: dict = Depends(get_current_user)):
     """Get trades for completed job."""
-    async with _backtest_lock:
+    with _backtest_lock:
         data = _backtest_jobs.get(job_id)
     if not data:
         raise HTTPException(404, "Job not found")

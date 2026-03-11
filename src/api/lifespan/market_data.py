@@ -11,6 +11,25 @@ from fastapi import FastAPI
 logger = logging.getLogger(__name__)
 
 
+def _discover_feed_symbols(count: int = 10):
+    """Dynamically discover symbols for the market data feed — no hardcoded lists."""
+    try:
+        from src.scanner.dynamic_universe import get_dynamic_universe
+        symbols = get_dynamic_universe().get_tradeable_stocks(count=count)
+        if symbols:
+            return symbols
+    except Exception:
+        pass
+    try:
+        from src.market_data.symbol_token_map import get_symbol_token_map
+        stm = get_symbol_token_map()
+        if stm.is_loaded:
+            return stm.get_all_nse_equity_symbols()[:count]
+    except Exception:
+        pass
+    return []
+
+
 async def init_market_data(app: FastAPI) -> None:
     """Initialize market data layer: bar cache, tick aggregator,
     Angel One WS connector or yfinance fallback."""
@@ -22,6 +41,20 @@ async def init_market_data(app: FastAPI) -> None:
     app.state.bar_aggregator = TickToBarAggregator(app.state.bar_cache, interval_seconds=60)
     app.state.market_data_service = None
     app.state.angel_one_marketdata_enabled = False
+
+    # ── Symbol Token Map (Angel One instrument master) ──
+    _stm = None
+    try:
+        from src.market_data.symbol_token_map import get_symbol_token_map
+        _stm = get_symbol_token_map()
+        await _stm.load()  # must complete BEFORE connector subscribes
+        app.state.symbol_token_map = _stm
+        logger.info(
+            "Symbol token map loaded (%d instruments)",
+            _stm.instrument_count,
+        )
+    except Exception as e:
+        logger.debug("Symbol token map not initialized: %s", e)
     try:
         from src.core.config import get_settings
         _settings = get_settings()
@@ -32,7 +65,7 @@ async def init_market_data(app: FastAPI) -> None:
         app.state.angel_one_marketdata_enabled = bool(angel_one_marketdata_enabled)
         _symbols = (
             (getattr(_feed_cfg, "symbols", None) or []) if _feed_cfg and angel_one_marketdata_enabled
-            else os.environ.get("MD_SYMBOLS") or (getattr(_exec, "market_data_symbols", None) if _exec else None) or ["RELIANCE", "INFY"]
+            else os.environ.get("MD_SYMBOLS") or (getattr(_exec, "market_data_symbols", None) if _exec else None) or _discover_feed_symbols()
         )
         if isinstance(_symbols, str):
             _symbols = [s.strip() for s in _symbols.split(",") if s.strip()]
@@ -61,6 +94,7 @@ async def init_market_data(app: FastAPI) -> None:
                     token=_token,
                     exchange=_exchange,
                     on_feed_unhealthy=_market_feed_unhealthy_cb,
+                    symbol_token_map=_stm,
                 )
         if connector is None and not angel_one_marketdata_enabled:
             _api_key = getattr(_exec, "angel_one_api_key", None) or os.environ.get("ANGEL_ONE_API_KEY") or ""

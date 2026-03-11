@@ -6,10 +6,12 @@ GET /results — last run results (selected signals, scores).
 """
 import logging
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
+
+from src.api.auth import get_current_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -24,7 +26,7 @@ def _get_pipeline(request: Request):
 
 
 @router.post("/alpha_research/run")
-async def run_alpha_research(request: Request, background_tasks: BackgroundTasks):
+async def run_alpha_research(request: Request, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
     """
     Trigger one full pipeline run: generate -> validate -> score -> cluster -> capacity.
     Runs in background; use GET /alpha_research/status for status.
@@ -37,7 +39,6 @@ async def run_alpha_research(request: Request, background_tasks: BackgroundTasks
         )
 
     def _run():
-        import numpy as np
         with _last_run_lock:
             _last_run["status"] = "running"
             _last_run["results"] = None
@@ -48,14 +49,15 @@ async def run_alpha_research(request: Request, background_tasks: BackgroundTasks
             forward_returns = getattr(pipeline, "_last_forward_returns", None)
             backtest_results = getattr(pipeline, "_last_backtest_results", None)
             if signal_matrix is None or forward_returns is None:
-                n_bars = 500
-                rng = np.random.default_rng(42)
-                forward_returns = rng.standard_normal(n_bars) * 0.01
-                signal_matrix = {c.hypothesis_id: rng.standard_normal(n_bars).cumsum() * 0.001 for c in candidates[:15]}
-                backtest_results = {
-                    c.hypothesis_id: {"sharpe_oos": 0.3, "turnover": 0.3, "mean_return_gross": 0.0002, "n_wf_positive": 3}
-                    for c in candidates[:15]
-                }
+                # No real market data available for validation — fail explicitly
+                # instead of fabricating random signal matrices.
+                with _last_run_lock:
+                    _last_run["status"] = "failed"
+                    _last_run["error"] = (
+                        "Pipeline generated candidates but no signal_matrix or forward_returns "
+                        "are available. Ensure market data is loaded before running alpha research."
+                    )
+                return
             validated = pipeline.run_validation(
                 candidates,
                 signal_matrix=signal_matrix,
@@ -83,14 +85,14 @@ async def run_alpha_research(request: Request, background_tasks: BackgroundTasks
 
 
 @router.get("/alpha_research/status")
-async def alpha_research_status():
+async def alpha_research_status(current_user: dict = Depends(get_current_user)):
     """Last run status: idle | running | completed | failed."""
     with _last_run_lock:
         return {"status": _last_run["status"], "error": _last_run.get("error")}
 
 
 @router.get("/alpha_research/results")
-async def alpha_research_results():
+async def alpha_research_results(current_user: dict = Depends(get_current_user)):
     """Last run results (selected signals, scores)."""
     with _last_run_lock:
         status = _last_run["status"]
@@ -101,7 +103,7 @@ async def alpha_research_results():
 
 
 @router.post("/alpha_research/decay_multipliers")
-async def get_decay_multipliers(request: Request, body: dict = None):
+async def get_decay_multipliers(request: Request, body: dict = None, current_user: dict = Depends(get_current_user)):
     """
     Return recommended weight multipliers from DecayMonitor for given signal_ids.
     Body: {"signal_ids": ["id1", "id2"]}. Used by meta_allocator to scale by decay.

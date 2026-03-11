@@ -1,0 +1,397 @@
+# ================================================================
+# AlphaForge Trading Platform — Infrastructure & Application Alerts
+# ================================================================
+# Comprehensive alerting rules covering:
+#   - API latency and error rates
+#   - Redis connectivity and performance
+#   - Database connection pool health
+#   - Model prediction latency
+#   - Trading loop health
+#   - Risk limit proximity
+#   - Data freshness
+#
+# Deploy: Add to prometheus.yml rule_files or mount in Prometheus.
+# ================================================================
+
+groups:
+  # ── API Performance ──
+  - name: api_performance
+    rules:
+      - alert: APILatencyHigh
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="trading-api"}[5m])) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "API p95 latency > 500ms (current: {{ $value | humanizeDuration }})"
+          description: "The 95th percentile request latency has exceeded 500ms for 3 minutes. This may indicate resource contention, slow database queries, or model inference bottlenecks."
+          runbook: "Check database slow query log, Redis latency, and model prediction times."
+
+      - alert: APILatencyCritical
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="trading-api"}[5m])) > 1.0
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "API p95 latency > 1s (current: {{ $value | humanizeDuration }})"
+          description: "API latency is critically high. Order execution may be impacted."
+
+      - alert: APIErrorRateHigh
+        expr: >
+          (
+            sum(rate(http_requests_total{job="trading-api", status=~"5.."}[5m]))
+            /
+            (sum(rate(http_requests_total{job="trading-api"}[5m])) + 0.001)
+          ) > 0.01
+        for: 3m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "API error rate > 1% (current: {{ $value | humanizePercentage }})"
+          description: "More than 1% of API requests are returning 5xx errors over the last 5 minutes."
+
+      - alert: APIErrorRateCritical
+        expr: >
+          (
+            sum(rate(http_requests_total{job="trading-api", status=~"5.."}[5m]))
+            /
+            (sum(rate(http_requests_total{job="trading-api"}[5m])) + 0.001)
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "API error rate > 5% (current: {{ $value | humanizePercentage }})"
+          description: "Critical error rate. Trading operations may be failing."
+
+  # ── Redis Health ──
+  - name: redis_health
+    rules:
+      - alert: RedisConnectionFailure
+        expr: redis_up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: redis
+        annotations:
+          summary: "Redis connection failed"
+          description: "Redis is unreachable. Fill deduplication, caching, and pub/sub are degraded. The platform will bypass cache but order dedup is at risk."
+
+      - alert: RedisHighLatency
+        expr: redis_commands_duration_seconds_total / redis_commands_processed_total > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis command latency > 10ms average"
+          description: "Redis is responding slowly. Check memory usage, network, and key count."
+
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis memory usage > 85% of max ({{ $value | humanizePercentage }})"
+          description: "Redis is nearing its memory limit. Keys will be evicted per maxmemory-policy."
+
+      - alert: RedisRejectedConnections
+        expr: increase(redis_rejected_connections_total[5m]) > 0
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis rejected {{ $value }} connections in last 5 minutes"
+          description: "Redis is rejecting connections. Check maxclients setting and connection pool sizes."
+
+      - alert: RedisSentinelMasterSwitch
+        expr: changes(redis_sentinel_master_address[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis Sentinel master failover detected"
+          description: "Sentinel performed a master failover. Verify the new master is healthy and replicas are syncing."
+
+  # ── Database Health ──
+  - name: database_health
+    rules:
+      - alert: DatabaseConnectionPoolExhaustion
+        expr: >
+          (
+            pg_stat_activity_count{datname="alphaforge"}
+            /
+            pg_settings_max_connections
+          ) > 0.80
+        for: 3m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Database connection pool > 80% utilized ({{ $value | humanizePercentage }})"
+          description: "Connection pool is nearing exhaustion. New connections may be queued or rejected."
+          runbook: "Increase max_connections or optimize connection pooling. Check for leaked connections."
+
+      - alert: DatabaseConnectionPoolCritical
+        expr: >
+          (
+            pg_stat_activity_count{datname="alphaforge"}
+            /
+            pg_settings_max_connections
+          ) > 0.95
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database connection pool > 95% — near exhaustion"
+          description: "Database connections almost exhausted. Application may fail to persist orders."
+
+      - alert: DatabaseDown
+        expr: pg_up{job="postgres"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "Database is unreachable. Order persistence, position tracking, and audit trail are affected."
+
+      - alert: DatabaseSlowQueries
+        expr: rate(pg_stat_activity_max_tx_duration{datname="alphaforge"}[5m]) > 30
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Long-running database transactions detected (> 30s)"
+          description: "Queries are running longer than 30 seconds. This may cause lock contention."
+
+      - alert: DatabaseReplicationLag
+        expr: pg_replication_lag_seconds > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Database replication lag > 10s ({{ $value }}s)"
+          description: "Read replicas are falling behind. Queries on replicas may return stale data."
+
+  # ── Model Prediction Performance ──
+  - name: model_performance
+    rules:
+      - alert: ModelPredictionLatencyHigh
+        expr: histogram_quantile(0.95, rate(model_prediction_duration_seconds_bucket[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "Model prediction p95 latency > 200ms (current: {{ $value | humanizeDuration }})"
+          description: "AI model inference is taking longer than 200ms at p95. This delays signal generation and order entry."
+          runbook: "Check model size, feature engineering pipeline, and CPU/memory availability."
+
+      - alert: ModelPredictionLatencyCritical
+        expr: histogram_quantile(0.95, rate(model_prediction_duration_seconds_bucket[5m])) > 0.5
+        for: 3m
+        labels:
+          severity: critical
+          component: ai
+        annotations:
+          summary: "Model prediction p95 latency > 500ms — trading loop impacted"
+          description: "Model inference is critically slow. Trading loop may miss opportunities."
+
+      - alert: ModelPredictionErrors
+        expr: rate(model_prediction_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "Model prediction error rate elevated ({{ $value }}/s)"
+          description: "Model inference is producing errors. Check model compatibility and input data quality."
+
+  # ── Trading Loop Health ──
+  - name: trading_loop
+    rules:
+      - alert: TradingLoopStopped
+        expr: >
+          (time() - trading_autonomous_last_tick_timestamp) > 300
+        for: 2m
+        labels:
+          severity: critical
+          component: trading
+        annotations:
+          summary: "Trading loop has not ticked for > 5 minutes"
+          description: "The autonomous trading loop appears to be stalled. No strategy signals are being generated. Check for exceptions in API logs."
+
+      - alert: TradingLoopSlowed
+        expr: >
+          rate(trading_autonomous_ticks[5m]) < 0.003
+        for: 10m
+        labels:
+          severity: warning
+          component: trading
+        annotations:
+          summary: "Trading loop tick rate is abnormally low"
+          description: "The trading loop is running slower than expected. It should tick at least once per minute during market hours."
+
+      - alert: StrategyRunnerErrors
+        expr: increase(strategy_runner_errors_total[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: trading
+        annotations:
+          summary: "Strategy runner errors > 5 in 10 minutes"
+          description: "The strategy execution engine is producing repeated errors."
+
+  # ── Risk Limits Approaching ──
+  - name: risk_proximity
+    rules:
+      - alert: RiskLimitApproaching_DailyLoss
+        expr: >
+          (abs(trading_daily_pnl) / trading_equity) > (0.80 * 0.02)
+        for: 1m
+        labels:
+          severity: warning
+          component: risk
+        annotations:
+          summary: "Daily loss at 80% of 2% risk limit"
+          description: "Daily PnL loss is approaching the 2% daily loss limit. Circuit breaker may trigger soon."
+
+      - alert: RiskLimitApproaching_VaR
+        expr: trading_var_95_pct > (0.80 * 5.0)
+        for: 5m
+        labels:
+          severity: warning
+          component: risk
+        annotations:
+          summary: "VaR at 80% of limit (current: {{ $value }}%)"
+          description: "95% Value-at-Risk is approaching the 5% portfolio limit. Risk exposure is elevated."
+
+      - alert: RiskLimitApproaching_PositionCount
+        expr: trading_open_positions > (0.80 * 10)
+        for: 1m
+        labels:
+          severity: warning
+          component: risk
+        annotations:
+          summary: "Position count at 80% of limit ({{ $value }}/10)"
+          description: "Open position count is nearing the maximum allowed. New signals may be rejected."
+
+      - alert: RiskLimitApproaching_SectorConcentration
+        expr: max(trading_sector_concentration_pct) > (0.80 * 25.0)
+        for: 5m
+        labels:
+          severity: warning
+          component: risk
+        annotations:
+          summary: "Sector concentration at 80% of 25% limit ({{ $value }}%)"
+          description: "A sector is approaching the concentration limit. Diversification risk increasing."
+
+      - alert: RiskLimitApproaching_PositionSize
+        expr: max(trading_position_pct) > (0.80 * 5.0)
+        for: 1m
+        labels:
+          severity: warning
+          component: risk
+        annotations:
+          summary: "Single position size at 80% of 5% limit ({{ $value }}%)"
+          description: "A single position is approaching the per-symbol size limit."
+
+  # ── Data Freshness ──
+  - name: data_freshness
+    rules:
+      - alert: MarketDataStale
+        expr: (time() - trading_last_market_data_timestamp) > 300
+        for: 2m
+        labels:
+          severity: critical
+          component: market_data
+        annotations:
+          summary: "Market data is stale (> 5 minutes old)"
+          description: "No fresh market data received in 5+ minutes during what should be trading hours. Signals are based on outdated prices. Check feed connectivity."
+
+      - alert: BarCacheStale
+        expr: (time() - trading_bar_cache_last_update_timestamp) > 300
+        for: 2m
+        labels:
+          severity: warning
+          component: market_data
+        annotations:
+          summary: "Bar cache data stale > 5 minutes"
+          description: "The OHLCV bar cache has not received updates. Strategy signals may be based on stale bars."
+
+      - alert: DataFeedDisconnected
+        expr: trading_market_feed_healthy == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: market_data
+        annotations:
+          summary: "Market data feed disconnected"
+          description: "The live market data feed is disconnected. Real-time pricing is unavailable."
+
+      - alert: TickDataGap
+        expr: >
+          (time() - trading_last_tick_timestamp) > 120
+          and
+          trading_market_hours_active == 1
+        for: 2m
+        labels:
+          severity: warning
+          component: market_data
+        annotations:
+          summary: "No tick data received for 2+ minutes during market hours"
+          description: "Tick data has stopped flowing during active market hours. Check WebSocket connectivity."
+
+  # ── Infrastructure Resource Alerts ──
+  - name: infrastructure_resources
+    rules:
+      - alert: APIHighMemoryUsage
+        expr: process_resident_memory_bytes{job="trading-api"} > 3221225472
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Trading API memory usage > 3GB"
+          description: "API process is consuming excessive memory. This may indicate a memory leak in model inference or data caching."
+
+      - alert: APIHighCPUUsage
+        expr: rate(process_cpu_seconds_total{job="trading-api"}[5m]) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Trading API CPU usage sustained > 150%"
+          description: "CPU usage is elevated. This may slow order processing and signal generation."
+
+      - alert: DiskSpaceLow
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.10
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Disk space < 10% remaining"
+          description: "Low disk space can cause database write failures and log loss."
+
+      - alert: WorkerProcessDied
+        expr: changes(process_start_time_seconds{job="trading-api"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "API worker process restarted"
+          description: "A gunicorn worker process restarted. This may indicate OOM kills or unhandled exceptions."

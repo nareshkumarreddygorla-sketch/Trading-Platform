@@ -6,7 +6,7 @@ import type { NextRequest } from "next/server";
  * Checks for auth indicator cookie (set by client on login).
  * Actual JWT validation happens on the API backend.
  */
-const PUBLIC_PATHS = ["/login", "/register", "/_next", "/favicon.ico", "/api"];
+const PUBLIC_PATHS = ["/login", "/register", "/favicon.ico", "/api/"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

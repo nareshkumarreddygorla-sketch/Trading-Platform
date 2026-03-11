@@ -1,6 +1,5 @@
 """SQLAlchemy models for Order, OrderEvent, Position. Institutional: constraints, version (OCC)."""
 from datetime import datetime, timezone
-from typing import Optional
 
 from sqlalchemy import (
     CheckConstraint,

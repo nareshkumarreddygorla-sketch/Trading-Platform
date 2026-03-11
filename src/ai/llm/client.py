@@ -4,7 +4,7 @@ LLM does NOT place trades; only suggests risk parameters or strategy weights.
 """
 import logging
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -19,8 +19,10 @@ export default function PositionsPage() {
   const [orderSide, setOrderSide] = useState<"BUY" | "SELL">("BUY");
   const [orderQty, setOrderQty] = useState("");
   const [orderPrice, setOrderPrice] = useState("");
+  const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
+  const [closeError, setCloseError] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error: fetchError } = useQuery({
     queryKey: ["positions"],
     queryFn: async () => {
       const res = await endpoints.positions();
@@ -33,7 +35,7 @@ export default function PositionsPage() {
   });
 
   const placeOrderMutation = useMutation({
-    mutationFn: (body: { symbol: string; side: string; quantity: number; order_type: string; limit_price: number }) =>
+    mutationFn: (body: { symbol: string; side: string; quantity: number; order_type: string; limit_price?: number }) =>
       endpoints.placeOrder(body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["positions"] });
@@ -43,7 +45,35 @@ export default function PositionsPage() {
       setOrderQty("");
       setOrderPrice("");
     },
+    onError: (err: Error) => {
+      // Error is displayed in the form via placeOrderMutation.isError
+    },
   });
+
+  const closePositionMutation = useMutation({
+    mutationFn: (body: { symbol: string; side: string; quantity: number; order_type: string }) =>
+      endpoints.placeOrder(body),
+    onSuccess: (_data, variables) => {
+      setClosingSymbol(null);
+      setCloseError(null);
+      queryClient.invalidateQueries({ queryKey: ["positions"] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (err: Error, variables) => {
+      setClosingSymbol(null);
+      setCloseError(`Failed to close ${variables.symbol}: ${err.message}`);
+      // Auto-dismiss the error after 5 seconds
+      setTimeout(() => setCloseError(null), 5000);
+    },
+  });
+
+  // Auto-dismiss order success message after 3 seconds
+  useEffect(() => {
+    if (placeOrderMutation.isSuccess) {
+      const timer = setTimeout(() => placeOrderMutation.reset(), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [placeOrderMutation.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const positions = data ?? [];
   const totalExposure = positions.reduce(
@@ -215,6 +245,36 @@ export default function PositionsPage() {
         ))}
       </div>
 
+      {/* Close position error banner */}
+      {closeError && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          className="rounded-lg bg-loss/10 border border-loss/30 p-3 flex items-center justify-between"
+          role="alert"
+        >
+          <p className="text-xs text-loss font-medium">{closeError}</p>
+          <button
+            onClick={() => setCloseError(null)}
+            className="text-loss/60 hover:text-loss ml-2"
+            aria-label="Dismiss error"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </motion.div>
+      )}
+
+      {/* Fetch error banner */}
+      {isError && (
+        <div className="rounded-lg bg-loss/10 border border-loss/30 p-3" role="alert">
+          <p className="text-xs text-loss font-medium">
+            Failed to load positions: {(fetchError as Error)?.message || "Unknown error"}
+          </p>
+          <p className="text-[10px] text-muted-foreground mt-1">Data will retry automatically every 5 seconds</p>
+        </div>
+      )}
+
       {/* Per-stock P&L Breakdown (G7) */}
       {positions.length > 0 && (
         <motion.div
@@ -343,18 +403,28 @@ export default function PositionsPage() {
                         <td className="px-5 py-3">
                           <button
                             onClick={() => {
-                              // Close position by placing opposite order
-                              placeOrderMutation.mutate({
+                              if (closingSymbol) return; // prevent double-click
+                              const confirmed = window.confirm(
+                                `Close ${p.symbol} position (${p.quantity} ${p.side === "BUY" ? "long" : "short"} shares)?`
+                              );
+                              if (!confirmed) return;
+                              setClosingSymbol(`${p.symbol}-${p.side}`);
+                              closePositionMutation.mutate({
                                 symbol: p.symbol,
                                 side: p.side === "BUY" ? "SELL" : "BUY",
                                 quantity: p.quantity,
-                                order_type: "LIMIT",
-                                limit_price: p.current_price ?? p.entry_price,
+                                order_type: "MARKET",
                               });
                             }}
-                            className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-loss/10 hover:text-loss transition-all"
+                            disabled={closingSymbol === `${p.symbol}-${p.side}`}
+                            className={cn(
+                              "flex h-7 w-7 items-center justify-center rounded-lg transition-all",
+                              closingSymbol === `${p.symbol}-${p.side}`
+                                ? "text-muted-foreground cursor-not-allowed animate-pulse"
+                                : "text-muted-foreground hover:bg-loss/10 hover:text-loss"
+                            )}
                             title="Close position"
-                            aria-label={`Close ${p.symbol} position`}
+                            aria-label={closingSymbol === `${p.symbol}-${p.side}` ? `Closing ${p.symbol} position` : `Close ${p.symbol} position`}
                           >
                             <X className="h-3.5 w-3.5" />
                           </button>

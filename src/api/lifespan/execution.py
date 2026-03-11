@@ -65,11 +65,8 @@ async def init_execution(app: FastAPI) -> None:
                     logger.warning("Audit append failed (broker_failure): %s", e)
 
         risk_manager = RiskManager(equity=100_000.0, limits=_limits)
-        # Paper execution mode: never place real broker orders (live market data can still be used)
-        paper_mode = getattr(_settings, "paper_execution_mode", None)
-        if paper_mode is None:
-            paper_mode = getattr(_exec, "paper_execution_mode", _exec.paper)
-        paper_mode = bool(paper_mode)
+        # Single paper flag from ExecutionConfig (no more paper_execution_mode)
+        paper_mode = bool(_exec.paper)
         gateway = AngelOneExecutionGateway(
             api_key=_exec.angel_one_api_key or "",
             api_secret=_exec.angel_one_api_secret or "",
@@ -218,6 +215,25 @@ async def init_execution(app: FastAPI) -> None:
         app.state.kill_switch = kill_switch
         app.state.risk_manager = risk_manager
 
+        # P2-2: Wire OTR monitor into OrderEntryService for NSE 10:1 enforcement
+        try:
+            from src.compliance.otr_monitor import OTRMonitor
+            _otr_monitor = OTRMonitor()
+            app.state.order_entry_service.set_otr_monitor(_otr_monitor)
+            app.state.otr_monitor = _otr_monitor
+            logger.info("OTR monitor wired to OrderEntryService (NSE 10:1 limit enforcement)")
+        except Exception as _otr_err:
+            logger.debug("OTR monitor not wired: %s", _otr_err)
+
+        # Wire SurveillanceEngine for post-trade manipulation detection (audit API)
+        try:
+            from src.compliance.surveillance import SurveillanceEngine
+            _surveillance = SurveillanceEngine()
+            app.state.surveillance_engine = _surveillance
+            logger.info("SurveillanceEngine initialized (layering/spoofing/wash detection)")
+        except Exception as _surv_err:
+            logger.debug("SurveillanceEngine not initialized: %s", _surv_err)
+
         from src.execution.order_entry.circuit_and_kill import CircuitAndKillController, CircuitKillConfig
         circuit_kill_config = CircuitKillConfig(
             max_daily_loss_pct=_risk_cfg.max_daily_loss_pct,
@@ -273,17 +289,17 @@ async def init_execution(app: FastAPI) -> None:
             if mgr:
                 try:
                     loop = asyncio.get_running_loop()
+                    loop.create_task(mgr.broadcast({"type": "strategy_disabled", "strategy_id": sid, "reason": reason}))
                 except RuntimeError:
-                    loop = asyncio.get_event_loop()
-                loop.create_task(mgr.broadcast({"type": "strategy_disabled", "strategy_id": sid, "reason": reason}))
+                    logger.warning("No running event loop for strategy_disabled broadcast")
         def _broadcast_exposure_multiplier(sid: str, mult: float):
             mgr = get_ws_manager()
             if mgr:
                 try:
                     loop = asyncio.get_running_loop()
+                    loop.create_task(mgr.broadcast({"type": "exposure_multiplier_changed", "strategy_id": sid, "multiplier": mult}))
                 except RuntimeError:
-                    loop = asyncio.get_event_loop()
-                loop.create_task(mgr.broadcast({"type": "exposure_multiplier_changed", "strategy_id": sid, "multiplier": mult}))
+                    logger.warning("No running event loop for exposure_multiplier broadcast")
         performance_tracker = PerformanceTracker(on_strategy_disabled=_broadcast_strategy_disabled, on_exposure_multiplier_changed=_broadcast_exposure_multiplier)
         app.state.performance_tracker = performance_tracker
         def _on_fill_callback(ev):
@@ -392,15 +408,19 @@ async def init_execution(app: FastAPI) -> None:
                     try:
                         import yfinance as _yf
                         _trp_ca = getattr(app.state, "tail_risk_protector", None)
-                        # India VIX
-                        _vix_data = _yf.Ticker("^INDIAVIX").history(period="1d")
+                        # India VIX (run blocking yfinance call in executor)
+                        _vix_data = await _loop.run_in_executor(
+                            None, lambda: _yf.Ticker("^INDIAVIX").history(period="1d")
+                        )
                         if not _vix_data.empty:
                             _vix_val = float(_vix_data["Close"].iloc[-1])
                             app.state._india_vix = _vix_val
                             if _trp_ca:
                                 _trp_ca.update_vix(_vix_val)
-                        # USDINR
-                        _fx_data = _yf.Ticker("USDINR=X").history(period="2d")
+                        # USDINR (run blocking yfinance call in executor)
+                        _fx_data = await _loop.run_in_executor(
+                            None, lambda: _yf.Ticker("USDINR=X").history(period="2d")
+                        )
                         if not _fx_data.empty and len(_fx_data) >= 2:
                             _fx_ret = float((_fx_data["Close"].iloc[-1] / _fx_data["Close"].iloc[-2]) - 1.0)
                             app.state._usdinr_return = _fx_ret
@@ -437,6 +457,39 @@ async def init_execution(app: FastAPI) -> None:
                             if _cool_down > 300:  # 5 min minimum cool-down
                                 app.state.safe_mode = False
                                 logger.info("Safe mode AUTO-CLEARED after %.0fs (broker OK, feed OK, circuit closed)", _cool_down)
+
+                    # ── P1-2: Stale order sweep (phantom order protection) ──
+                    _lifecycle = getattr(getattr(app.state, "order_entry_service", None), "lifecycle", None)
+                    if _lifecycle is not None:
+                        try:
+                            stale = await _lifecycle.sweep_stale_orders(max_age_seconds=300.0)
+                            if stale:
+                                logger.warning("Stale order sweep cancelled %d orders: %s", len(stale), stale[:5])
+                        except Exception as _e:
+                            logger.debug("Stale order sweep: %s", _e)
+
+                    # ── P2-3: Overnight gap risk check (15:00 IST — flag large positions) ──
+                    try:
+                        from datetime import datetime as _dt_ovn, timezone as _tz_ovn, timedelta as _td_ovn
+                        _IST_ovn = _tz_ovn(_td_ovn(hours=5, minutes=30))
+                        _now_ist_ovn = _dt_ovn.now(_IST_ovn)
+                        if _now_ist_ovn.hour == 15 and _now_ist_ovn.minute < 5 and rm and hasattr(rm, 'check_overnight_risk'):
+                            flagged = rm.check_overnight_risk(max_overnight_pct=3.0)
+                            if flagged:
+                                logger.warning(
+                                    "OVERNIGHT RISK: %d positions exceed 3%% equity — reduce before close: %s",
+                                    len(flagged), flagged[:5],
+                                )
+                                _an_ovn = getattr(app.state, "alert_notifier", None)
+                                if _an_ovn:
+                                    from src.alerts.notifier import AlertSeverity
+                                    await _an_ovn.send(
+                                        AlertSeverity.WARNING, "Overnight Risk",
+                                        f"{len(flagged)} positions exceed 3% equity: {flagged[:3]}",
+                                        source="overnight_risk",
+                                    )
+                    except Exception as _ovn_e:
+                        logger.debug("Overnight risk check: %s", _ovn_e)
 
                     # ── Record intraday PnL snapshot for rolling loss tracking (Sprint 7.11) ──
                     if rm:
@@ -507,6 +560,40 @@ async def init_execution(app: FastAPI) -> None:
                     logger.exception("Risk snapshot save failed: %s", e)
 
         _snapshot_task = asyncio.create_task(_periodic_risk_snapshot())
+
+    # ── Nightly archival task (Sprint 10.13) ──
+    _archival_mgr = getattr(app.state, "archival_manager", None)
+    if _archival_mgr is not None and getattr(app.state, "persistence_service", None):
+        async def _nightly_archival():
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            _IST = _tz(_td(hours=5, minutes=30))
+            _last_archival_date = None
+            while True:
+                await asyncio.sleep(3600)  # check every hour
+                try:
+                    now_ist = _dt.now(_IST)
+                    today = now_ist.strftime("%Y-%m-%d")
+                    # Run at 02:00 IST (low activity window)
+                    if now_ist.hour != 2:
+                        continue
+                    if _last_archival_date == today:
+                        continue
+                    _last_archival_date = today
+                    logger.info("Starting nightly data archival...")
+                    ps = getattr(app.state, "persistence_service", None)
+                    if ps and hasattr(ps, '_engine'):
+                        from sqlalchemy.orm import Session
+                        with Session(ps._engine) as session:
+                            results = _archival_mgr.run_full_archival(session)
+                            logger.info("Nightly archival complete: %d operations", len(results))
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.debug("Nightly archival error: %s", e)
+
+        _archival_task = asyncio.create_task(_nightly_archival())
+        app.state._archival_task = _archival_task
+        logger.info("Nightly archival task scheduled (02:00 IST)")
 
     # ── Gap Risk pre-market check (Sprint 7.3) ──
     _gap_risk_task = None
@@ -579,7 +666,7 @@ async def init_execution(app: FastAPI) -> None:
 
             async def _periodic_reconciliation():
                 while True:
-                    await asyncio.sleep(300)  # 5 minutes
+                    await asyncio.sleep(120)  # P1-3: 2 minutes (was 5min)
                     try:
                         result = await _recon_job.run()
                         if not result.in_sync:
@@ -595,9 +682,43 @@ async def init_execution(app: FastAPI) -> None:
 
             _reconciliation_task = asyncio.create_task(_periodic_reconciliation())
             app.state._reconciliation_task = _reconciliation_task
-            logger.info("Reconciliation periodic task started (every 5 minutes)")
+            logger.info("Reconciliation periodic task started (every 2 minutes)")
         except Exception as e:
             logger.debug("Reconciliation not configured: %s", e)
+
+    # ── Enhanced Broker Reconciliator with discrepancy alerting (Sprint 11.2) ──
+    try:
+        from src.execution.reconciliation import BrokerReconciliator
+
+        def _get_local_pos():
+            rm = getattr(app.state, "risk_manager", None)
+            return list(rm.positions) if rm else []
+
+        async def _get_broker_pos():
+            gw = getattr(app.state, "gateway", None)
+            if gw and hasattr(gw, "get_positions"):
+                return await gw.get_positions()
+            return []
+
+        def _on_discrepancy(report):
+            logger.critical("BROKER RECONCILIATION DISCREPANCY: status=%s, impact=₹%.0f",
+                          report.status, report.total_notional_impact)
+            if report.status == "critical":
+                rm = getattr(app.state, "risk_manager", None)
+                if rm:
+                    rm.open_circuit("reconciliation_discrepancy")
+
+        _broker_reconciliator = BrokerReconciliator(
+            get_local_positions=_get_local_pos,
+            get_broker_positions=_get_broker_pos,
+            alert_threshold_inr=10_000,
+            critical_threshold_inr=100_000,
+            on_discrepancy=_on_discrepancy,
+        )
+        app.state.broker_reconciliator = _broker_reconciliator
+        logger.info("Enhanced broker reconciliator configured")
+    except Exception as e:
+        logger.debug("Broker reconciliator not configured: %s", e)
 
     # Capital deployment gate
     try:
@@ -736,7 +857,7 @@ async def shutdown_execution(app: FastAPI) -> None:
         except asyncio.CancelledError:
             pass
     # Cancel gap risk, reconciliation, drift detection and daily report tasks
-    for _task_name in ("_gap_risk_task", "_reconciliation_task", "_drift_task", "_report_task"):
+    for _task_name in ("_gap_risk_task", "_reconciliation_task", "_drift_task", "_report_task", "_archival_task"):
         _t = getattr(app.state, _task_name, None)
         if _t is not None:
             _t.cancel()

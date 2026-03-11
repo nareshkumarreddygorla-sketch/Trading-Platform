@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,20 +43,20 @@ function CandlestickBg() {
     >
       {Array.from({ length: 40 }).map((_, i) => {
         const x = 30 + i * 29;
-        const bodyH = 10 + seededRandom(i * 3 + 1) * 60;
-        const wickH = bodyH + 10 + seededRandom(i * 3 + 2) * 30;
-        const baseY = 200 + Math.sin(i * 0.3) * 80 + seededRandom(i * 3 + 3) * 60;
+        const bodyH = Math.round(10 + seededRandom(i * 3 + 1) * 60);
+        const wickH = Math.round(bodyH + 10 + seededRandom(i * 3 + 2) * 30);
+        const baseY = Math.round(200 + Math.sin(i * 0.3) * 80 + seededRandom(i * 3 + 3) * 60);
         const isGreen = seededRandom(i * 7) > 0.45;
         return (
           <g key={i}>
             <line
-              x1={x} y1={baseY - wickH / 2}
-              x2={x} y2={baseY + wickH / 2}
+              x1={x} y1={baseY - Math.round(wickH / 2)}
+              x2={x} y2={baseY + Math.round(wickH / 2)}
               stroke={isGreen ? "hsl(152,69%,53%)" : "hsl(0,84%,60%)"}
               strokeWidth="1.5"
             />
             <rect
-              x={x - 6} y={baseY - bodyH / 2}
+              x={x - 6} y={baseY - Math.round(bodyH / 2)}
               width="12" height={bodyH}
               fill={isGreen ? "hsl(152,69%,53%)" : "hsl(0,84%,60%)"}
               rx="2"
@@ -79,25 +79,31 @@ function CandlestickBg() {
 function Particles() {
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {Array.from({ length: 20 }).map((_, i) => (
-        <div
-          key={i}
-          className="particle"
-          style={{
-            left: `${seededRandom(i * 11 + 5) * 100}%`,
-            width: `${2 + seededRandom(i * 13 + 7) * 4}px`,
-            height: `${2 + seededRandom(i * 13 + 7) * 4}px`,
-            background: [
-              "hsl(217 91% 60% / 0.4)",
-              "hsl(258 90% 66% / 0.3)",
-              "hsl(152 69% 53% / 0.3)",
-              "hsl(199 89% 48% / 0.3)",
-            ][i % 4],
-            animationDuration: `${8 + seededRandom(i * 17 + 3) * 12}s`,
-            animationDelay: `${seededRandom(i * 19 + 1) * 8}s`,
-          }}
-        />
-      ))}
+      {Array.from({ length: 20 }).map((_, i) => {
+        const leftPct = Math.round(seededRandom(i * 11 + 5) * 100);
+        const size = Math.round(2 + seededRandom(i * 13 + 7) * 4);
+        const duration = Math.round(8 + seededRandom(i * 17 + 3) * 12);
+        const delay = Math.round(seededRandom(i * 19 + 1) * 8);
+        return (
+          <div
+            key={i}
+            className="particle"
+            style={{
+              left: `${leftPct}%`,
+              width: `${size}px`,
+              height: `${size}px`,
+              background: [
+                "hsl(217 91% 60% / 0.4)",
+                "hsl(258 90% 66% / 0.3)",
+                "hsl(152 69% 53% / 0.3)",
+                "hsl(199 89% 48% / 0.3)",
+              ][i % 4],
+              animationDuration: `${duration}s`,
+              animationDelay: `${delay}s`,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -111,7 +117,7 @@ function TickerStrip() {
         {doubled.map((t, i) => (
           <div key={i} className="flex items-center gap-2 px-5 shrink-0">
             <span className="text-[11px] font-semibold text-foreground/70">{t.sym}</span>
-            <span className="text-[11px] font-mono text-foreground/80">₹{t.price.toLocaleString("en-IN")}</span>
+            <span className="text-[11px] font-mono text-foreground/80" suppressHydrationWarning>₹{t.price.toLocaleString("en-IN")}</span>
             <span className={`text-[10px] font-mono font-semibold flex items-center gap-0.5 ${t.change >= 0 ? "text-profit" : "text-loss"}`}>
               {t.change >= 0 ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
               {t.change >= 0 ? "+" : ""}{t.change}%
@@ -124,17 +130,15 @@ function TickerStrip() {
   );
 }
 
-export default function LoginPage() {
+function LoginPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get("redirect") || "/dashboard";
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -143,7 +147,7 @@ export default function LoginPage() {
       const res = await endpoints.login({ username, password });
       if (typeof window !== "undefined" && res.access_token) {
         setAuthTokens(res.access_token, res.refresh_token);
-        router.push("/dashboard");
+        router.push(redirectTo);
         router.refresh();
       }
     } catch (err) {
@@ -305,7 +309,7 @@ export default function LoginPage() {
             >
               <Button
                 type="submit"
-                disabled={loading}
+                disabled={loading || !username.trim() || !password.trim()}
                 aria-label={loading ? "Signing in" : "Sign in"}
                 aria-busy={loading}
                 className="relative w-full h-12 rounded-xl bg-gradient-to-r from-primary via-[hsl(240,80%,58%)] to-[hsl(258,90%,66%)] font-semibold text-white shadow-lg transition-all duration-300 hover:shadow-2xl hover:shadow-primary/25 hover:brightness-110 disabled:opacity-50 overflow-hidden group"
@@ -376,5 +380,13 @@ export default function LoginPage() {
       {/* Ticker strip at bottom */}
       <TickerStrip />
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginPageInner />
+    </Suspense>
   );
 }

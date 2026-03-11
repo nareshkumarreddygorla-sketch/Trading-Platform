@@ -8,8 +8,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from sqlalchemy.orm import Session
-
 from .database import session_scope
 from .models import OpenTradeModel
 

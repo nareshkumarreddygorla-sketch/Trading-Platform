@@ -3,6 +3,7 @@ Broker credential management: configure, validate, disconnect, and check Angel O
 Enables zero-intervention flow: user enters creds -> system validates -> auto-switches to live.
 Credentials are encrypted at rest using Fernet (AES-128-CBC) derived from JWT_SECRET via PBKDF2.
 """
+import asyncio
 import base64
 import hashlib
 import logging
@@ -84,8 +85,11 @@ def decrypt_credential(value: str) -> str:
     if f is not None:
         try:
             return f.decrypt(value.encode("utf-8")).decode("utf-8")
-        except Exception:
-            # Value may be stored unencrypted (legacy) — return as-is
+        except Exception as e:
+            logger.warning(
+                "Fernet decryption failed (value may be unencrypted/legacy): %s",
+                type(e).__name__,
+            )
             return value
     return value
 
@@ -97,6 +101,7 @@ class BrokerCredentials(BaseModel):
     client_id: str = Field(..., min_length=1, description="Angel One client ID")
     password: str = Field(..., min_length=1, description="Angel One password")
     totp_secret: str = Field(..., min_length=1, description="Base32 TOTP secret for auto-login")
+    mode: str = Field("live", description="Trading mode: 'paper' or 'live'")
 
 
 class BrokerCredentialResponse(BaseModel):
@@ -108,13 +113,95 @@ class BrokerCredentialResponse(BaseModel):
     confirm_token: Optional[str] = None
 
 
+class BrokerStatusResponse(BaseModel):
+    connected: bool
+    mode: str
+    healthy: bool
+    safe_mode: Optional[bool] = None
+    has_credentials: Optional[bool] = None
+    client_id: Optional[str] = None
+    last_connected: Optional[str] = None
+    autonomous_running: Optional[bool] = None
+    tick_count: Optional[int] = None
+    open_trades: Optional[int] = None
+    message: Optional[str] = None
+
+
+class BrokerDisconnectResponse(BaseModel):
+    status: str
+    message: str
+    mode: str
+    connected: bool
+
+
+class BrokerValidateResponse(BaseModel):
+    valid: bool
+    message: str
+
+
 class LiveModeConfirmRequest(BaseModel):
     confirm_token: str = Field(..., min_length=1, description="Confirmation token from configure step")
 
 
 # Paper-to-live confirmation tokens (token -> {creds, ts, user_id})
+# Redis-backed for multi-worker deployments, with in-memory fallback.
 _pending_live_switch: dict = {}
 _CONFIRM_TOKEN_TTL_SECONDS = 300  # 5 minutes
+_REDIS_KEY_PREFIX = "broker:confirm:"
+
+_redis_client = None
+_redis_available = False
+
+
+def _get_redis():
+    """Lazily initialize Redis client for pending live switch tokens."""
+    global _redis_client, _redis_available
+    if _redis_client is not None:
+        return _redis_client if _redis_available else None
+    try:
+        import redis
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        _redis_client = redis.from_url(redis_url, socket_timeout=2, decode_responses=True)
+        _redis_client.ping()
+        _redis_available = True
+        logger.info("Broker confirm tokens: using Redis store (%s)", redis_url)
+        return _redis_client
+    except Exception as e:
+        _redis_available = False
+        logger.info("Broker confirm tokens: Redis unavailable (%s), using in-memory fallback", e)
+        return None
+
+
+def _store_pending_token(token: str, data: dict) -> None:
+    """Store a pending confirmation token in Redis (with TTL) and in-memory fallback."""
+    import json as _json
+    _pending_live_switch[token] = data
+    rc = _get_redis()
+    if rc is not None:
+        try:
+            rc.setex(
+                f"{_REDIS_KEY_PREFIX}{token}",
+                _CONFIRM_TOKEN_TTL_SECONDS,
+                _json.dumps(data, default=str),
+            )
+        except Exception as e:
+            logger.warning("Redis SET for confirm token failed (in-memory still valid): %s", e)
+
+
+def _pop_pending_token(token: str) -> Optional[dict]:
+    """Retrieve and delete a pending confirmation token. Tries Redis first, falls back to in-memory."""
+    import json as _json
+    rc = _get_redis()
+    if rc is not None:
+        try:
+            raw = rc.getdel(f"{_REDIS_KEY_PREFIX}{token}")
+            if raw is not None:
+                # Also remove from in-memory dict to keep them in sync
+                _pending_live_switch.pop(token, None)
+                return _json.loads(raw)
+        except Exception as e:
+            logger.warning("Redis GETDEL for confirm token failed, falling back to in-memory: %s", e)
+    return _pending_live_switch.pop(token, None)
 
 
 def _mask_client_id(client_id: Optional[str]) -> Optional[str]:
@@ -184,31 +271,162 @@ async def configure_broker(
             creds.totp_secret,
         )
     except Exception as e:
-        logger.warning("Broker credential validation failed: %s", e)
+        logger.exception("Broker credential validation failed")
         return JSONResponse(
             status_code=400,
             content={
                 "status": "error",
-                "message": f"Credential validation failed: {str(e)}",
+                "message": "Credential validation failed",
                 "connected": False,
             },
         )
 
-    # Credentials validated — issue a confirmation token (valid for 5 minutes)
-    token = secrets.token_urlsafe(32)
-    _pending_live_switch[token] = {
-        "creds": creds,
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "ts": time.time(),
-        "user_id": current_user.get("user_id", "unknown"),
-    }
+    # ── Paper mode: connect with real credentials for market data, but simulated orders ──
+    if creds.mode == "paper":
+        try:
+            from src.execution.broker.angel_one_http_client import AngelOneHttpClient
 
-    # Cleanup expired tokens
+            gateway.api_key = creds.api_key
+            gateway.access_token = access_token
+            gateway._client_code = creds.client_id
+            gateway._password = creds.password
+            gateway._totp_secret = creds.totp_secret
+            gateway.paper = True  # Stay in PAPER mode
+
+            gateway._client = AngelOneHttpClient(
+                api_key=creds.api_key,
+                client_code=creds.client_id,
+                password=creds.password,
+                access_token=access_token,
+                refresh_token=refresh_token,
+            )
+
+            gateway._token_acquired_at = time.monotonic()
+            gateway._refresh_failures = 0
+            gateway._auth_failed = False
+
+            os.environ["ANGEL_ONE_API_KEY"] = creds.api_key
+            os.environ["ANGEL_ONE_CLIENT_ID"] = creds.client_id
+            os.environ["ANGEL_ONE_PASSWORD"] = creds.password
+            os.environ["ANGEL_ONE_TOTP_SECRET"] = creds.totp_secret
+            os.environ["ANGEL_ONE_TOKEN"] = access_token
+            os.environ["EXEC_PAPER"] = "true"
+
+            request.app.state.safe_mode = False
+            request.app.state.broker_last_connected = datetime.now(timezone.utc).isoformat()
+
+            logger.info(
+                "Broker credentials validated -- PAPER mode active with real market data (client=%s, actor=%s)",
+                creds.client_id,
+                current_user.get("user_id", "unknown"),
+            )
+
+            # Audit log
+            audit_repo = getattr(request.app.state, "audit_repo", None)
+            if audit_repo:
+                try:
+                    audit_repo.append_sync(
+                        "broker_configured",
+                        current_user.get("user_id", "api"),
+                        {"client_id": creds.client_id, "mode": "paper"},
+                    )
+                except Exception:
+                    pass
+
+            # Auto-start Angel One WebSocket market data feed
+            auto_started = False
+            try:
+                existing_mds = getattr(request.app.state, "market_data_service", None)
+                if existing_mds is None:
+                    yf_feeder = getattr(request.app.state, "yf_feeder", None)
+                    if yf_feeder:
+                        try:
+                            await yf_feeder.stop()
+                            request.app.state.yf_feeder = None
+                            logger.info("YFinance fallback feeder stopped (switching to Angel One WS)")
+                        except Exception:
+                            pass
+
+                    bar_cache = getattr(request.app.state, "bar_cache", None)
+                    bar_aggregator = getattr(request.app.state, "bar_aggregator", None)
+                    if bar_cache and bar_aggregator:
+                        from src.market_data.angel_one_ws_connector import AngelOneWsConnector
+                        from src.market_data.market_data_service import MarketDataService
+                        from src.scanner.dynamic_universe import get_dynamic_universe
+
+                        feed_symbols = get_dynamic_universe().get_tradeable_stocks(count=20)
+                        if not feed_symbols:
+                            feed_symbols = []
+
+                        ws_connector = AngelOneWsConnector(
+                            api_key=creds.api_key,
+                            api_secret=creds.client_id,
+                            token=access_token,
+                            exchange="NSE",
+                        )
+                        mds = MarketDataService(
+                            ws_connector, bar_cache, bar_aggregator, feed_symbols,
+                        )
+                        mds.start()
+                        request.app.state.market_data_service = mds
+                        request.app.state.angel_one_marketdata_enabled = True
+                        logger.info(
+                            "Angel One MarketDataService started in PAPER mode (symbols=%d)",
+                            len(feed_symbols),
+                        )
+            except Exception as mds_err:
+                logger.warning("MarketDataService auto-start failed (non-fatal): %s", mds_err)
+
+            # Auto-start autonomous loop in paper mode
+            autonomous_loop = getattr(request.app.state, "autonomous_loop", None)
+            if autonomous_loop is not None:
+                is_running = getattr(autonomous_loop, "_running", False)
+                if not is_running:
+                    try:
+                        await autonomous_loop.start()
+                        auto_started = True
+                        logger.info("Autonomous loop auto-started in PAPER mode (client=%s)", creds.client_id)
+                    except Exception as loop_err:
+                        logger.warning("Failed to auto-start autonomous loop: %s", loop_err)
+
+            return {
+                "status": "ok",
+                "message": f"Broker connected in PAPER mode (client: {creds.client_id}). Real market data, simulated orders.",
+                "mode": "paper",
+                "connected": True,
+                "auto_started": auto_started,
+            }
+
+        except Exception as e:
+            logger.exception("Failed to configure gateway in paper mode")
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "Gateway configuration failed", "connected": False},
+            )
+
+    # ── Live mode: two-step confirmation flow ──
+    # Cleanup expired in-memory tokens
     now = time.time()
     expired = [k for k, v in _pending_live_switch.items() if now - v["ts"] > _CONFIRM_TOKEN_TTL_SECONDS]
     for k in expired:
         del _pending_live_switch[k]
+
+    # Credentials validated — issue a confirmation token (valid for 5 minutes)
+    # Store only encrypted versions of sensitive fields to avoid plaintext in memory
+    token = secrets.token_urlsafe(32)
+    token_data = {
+        "creds_enc": {
+            "api_key": encrypt_credential(creds.api_key),
+            "client_id": encrypt_credential(creds.client_id),
+            "password": encrypt_credential(creds.password),
+            "totp_secret": encrypt_credential(creds.totp_secret),
+        },
+        "access_token": encrypt_credential(access_token),
+        "refresh_token": encrypt_credential(refresh_token),
+        "ts": now,
+        "user_id": current_user.get("user_id", "unknown"),
+    }
+    _store_pending_token(token, token_data)
 
     logger.info(
         "Broker credentials validated -- confirmation token issued (client=%s, actor=%s)",
@@ -245,7 +463,7 @@ async def confirm_live_mode(
             content={"status": "error", "message": "Gateway not initialized", "connected": False},
         )
 
-    pending = _pending_live_switch.pop(body.confirm_token, None)
+    pending = _pop_pending_token(body.confirm_token)
     if not pending:
         return JSONResponse(
             status_code=400,
@@ -257,9 +475,16 @@ async def confirm_live_mode(
             content={"status": "error", "message": "Confirmation token expired (5 min TTL)", "connected": False},
         )
 
-    creds = pending["creds"]
-    access_token = pending["access_token"]
-    refresh_token = pending["refresh_token"]
+    # Decrypt the stored encrypted credentials
+    creds_enc = pending["creds_enc"]
+    creds = BrokerCredentials(
+        api_key=decrypt_credential(creds_enc["api_key"]),
+        client_id=decrypt_credential(creds_enc["client_id"]),
+        password=decrypt_credential(creds_enc["password"]),
+        totp_secret=decrypt_credential(creds_enc["totp_secret"]),
+    )
+    access_token = decrypt_credential(pending["access_token"])
+    refresh_token = decrypt_credential(pending["refresh_token"])
 
     # Reconfigure the live gateway with validated credentials
     try:
@@ -286,12 +511,14 @@ async def confirm_live_mode(
         gateway._refresh_failures = 0
         gateway._auth_failed = False
 
-        # Store in environment for restart persistence (encrypted at rest)
-        os.environ["ANGEL_ONE_API_KEY"] = encrypt_credential(creds.api_key)
-        os.environ["ANGEL_ONE_CLIENT_ID"] = encrypt_credential(creds.client_id)
-        os.environ["ANGEL_ONE_PASSWORD"] = encrypt_credential(creds.password)
-        os.environ["ANGEL_ONE_TOTP_SECRET"] = encrypt_credential(creds.totp_secret)
-        os.environ["ANGEL_ONE_TOKEN"] = encrypt_credential(access_token)
+        # Store in environment for restart persistence (plaintext — os.environ is
+        # already in-process memory; encrypting here just breaks readers on restart
+        # that expect plaintext values).
+        os.environ["ANGEL_ONE_API_KEY"] = creds.api_key
+        os.environ["ANGEL_ONE_CLIENT_ID"] = creds.client_id
+        os.environ["ANGEL_ONE_PASSWORD"] = creds.password
+        os.environ["ANGEL_ONE_TOTP_SECRET"] = creds.totp_secret
+        os.environ["ANGEL_ONE_TOKEN"] = access_token
         os.environ["EXEC_PAPER"] = "false"
 
         # Clear safe mode since broker is now reachable
@@ -318,6 +545,51 @@ async def confirm_live_mode(
             except Exception:
                 pass
 
+        # Auto-start Angel One WebSocket market data feed
+        try:
+            existing_mds = getattr(request.app.state, "market_data_service", None)
+            if existing_mds is None:
+                # Stop yfinance fallback feeder if running
+                yf_feeder = getattr(request.app.state, "yf_feeder", None)
+                if yf_feeder:
+                    try:
+                        await yf_feeder.stop()
+                        request.app.state.yf_feeder = None
+                        logger.info("YFinance fallback feeder stopped (switching to Angel One WS)")
+                    except Exception:
+                        pass
+
+                bar_cache = getattr(request.app.state, "bar_cache", None)
+                bar_aggregator = getattr(request.app.state, "bar_aggregator", None)
+                if bar_cache and bar_aggregator:
+                    from src.market_data.angel_one_ws_connector import AngelOneWsConnector
+                    from src.market_data.market_data_service import MarketDataService
+                    from src.scanner.dynamic_universe import get_dynamic_universe
+
+                    # Discover symbols dynamically
+                    feed_symbols = get_dynamic_universe().get_tradeable_stocks(count=20)
+                    if not feed_symbols:
+                        feed_symbols = []
+
+                    ws_connector = AngelOneWsConnector(
+                        api_key=creds.api_key,
+                        api_secret=creds.client_id,
+                        token=access_token,
+                        exchange="NSE",
+                    )
+                    mds = MarketDataService(
+                        ws_connector, bar_cache, bar_aggregator, feed_symbols,
+                    )
+                    mds.start()
+                    request.app.state.market_data_service = mds
+                    request.app.state.angel_one_marketdata_enabled = True
+                    logger.info(
+                        "Angel One MarketDataService started from UI (symbols=%d)",
+                        len(feed_symbols),
+                    )
+        except Exception as mds_err:
+            logger.warning("MarketDataService auto-start failed (non-fatal): %s", mds_err)
+
         # Auto-start autonomous loop if it exists and is not already running
         auto_started = False
         autonomous_loop = getattr(request.app.state, "autonomous_loop", None)
@@ -343,18 +615,18 @@ async def confirm_live_mode(
         }
 
     except Exception as e:
-        logger.error("Failed to reconfigure gateway: %s", e)
+        logger.exception("Failed to reconfigure gateway")
         return JSONResponse(
             status_code=500,
             content={
                 "status": "error",
-                "message": f"Gateway reconfiguration failed: {str(e)}",
+                "message": "Gateway reconfiguration failed",
                 "connected": False,
             },
         )
 
 
-@router.get("/broker/status")
+@router.get("/broker/status", response_model=BrokerStatusResponse)
 async def broker_status(request: Request, current_user: dict = Depends(get_current_user)):
     """Return current broker connection status, mode, and health."""
     gateway = getattr(request.app.state, "gateway", None)
@@ -386,7 +658,7 @@ async def broker_status(request: Request, current_user: dict = Depends(get_curre
         open_trades = len(getattr(autonomous_loop, "_open_trades", {}))
 
     return {
-        "connected": has_creds and not is_paper,
+        "connected": has_creds,
         "mode": "paper" if is_paper else "live",
         "healthy": not safe_mode,
         "safe_mode": safe_mode,
@@ -399,7 +671,7 @@ async def broker_status(request: Request, current_user: dict = Depends(get_curre
     }
 
 
-@router.post("/broker/disconnect")
+@router.post("/broker/disconnect", response_model=BrokerDisconnectResponse)
 async def disconnect_broker(
     request: Request,
     current_user: dict = Depends(get_current_user),
@@ -427,9 +699,12 @@ async def disconnect_broker(
         except Exception as e:
             logger.warning("Failed to stop autonomous loop during disconnect: %s", e)
 
-    # Disconnect the gateway client
+    # Disconnect the gateway client (handle both sync and async disconnect methods)
     try:
-        await gateway.disconnect()
+        if asyncio.iscoroutinefunction(gateway.disconnect):
+            await gateway.disconnect()
+        else:
+            gateway.disconnect()
     except Exception as e:
         logger.warning("Gateway disconnect error (non-fatal): %s", e)
 
@@ -480,7 +755,7 @@ async def disconnect_broker(
     }
 
 
-@router.post("/broker/validate")
+@router.post("/broker/validate", response_model=BrokerValidateResponse)
 async def validate_broker_credentials(creds: BrokerCredentials, current_user: dict = Depends(get_current_user)):
     """Test Angel One credentials without saving. Returns success/failure."""
     try:
@@ -496,7 +771,8 @@ async def validate_broker_credentials(creds: BrokerCredentials, current_user: di
         )
         return {"valid": True, "message": "Credentials validated successfully"}
     except Exception as e:
+        logger.exception("Broker credential validation failed")
         return JSONResponse(
             status_code=400,
-            content={"valid": False, "message": str(e)},
+            content={"valid": False, "message": "Credential validation failed"},
         )

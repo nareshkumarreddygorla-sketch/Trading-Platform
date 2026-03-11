@@ -4,7 +4,7 @@ decay detection; dynamic allocation via risk parity / Kelly / confidence.
 Automatically disables weak strategies.
 """
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np

@@ -4,9 +4,7 @@ Participation impact, slippage scaling, market depth sensitivity, turnover press
 simulate capital scaling; reject if edge breaks beyond participation threshold.
 """
 from dataclasses import dataclass
-from typing import List, Optional
-
-import numpy as np
+from typing import Optional
 
 
 @dataclass

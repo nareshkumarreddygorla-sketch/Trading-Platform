@@ -1,6 +1,4 @@
 """Strategies API: list, toggle, update capital, and performance data."""
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import get_current_user, require_roles
@@ -46,7 +44,7 @@ def get_registry():
 
 
 def _get_perf_tracker(request: Request):
-    return getattr(request.app.state, "perf_tracker", None)
+    return getattr(request.app.state, "performance_tracker", None)
 
 
 # Map strategy IDs to display names and capital defaults
@@ -66,6 +64,9 @@ STRATEGY_DISPLAY = {
     "ai_alpha":                {"name": "AI Alpha Engine", "description": "ML-driven alpha signal with ensemble models", "default_capital": 40000.0},
     "momentum_breakout":       {"name": "Momentum Breakout", "description": "Volume breakout with ADX trend confirmation", "default_capital": 25000.0},
     "mean_reversion":          {"name": "Mean Reversion", "description": "Bollinger Band + RSI mean reversion", "default_capital": 15000.0},
+    # ML/AI strategies
+    "ml_predictor":            {"name": "ML Ensemble Predictor", "description": "LSTM + Transformer + XGBoost ensemble direction predictor", "default_capital": 40000.0},
+    "rl_agent":                {"name": "RL Trading Agent", "description": "PPO reinforcement learning dynamic entry/exit agent", "default_capital": 30000.0},
 }
 
 # In-memory capital store (persists across requests while server runs)
@@ -102,33 +103,9 @@ def _strategy_to_dict(strategy_id: str, is_enabled: bool, perf_tracker=None) -> 
         except Exception:
             pass
 
-    # If no perf tracker, use realistic demo data
-    if perf_tracker is None:
-        import random
-        random.seed(hash(strategy_id) % 1000)  # deterministic per strategy
-        demo = {
-            # Classical (lower win rate — single indicator)
-            "ema_crossover":          {"win_rate": 64.2, "total_pnl": 5280.0,  "total_trades": 136, "sharpe": 1.42, "max_dd": 3.8},
-            "macd":                   {"win_rate": 58.5, "total_pnl": 2340.0,  "total_trades": 94,  "sharpe": 1.18, "max_dd": 5.1},
-            "rsi":                    {"win_rate": 61.8, "total_pnl": 1890.0,  "total_trades": 78,  "sharpe": 1.05, "max_dd": 4.2},
-            # High win-rate professional (multi-confluence)
-            "multi_confluence_trend": {"win_rate": 86.4, "total_pnl": 18750.0, "total_trades": 220, "sharpe": 2.85, "max_dd": 1.8},
-            "vwap_mean_reversion":    {"win_rate": 89.2, "total_pnl": 14200.0, "total_trades": 310, "sharpe": 3.10, "max_dd": 1.2},
-            "opening_range_breakout": {"win_rate": 82.5, "total_pnl": 9800.0,  "total_trades": 145, "sharpe": 2.40, "max_dd": 2.5},
-            "supertrend_adx":         {"win_rate": 84.1, "total_pnl": 12600.0, "total_trades": 178, "sharpe": 2.55, "max_dd": 2.1},
-            "rsi_divergence":         {"win_rate": 87.8, "total_pnl": 8900.0,  "total_trades": 95,  "sharpe": 2.75, "max_dd": 1.5},
-            "bollinger_squeeze":      {"win_rate": 83.6, "total_pnl": 7200.0,  "total_trades": 110, "sharpe": 2.30, "max_dd": 2.3},
-            # Legacy
-            "ai_alpha":               {"win_rate": 68.3, "total_pnl": 7450.0,  "total_trades": 162, "sharpe": 1.65, "max_dd": 2.9},
-            "momentum_breakout":      {"win_rate": 55.2, "total_pnl": 1620.0,  "total_trades": 52,  "sharpe": 0.92, "max_dd": 6.3},
-            "mean_reversion":         {"win_rate": 59.7, "total_pnl": 980.0,   "total_trades": 45,  "sharpe": 0.88, "max_dd": 4.8},
-        }
-        d = demo.get(strategy_id, {"win_rate": 50.0, "total_pnl": 0.0, "total_trades": 0, "sharpe": 0.0, "max_dd": 0.0})
-        win_rate = d["win_rate"]
-        total_pnl = d["total_pnl"]
-        total_trades = d["total_trades"]
-        sharpe = d["sharpe"]
-        max_dd = d["max_dd"]
+    ## No fake demo data: when perf_tracker is unavailable, all metrics stay
+    ## at their zero defaults.  The UI should check for total_trades == 0 to
+    ## show an appropriate "no data yet" state.
 
     return {
         "id": strategy_id,
@@ -205,8 +182,26 @@ async def update_capital(strategy_id: str, body: CapitalBody, current_user: dict
 
 
 @router.get("/signals")
-async def get_signals(limit: int = 50, current_user: dict = Depends(get_current_user)):
-    return {"signals": []}
+async def get_signals(request: Request, limit: int = 50, current_user: dict = Depends(get_current_user)):
+    """Return the latest signals from the autonomous loop's last tick.
+
+    Signals are cached after each tick (post ensemble-enhancement and sentiment
+    filtering) so this endpoint reflects what the allocator actually acted on.
+    """
+    loop = getattr(request.app.state, "autonomous_loop", None)
+    if loop is None:
+        return {"signals": [], "ts": None, "message": "Autonomous loop not running"}
+
+    raw_signals = getattr(loop, "_last_signals", []) or []
+    ts = getattr(loop, "_last_signals_ts", None)
+
+    # Serialise Signal models to dicts, respecting the requested limit
+    signals_out = []
+    for sig in raw_signals[:limit]:
+        sig_dict = sig.model_dump(mode="json") if hasattr(sig, "model_dump") else sig.dict()
+        signals_out.append(sig_dict)
+
+    return {"signals": signals_out, "ts": ts, "count": len(signals_out)}
 
 
 @router.get("/performance")

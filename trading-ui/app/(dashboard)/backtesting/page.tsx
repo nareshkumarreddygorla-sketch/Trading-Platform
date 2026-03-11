@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -12,10 +12,11 @@ import {
 import {
     FlaskConical, Play, Loader2, TrendingUp, TrendingDown,
     Target, Shield, Award, BarChart3, Clock, ChevronDown,
-    Calendar, Search,
+    Search,
 } from "lucide-react";
+import { dispatchToast } from "@/components/Toaster";
 
-function ChartTooltip({ active, payload, label }: any) {
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
     if (!active || !payload?.length) return null;
     return (
         <div className="chart-tooltip">
@@ -49,20 +50,32 @@ export default function BacktestingPage() {
     const [interval, setInterval_] = useState("1d");
     const [activeJobId, setActiveJobId] = useState<string | null>(null);
     const [polling, setPolling] = useState(false);
+    const [dateError, setDateError] = useState("");
 
     // Run backtest mutation
     const runMutation = useMutation({
-        mutationFn: () =>
-            endpoints.backtestRun({
+        mutationFn: () => {
+            if (endDate <= startDate) {
+                throw new Error("End date must be after start date");
+            }
+            return endpoints.backtestRun({
                 strategy_id: strategyId,
                 symbol,
                 start: startDate,
                 end: endDate,
                 interval,
-            }),
+            });
+        },
         onSuccess: (data) => {
+            setDateError("");
             setActiveJobId(data.job_id);
             setPolling(true);
+        },
+        onError: (err: Error) => {
+            if (err.message.includes("End date must be after start date")) {
+                setDateError(err.message);
+                dispatchToast("error", "Invalid Dates", err.message);
+            }
         },
     });
 
@@ -75,9 +88,11 @@ export default function BacktestingPage() {
     });
 
     // Stop polling when completed
-    if (jobData && (jobData.status === "completed" || jobData.status === "failed")) {
-        if (polling) setPolling(false);
-    }
+    useEffect(() => {
+        if (jobData && (jobData.status === "completed" || jobData.status === "failed")) {
+            if (polling) setPolling(false);
+        }
+    }, [jobData, polling]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Get equity curve and trades when job is completed
     const { data: equityData } = useQuery({
@@ -228,6 +243,9 @@ export default function BacktestingPage() {
                                 )}
                             </button>
                         </div>
+                    {dateError && (
+                        <p className="text-xs text-loss mt-2 col-span-full">{dateError}</p>
+                    )}
                     </div>
                 </div>
             </motion.div>

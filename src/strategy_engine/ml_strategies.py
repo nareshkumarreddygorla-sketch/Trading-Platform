@@ -73,7 +73,7 @@ class MLPredictorStrategy(StrategyBase):
             return []
 
         # Check confidence threshold
-        if prediction.confidence < self.confidence_threshold:
+        if prediction is None or prediction.confidence < self.confidence_threshold:
             return []
 
         # Determine signal direction
@@ -173,7 +173,7 @@ class RLAgentStrategy(StrategyBase):
             logger.debug("RL predict failed for %s: %s", symbol, e)
             return []
 
-        if prediction.confidence < self.confidence_threshold:
+        if prediction is None or prediction.confidence < self.confidence_threshold:
             return []
 
         action = prediction.metadata.get("action", 0)
@@ -217,26 +217,65 @@ class RLAgentStrategy(StrategyBase):
 class MetaOptimizerStrategy(StrategyBase):
     """
     Meta-optimizer: tunes strategy parameters over rolling window.
-    Outputs weights for ensemble of child strategies based on recent performance.
+    Evaluates child strategy performance and disables underperformers.
+    Does not generate direct trading signals -- operates as a supervisory layer.
     """
     strategy_id = "meta_optimizer"
     description = "Parameter tuning over rolling window"
 
-    def __init__(self, performance_tracker=None, strategy_registry=None):
+    def __init__(self, performance_tracker=None, strategy_registry=None,
+                 min_win_rate: float = 0.35, min_trades_for_eval: int = 10):
         self._tracker = performance_tracker
         self._registry = strategy_registry
+        self._min_win_rate = min_win_rate
+        self._min_trades_for_eval = min_trades_for_eval
+        self._last_eval_decisions: Dict[str, str] = {}
+
+    def warm(self, state: MarketState) -> bool:
+        # Meta-optimizer runs whenever a tracker and registry are wired
+        return self._tracker is not None and self._registry is not None
 
     def generate_signals(self, state: MarketState) -> List[Signal]:
-        # Meta-optimizer doesn't generate direct signals.
-        # It adjusts weights of other strategies via the performance tracker.
-        if self._tracker and self._registry:
-            try:
-                stats = self._tracker.get_all_stats()
-                for sid, s in stats.items():
-                    win_rate = s.get("win_rate", 0.5)
-                    if win_rate < 0.35:
-                        self._registry.disable(sid)
-                        logger.info("MetaOptimizer: disabled %s (win_rate=%.2f)", sid, win_rate)
-            except Exception as e:
-                logger.debug("MetaOptimizer failed: %s", e)
+        """Evaluate strategy performance and disable underperformers.
+
+        Returns an empty list because the meta-optimizer does not produce
+        trading signals -- it acts as a supervisory layer that prunes
+        poorly-performing strategies from the registry.
+        """
+        if not self.warm(state):
+            return []
+
+        try:
+            stats = self._tracker.get_all_stats()
+            if not stats:
+                logger.debug("MetaOptimizer: no stats available yet")
+                return []
+
+            decisions: Dict[str, str] = {}
+            for sid, s in stats.items():
+                win_rate = s.get("win_rate", 0.5)
+                total_trades = s.get("wins", 0) + s.get("losses", 0)
+                # Skip strategies without enough data to evaluate
+                if total_trades < self._min_trades_for_eval:
+                    decisions[sid] = f"skip (only {total_trades} trades)"
+                    continue
+                if win_rate < self._min_win_rate:
+                    self._registry.disable(sid)
+                    decisions[sid] = f"DISABLED (win_rate={win_rate:.2f}, trades={total_trades})"
+                    logger.warning("MetaOptimizer: disabled strategy '%s' "
+                                   "(win_rate=%.2f < %.2f, trades=%d)",
+                                   sid, win_rate, self._min_win_rate, total_trades)
+                else:
+                    decisions[sid] = f"ok (win_rate={win_rate:.2f}, trades={total_trades})"
+
+            self._last_eval_decisions = decisions
+            if decisions:
+                disabled_count = sum(1 for v in decisions.values() if v.startswith("DISABLED"))
+                logger.info("MetaOptimizer evaluated %d strategies: %d disabled, %d ok, %d skipped",
+                            len(decisions), disabled_count,
+                            sum(1 for v in decisions.values() if v.startswith("ok")),
+                            sum(1 for v in decisions.values() if v.startswith("skip")))
+        except Exception as e:
+            logger.warning("MetaOptimizer evaluation failed: %s", e)
+
         return []

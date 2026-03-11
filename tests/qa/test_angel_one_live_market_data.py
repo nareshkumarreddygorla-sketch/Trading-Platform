@@ -149,9 +149,16 @@ async def test_market_status_endpoint():
     from fastapi.testclient import TestClient
     from src.api.app import create_app
 
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _noop_lifespan(a):
+        yield
+
     app = create_app()
-    # No service set on state (lifespan not run): route uses getattr(..., None)
-    with TestClient(app) as client:
+    # Replace lifespan with no-op to avoid connecting to real services in tests
+    app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+    with TestClient(app, raise_server_exceptions=False) as client:
         r = client.get("/api/v1/market/status")
         assert r.status_code == 200
         data = r.json()

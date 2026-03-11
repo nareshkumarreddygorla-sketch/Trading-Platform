@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useStore } from "@/store/useStore";
 import { dispatchToast } from "@/components/Toaster";
+import { clearAuthTokens } from "@/lib/api/client";
 
 type WsStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
 
@@ -37,6 +38,9 @@ export function useWebSocket() {
     const heartbeatTimer = useRef<ReturnType<typeof setInterval> | null>(null);
     const retryCount = useRef(0);
 
+    // Use a ref to break circular dependency between connect ↔ scheduleReconnect
+    const scheduleReconnectRef = useRef<() => void>(() => {});
+
     const updateStatus = useCallback((status: WsStatus) => {
         statusRef.current = status;
         setWsStatus(status);
@@ -63,14 +67,12 @@ export function useWebSocket() {
 
         const token = localStorage.getItem("token");
 
-        // Build URL with query param fallback for token (some proxies strip subprotocols)
-        let url = getWsUrl();
-        if (token) {
-            url += `${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
-        }
+        // Use subprotocol header only for token — never send token in URL query params
+        // (tokens in URLs leak via logs, referrer headers, and browser history)
+        const url = getWsUrl();
 
         try {
-            // Send JWT via both subprotocol header (preferred) and query param (fallback)
+            // Send JWT via subprotocol header only (secure)
             const protocols = token ? [`access_token.${token}`] : undefined;
             const ws = new WebSocket(url, protocols);
             wsRef.current = ws;
@@ -98,13 +100,53 @@ export function useWebSocket() {
                         // Dispatch custom event for Notifications component
                         window.dispatchEvent(new CustomEvent("ws-event", { detail: data }));
 
-                        // Dispatch toast notifications for key trading events
+                        // Dispatch toast notifications for key trading events.
+                        // Supports both new structured events ({data: {...}}) and legacy flat events.
+                        const ed = data.data && typeof data.data === "object" ? data.data : data;
+
                         if (data.type === "order_filled") {
                             dispatchToast(
                                 "success",
                                 "Order Filled",
-                                `${data.side || "BUY"} ${data.symbol || "?"} x ${data.filled_qty ?? data.quantity ?? 0}`
+                                `${ed.side || "BUY"} ${ed.symbol || "?"} x ${ed.filled_qty ?? ed.quantity ?? 0}`
                             );
+                        }
+                        if (data.type === "order_submitted") {
+                            dispatchToast(
+                                "info",
+                                "Order Submitted",
+                                `${ed.side || "BUY"} ${ed.symbol || "?"} x ${ed.quantity ?? 0}`
+                            );
+                        }
+                        if (data.type === "signal_generated") {
+                            dispatchToast(
+                                "info",
+                                "Signal",
+                                `${ed.side || ed.direction || "?"} ${ed.symbol || "?"} (${((ed.score ?? ed.confidence ?? 0) * 100).toFixed(0)}%)`
+                            );
+                        }
+                        if (data.type === "risk_alert") {
+                            const severity = ed.severity === "critical" ? "error" : "warning";
+                            dispatchToast(
+                                severity,
+                                "Risk Alert",
+                                (ed.message as string) || "Risk limit breached"
+                            );
+                        }
+                        if (data.type === "circuit_state") {
+                            if (ed.circuit_open === true) {
+                                dispatchToast(
+                                    "warning",
+                                    "Circuit Breaker Open",
+                                    "Trading halted — circuit breaker triggered"
+                                );
+                            } else {
+                                dispatchToast(
+                                    "success",
+                                    "Circuit Breaker Reset",
+                                    "Trading resumed — circuit breaker cleared"
+                                );
+                            }
                         }
                         if (data.type === "circuit_open") {
                             dispatchToast(
@@ -119,6 +161,15 @@ export function useWebSocket() {
                                 "Kill Switch Armed",
                                 (data.reason as string) || "Trading halted — reduce-only mode active"
                             );
+                        }
+                        if (data.type === "market_feed_status") {
+                            if (ed.healthy === false) {
+                                dispatchToast(
+                                    "warning",
+                                    "Market Feed",
+                                    "Market data feed is unhealthy or disconnected"
+                                );
+                            }
                         }
                         if (data.type === "trade_closed") {
                             const pnl = typeof data.pnl === "number" ? data.pnl : null;
@@ -141,21 +192,21 @@ export function useWebSocket() {
                 stopHeartbeat();
                 // Don't reconnect if server rejected auth (code 4001)
                 if (event.code === 4001) {
-                    // Clear stale token and redirect to login
-                    localStorage.removeItem("token");
+                    // Clear stale tokens and auth cookie, then redirect to login
+                    clearAuthTokens();
                     if (!window.location.pathname.includes("/login")) {
                         window.location.href = "/login";
                     }
                     return;
                 }
-                scheduleReconnect();
+                scheduleReconnectRef.current();
             };
 
             ws.onerror = () => {
                 // onclose will fire after onerror
             };
         } catch {
-            scheduleReconnect();
+            scheduleReconnectRef.current();
         }
     }, [applyWsEvent, startHeartbeat, stopHeartbeat, updateStatus]);
 
@@ -168,6 +219,9 @@ export function useWebSocket() {
             connect();
         }, delay);
     }, [connect, updateStatus]);
+
+    // Keep the ref in sync so connect always calls the latest scheduleReconnect
+    scheduleReconnectRef.current = scheduleReconnect;
 
     useEffect(() => {
         connect();

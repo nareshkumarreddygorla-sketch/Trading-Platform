@@ -4,7 +4,6 @@ and meta_alpha recommendation (reduce_size / filter_signal) as scale for allocat
 Phase 9: meta_alpha influences allocation BEFORE order entry — block, size reduction, Kelly cut.
 """
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

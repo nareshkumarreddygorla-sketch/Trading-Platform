@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { useStore } from "@/store/useStore";
-import { formatCurrency, formatPercent } from "@/lib/utils";
+import { cn, formatCurrency, formatPercent } from "@/lib/utils";
 import { endpoints } from "@/lib/api/client";
 import {
   AreaChart,
@@ -33,15 +33,42 @@ import {
   Sparkles,
   CircleDot,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import React from "react";
 
 const TrainAIPanel = dynamic(() => import("@/components/dashboard/TrainAIPanel"), { ssr: false });
 const AgentStatus = dynamic(() => import("@/components/dashboard/AgentStatus"), { ssr: false });
 const SignalFeed = dynamic(() => import("@/components/dashboard/SignalFeed"), { ssr: false });
 const RegimeIndicator = dynamic(() => import("@/components/dashboard/RegimeIndicator"), { ssr: false });
 const RiskAlerts = dynamic(() => import("@/components/dashboard/RiskAlerts"), { ssr: false });
+
+/* ── Chart Error Boundary ── */
+class ChartErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallbackMessage?: string },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode; fallbackMessage?: string }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex items-center justify-center h-full text-muted-foreground text-xs p-8">
+          <div className="text-center">
+            <p className="font-medium">Chart failed to render</p>
+            <p className="mt-1 text-[10px]">{this.props.fallbackMessage ?? "Try refreshing the page"}</p>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /* ── Strategy color map ── */
 const STRATEGY_COLORS: Record<string, string> = {
@@ -58,6 +85,7 @@ const DEFAULT_COLOR = "hsl(215,20%,50%)";
 
 /* ── Mini sparkline for KPI cards ── */
 function MiniSparkline({ data, color = "hsl(152,69%,53%)" }: { data: number[]; color?: string }) {
+  if (data.length < 2) return null;
   const max = Math.max(...data);
   const min = Math.min(...data);
   const range = max - min || 1;
@@ -101,7 +129,7 @@ function MiniSparkline({ data, color = "hsl(152,69%,53%)" }: { data: number[]; c
 }
 
 /* ── Chart tooltip ── */
-function CustomTooltip({ active, payload, label }: any) {
+function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="chart-tooltip">
@@ -215,21 +243,21 @@ export default function DashboardPage() {
   });
 
   // Performance summary (real trade stats)
-  const { data: perfSummary } = useQuery({
+  const { data: perfSummary, isLoading: perfLoading } = useQuery({
     queryKey: ["performanceSummary"],
     queryFn: () => endpoints.performanceSummary(4),
     refetchInterval: 15000,
   });
 
   // Equity curve from API — responds to period selection
-  const { data: equityCurveData } = useQuery({
+  const { data: equityCurveData, isLoading: equityCurveLoading, isError: equityCurveError } = useQuery({
     queryKey: ["equityCurve", equityPeriod],
     queryFn: () => endpoints.performanceEquityCurve(PERIOD_WEEKS[equityPeriod] ?? 4),
     refetchInterval: 30000,
   });
 
   // Strategy performance
-  const { data: stratData } = useQuery({
+  const { data: stratData, isLoading: stratLoading } = useQuery({
     queryKey: ["strategiesPerformance"],
     queryFn: () => endpoints.strategiesPerformance(),
     refetchInterval: 10000,
@@ -294,9 +322,11 @@ export default function DashboardPage() {
   const regimeSymbol = regimeLabel === "BULLISH" ? "↑" : regimeLabel === "BEARISH" ? "↓" : "—";
   const regimeLabelColor = regimeLabel === "BULLISH" ? "text-profit" : regimeLabel === "BEARISH" || regimeLabel === "CRISIS" ? "text-loss" : "text-primary";
 
-  if (risk) {
-    setDashboard({ equity, daily_pnl: dailyPnl, open_positions_count: positions.length });
-  }
+  useEffect(() => {
+    if (risk) {
+      setDashboard({ equity, daily_pnl: dailyPnl, open_positions_count: positions.length });
+    }
+  }, [risk, equity, dailyPnl, positions.length, setDashboard]);
 
   return (
     <div className="space-y-6 pb-8" role="main" aria-label="Trading Dashboard">
@@ -356,6 +386,7 @@ export default function DashboardPage() {
           value={totalTrades > 0 ? `${Math.round(winRate)}%` : "—"}
           subValue={totalTrades > 0 ? `${totalTrades} trades` : "No trades yet"}
           trend={winRate > 50 ? "up" : winRate > 0 ? "down" : "neutral"}
+          loading={perfLoading}
           delay={0.12}
         />
         <KpiCard
@@ -411,11 +442,23 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="h-48 sm:h-64 lg:h-72">
-              {equityData.length === 0 ? (
+              {equityCurveLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="shimmer h-full w-full rounded-lg" />
+                </div>
+              ) : equityCurveError ? (
+                <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
+                  <div className="text-center">
+                    <p className="font-medium">Failed to load equity data</p>
+                    <p className="mt-1 text-[10px]">Data will retry automatically</p>
+                  </div>
+                </div>
+              ) : equityData.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
                   Equity curve will appear after first trades
                 </div>
               ) : (
+              <ChartErrorBoundary fallbackMessage="Equity chart encountered an error">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={equityData} margin={{ top: 5, right: 5, left: 5, bottom: 0 }}>
                   <defs>
@@ -472,6 +515,7 @@ export default function DashboardPage() {
                   />
                 </AreaChart>
               </ResponsiveContainer>
+              </ChartErrorBoundary>
               )}
             </div>
           </div>
@@ -492,6 +536,7 @@ export default function DashboardPage() {
             </div>
             <div className="flex items-center justify-center py-2">
               <div className="relative h-32 w-32">
+                <ChartErrorBoundary fallbackMessage="Regime chart error">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
@@ -510,6 +555,7 @@ export default function DashboardPage() {
                     </Pie>
                   </PieChart>
                 </ResponsiveContainer>
+                </ChartErrorBoundary>
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
                   <motion.span
                     className={cn("text-xl font-bold", regimeLabelColor)}
@@ -577,9 +623,16 @@ export default function DashboardPage() {
               <Zap className="h-4 w-4 text-primary" />
             </div>
             <div className="space-y-2">
-              {strategyPerf.length === 0 && (
+              {stratLoading && strategyPerf.length === 0 && (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="shimmer h-16 w-full rounded-xl" />
+                  ))}
+                </div>
+              )}
+              {!stratLoading && strategyPerf.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground text-xs">
-                  Waiting for strategy data...
+                  No strategies configured yet. Add strategies in Settings to see performance data.
                 </div>
               )}
               {[...strategyPerf]

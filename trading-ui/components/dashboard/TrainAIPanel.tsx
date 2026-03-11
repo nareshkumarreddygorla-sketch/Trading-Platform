@@ -13,6 +13,7 @@ import {
   Zap,
   Rocket,
 } from "lucide-react";
+import { dispatchToast } from "@/components/Toaster";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -53,38 +54,42 @@ export default function TrainAIPanel() {
   const [starting, setStarting] = useState(false);
 
   const isTrainingRef = useRef(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
-
-  const refetchStatus = async () => {
-    try {
-      const data = await endpoints.trainingStatus();
-      setStatus(data);
-      // Adjust polling speed based on training state
-      if (data?.is_training !== isTrainingRef.current) {
-        isTrainingRef.current = !!data?.is_training;
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        intervalRef.current = setInterval(refetchStatus, isTrainingRef.current ? 3000 : 15000);
-      }
-    } catch {
-      // API not available
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
-    refetchStatus();
-    intervalRef.current = setInterval(refetchStatus, 15000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const data = await endpoints.trainingStatus();
+        if (!cancelled) {
+          setStatus(data);
+          isTrainingRef.current = !!data?.is_training;
+        }
+      } catch {
+        // API not available
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+      if (!cancelled) {
+        const delay = isTrainingRef.current ? 3000 : 15000;
+        timeoutId = setTimeout(poll, delay);
+      }
+    };
+    poll();
+    return () => { cancelled = true; clearTimeout(timeoutId); };
+  }, []);
 
   const handleTrain = async () => {
     setStarting(true);
     try {
       await endpoints.trainingStart({ mode: selectedMode });
-      await refetchStatus();
+      const data = await endpoints.trainingStatus();
+      setStatus(data);
+      isTrainingRef.current = !!data?.is_training;
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Failed to start training");
+      dispatchToast("error", "Training Failed", e instanceof Error ? e.message : "Failed to start training");
     } finally {
       setStarting(false);
     }
@@ -93,7 +98,9 @@ export default function TrainAIPanel() {
   const handleStop = async () => {
     try {
       await endpoints.trainingStop();
-      await refetchStatus();
+      const data = await endpoints.trainingStatus();
+      setStatus(data);
+      isTrainingRef.current = !!data?.is_training;
     } catch {
       // ignore
     }

@@ -3,9 +3,7 @@ Microstructure features: order flow imbalance, bid-ask spread, volume delta,
 VWAP deviation, liquidity pressure.
 Requires tick/orderbook data; falls back to OHLCV proxies when missing.
 """
-from typing import Any, Dict, List, Optional
-
-import numpy as np
+from typing import Dict, List, Optional
 
 from src.core.events import Bar, OrderBookSnapshot
 

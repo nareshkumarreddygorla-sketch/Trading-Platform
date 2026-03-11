@@ -33,7 +33,6 @@ VALIDATION_SYMBOLS = [
 def load_bars_from_parquet(symbol: str):
     """Load historical bars from parquet file."""
     import pandas as pd
-    from datetime import timezone
     from src.core.events import Bar, Exchange
 
     path = os.path.join(DATA_DIR, f"{symbol}.NS.parquet")

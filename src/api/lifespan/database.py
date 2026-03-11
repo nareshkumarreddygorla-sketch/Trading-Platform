@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 async def init_database(app: FastAPI) -> None:
     """Initialize Sentry, validate production env, set up WebSocket manager,
     persistence layer (DB repos), and Redis health check."""
-    import asyncio
-
     # ── Error tracking & observability ──
     from src.api.sentry_setup import init_sentry
     init_sentry()
@@ -78,6 +76,7 @@ async def init_database(app: FastAPI) -> None:
             app.state.persistence_service = persistence_service
             app.state.order_repo = order_repo
             app.state.position_repo = position_repo
+            app.state.risk_snapshot_repo = risk_snapshot_repo
             app.state.audit_repo = audit_repo
             app.state.user_repo = user_repo
             logger.info("Persistence (orders/positions/risk_snapshot/audit/users) configured")
@@ -150,17 +149,17 @@ async def shutdown_database(app: FastAPI) -> None:
     _rm = getattr(app.state, "risk_manager", None)
     if _rm is not None:
         try:
-            positions = getattr(_rm, "positions", {})
+            positions = getattr(_rm, "positions", [])
             if positions:
                 snapshot = {
                     "timestamp": time.time(),
                     "positions": {
-                        sym: {
+                        getattr(pos, "symbol", "unknown"): {
                             "qty": getattr(pos, "qty", getattr(pos, "quantity", 0)),
                             "avg_price": getattr(pos, "avg_price", getattr(pos, "entry_price", 0)),
-                            "side": getattr(pos, "side", "unknown"),
+                            "side": getattr(getattr(pos, "side", None), "value", str(getattr(pos, "side", "unknown"))),
                         }
-                        for sym, pos in positions.items()
+                        for pos in positions
                     },
                 }
                 snapshot_path = os.path.join(os.environ.get("DATA_DIR", "data"), "position_snapshot.json")

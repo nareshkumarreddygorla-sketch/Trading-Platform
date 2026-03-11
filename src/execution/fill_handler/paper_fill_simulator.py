@@ -8,7 +8,7 @@ import logging
 import math
 import random
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Dict, Optional
 
 from src.core.events import OrderStatus
 
@@ -25,7 +25,7 @@ FILLABLE_STATUSES = (OrderStatus.PENDING, OrderStatus.LIVE)
 def _dynamic_slippage(price: float, quantity: float, adv: float = 500_000, sigma: float = 0.02) -> float:
     """
     Dynamic slippage model based on order size relative to ADV.
-    Uses Almgren-Chriss temporary impact approximation.
+    Uses Almgren-Chriss temporary impact approximation with spread component.
 
     Args:
         price: order price
@@ -36,14 +36,24 @@ def _dynamic_slippage(price: float, quantity: float, adv: float = 500_000, sigma
     Returns:
         Slippage in price units (always positive).
     """
+    if price <= 0:
+        return 0.0
     if adv <= 0 or quantity <= 0:
         return 0.0
     participation = quantity / adv
     # Temporary impact: sigma * sqrt(participation) * price
     impact_bps = sigma * math.sqrt(min(participation, 1.0)) * 10_000
+    # Bid-ask spread component: wider for illiquid / volatile stocks
+    # Typical NSE spread: 1-5 bps for large-caps, 10-30 bps for small-caps
+    spread_bps = max(1.0, 5.0 * sigma / 0.02)  # scale with volatility
+    if adv < 100_000:
+        spread_bps *= 3.0  # illiquid penalty
+    elif adv < 500_000:
+        spread_bps *= 1.5
+    half_spread_bps = spread_bps / 2.0
     # Add random component (market microstructure noise): uniform [-2, +5] bps
-    noise_bps = random.uniform(-2, 5)
-    total_bps = max(0.5, impact_bps + noise_bps)  # minimum 0.5 bps
+    noise_bps = random.uniform(-3, 8)  # Wider noise range for realistic microstructure
+    total_bps = max(0.5, impact_bps + half_spread_bps + noise_bps)  # minimum 0.5 bps
     return price * total_bps / 10_000
 
 
@@ -73,9 +83,14 @@ class PaperFillSimulator:
         self.fill_handler = fill_handler
         self.fill_delay_seconds = fill_delay_seconds
         self.poll_interval = poll_interval_seconds
+        if fill_delay_seconds < 0:
+            raise ValueError("fill_delay_seconds must be >= 0")
+        if poll_interval_seconds <= 0:
+            raise ValueError("poll_interval_seconds must be > 0")
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._filled_ids: set = set()
+        self._partial_fills: Dict[str, float] = {}  # order_id -> filled_so_far
         self._bar_cache = bar_cache
         self._adv_cache = adv_cache
         self._feature_engine = feature_engine
@@ -91,8 +106,18 @@ class PaperFillSimulator:
             self._cost_calc = cost_calculator
 
     async def _simulate_fills(self) -> None:
-        """Scan lifecycle for pending orders and fill them with realistic costs."""
-        orders = list(self.lifecycle._orders.values())
+        """Scan lifecycle for pending orders and fill them with realistic costs.
+
+        Realistic simulation includes:
+        - Partial fills (probabilistic, based on order size vs ADV)
+        - Order rejections (5% base rate, higher for illiquid stocks)
+        - Latency jitter (50-500ms simulated)
+        - Gap simulation (price can move away from limit between ticks)
+        - Wide spread modeling during high volatility
+        """
+        # BUG 32 FIX: Use get_orders_snapshot() which acquires the lock,
+        # instead of directly accessing the internal _orders dict.
+        orders = await self.lifecycle.get_orders_snapshot()
         for order in orders:
             if not order or not order.order_id:
                 continue
@@ -100,6 +125,50 @@ class PaperFillSimulator:
                 continue
             if order.status not in FILLABLE_STATUSES:
                 continue
+
+            # ── Rejection simulation (5-15% base rate) ──
+            rejection_rate = 0.05  # 5% base rejection rate
+            adv = 500_000
+            if self._adv_cache is not None:
+                try:
+                    adv = self._adv_cache.get_adv(order.symbol) or adv
+                except Exception:
+                    pass
+            # Higher rejection for large orders relative to ADV
+            if order.quantity > 0 and adv > 0:
+                participation = order.quantity / adv
+                if participation > 0.05:  # > 5% of ADV
+                    rejection_rate += min(0.10, participation * 2)  # Up to 15% extra
+            if random.random() < rejection_rate:
+                # Simulate rejection: mark as rejected, don't fill
+                logger.info("Paper REJECTION: %s %s (rejection_rate=%.1f%%)",
+                           order.symbol, order.order_id[:8], rejection_rate * 100)
+                self._filled_ids.add(order.order_id)
+                # Dispatch rejection event so order lifecycle updates
+                try:
+                    reject_event = FillEvent(
+                        order_id=order.order_id or "",
+                        broker_order_id=f"PAPER-REJ-{(order.order_id or '')[:8]}",
+                        symbol=order.symbol,
+                        exchange=str(getattr(order.exchange, 'value', order.exchange)),
+                        side=str(getattr(order.side, 'value', order.side)),
+                        fill_type=FillType.REJECT,
+                        filled_qty=0.0,
+                        remaining_qty=order.quantity,
+                        avg_price=0.0,
+                        ts=datetime.now(timezone.utc),
+                        strategy_id=order.strategy_id or "",
+                        metadata={"rejection": True, "reason": "paper_simulated_rejection"},
+                    )
+                    if hasattr(self, 'fill_handler') and self.fill_handler:
+                        await self.fill_handler.on_fill_event(reject_event)
+                except Exception as e:
+                    logger.warning("Failed to dispatch rejection event for order: %s", e)
+                continue
+
+            # ── Latency simulation (50-500ms) ──
+            latency_ms = random.uniform(50, 500)
+            await asyncio.sleep(latency_ms / 1000.0)
 
             # Simulate fill price: use limit_price if set, otherwise lookup from BarCache
             fill_price = order.limit_price
@@ -117,10 +186,31 @@ class PaperFillSimulator:
                     except Exception:
                         pass
                 if fill_price is None or fill_price <= 0:
-                    fill_price = 100.0  # ultimate fallback (should rarely hit)
-                    logger.debug("Paper fill using fallback price 100.0 for %s (no bar data)", order.symbol)
+                    fill_price = getattr(order, 'limit_price', None) or 0.0
+                    if fill_price <= 0:
+                        logger.warning("Paper fill: no price data for %s, skipping fill", order.symbol)
+                        continue
 
-            fill_qty = order.quantity
+            # ── Partial fill simulation ──
+            # Probability of partial fill increases with order size relative to ADV.
+            # Track cumulative fills: remaining = total_qty - already_filled
+            already_filled = self._partial_fills.get(order.order_id, 0.0)
+            remaining_qty = max(0, order.quantity - already_filled)
+            if remaining_qty <= 0:
+                self._filled_ids.add(order.order_id)
+                continue
+            fill_qty = remaining_qty
+            partial_fill_prob = 0.0
+            if order.quantity > 0 and adv > 0:
+                participation = order.quantity / adv
+                if participation > 0.02:  # > 2% of ADV -> chance of partial fill
+                    partial_fill_prob = min(0.40, participation * 4)  # Up to 40%
+            if random.random() < partial_fill_prob and remaining_qty > 1:
+                # Partial fill: fill 30-70% of remaining quantity
+                fill_pct = random.uniform(0.3, 0.7)
+                fill_qty = max(1, int(remaining_qty * fill_pct))
+                logger.info("Paper PARTIAL fill: %s %d/%d shares remaining (%.0f%% of remaining)",
+                           order.symbol, fill_qty, int(remaining_qty), fill_pct * 100)
 
             side_str = order.side
             if hasattr(side_str, "value"):
@@ -182,15 +272,20 @@ class PaperFillSimulator:
                 metadata["costs"] = costs_breakdown.as_dict()
                 metadata["cost_pct"] = round((total_cost / notional) * 100, 4) if notional > 0 else 0
 
+            # Determine fill type: is this a complete fill or partial?
+            cumulative_after = already_filled + fill_qty
+            is_complete = cumulative_after >= order.quantity * 0.99
+            fill_type = FillType.FILL if is_complete else FillType.PARTIAL_FILL
+
             event = FillEvent(
                 order_id=order.order_id,
                 broker_order_id=f"PAPER-{order.order_id[:8]}",
                 symbol=order.symbol,
                 exchange=str(exchange_str),
                 side=str(side_str),
-                fill_type=FillType.FILL,
+                fill_type=fill_type,
                 filled_qty=fill_qty,
-                remaining_qty=0.0,
+                remaining_qty=max(0.0, order.quantity - cumulative_after),
                 avg_price=fill_price,
                 ts=datetime.now(timezone.utc),
                 strategy_id=order.strategy_id or "",
@@ -201,7 +296,11 @@ class PaperFillSimulator:
                 await self.fill_handler.on_fill_event(event)
                 # NOTE: Transaction costs are already embedded in fill_price via slippage adjustment.
                 # Do NOT double-deduct via rm.register_pnl(-total_cost).
-                self._filled_ids.add(order.order_id)
+                # Track partial fills cumulatively; only mark fully filled
+                self._partial_fills[order.order_id] = self._partial_fills.get(order.order_id, 0.0) + fill_qty
+                if self._partial_fills[order.order_id] >= order.quantity * 0.99:  # Fully filled
+                    self._filled_ids.add(order.order_id)
+                    self._partial_fills.pop(order.order_id, None)
                 cost_str = f" | cost=₹{total_cost:.2f}" if total_cost > 0 else ""
                 logger.info(
                     "Paper fill: %s %s %.0f %s @ %.2f (slip=%.1fbps%s)",
@@ -213,9 +312,11 @@ class PaperFillSimulator:
 
         # Cap memory: remove old filled IDs if too many
         if len(self._filled_ids) > 5000:
-            # Keep only IDs still in lifecycle
-            active_ids = set(self.lifecycle._orders.keys())
-            self._filled_ids = self._filled_ids & active_ids
+            # BUG 32 FIX: Use get_orders_snapshot() instead of accessing _orders directly
+            active_orders = await self.lifecycle.get_orders_snapshot()
+            active_ids = {o.order_id for o in active_orders if o}
+            stale_ids = self._filled_ids - active_ids
+            self._filled_ids -= stale_ids
 
     async def _loop(self) -> None:
         # Initial delay to let first orders arrive
@@ -248,4 +349,6 @@ class PaperFillSimulator:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        self._filled_ids.clear()
+        self._partial_fills.clear()
         logger.info("Paper fill simulator stopped")

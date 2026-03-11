@@ -1,0 +1,12 @@
+.git
+.github/
+tests/
+trading-ui/node_modules/
+*.pyc
+__pycache__
+.env
+.env.*
+*.md
+data/
+deploy/nginx/certs/*.key
+kill_switch_state.json

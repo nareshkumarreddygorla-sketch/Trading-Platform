@@ -3,8 +3,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
-from sqlalchemy.orm import Session
-
 from .database import session_scope
 from .models import RiskSnapshotModel
 

@@ -24,7 +24,7 @@ import logging
 import os
 import time
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -102,8 +102,8 @@ class DynamicUniverse:
             symbols = [k for k in codes.keys() if k != "SYMBOL"]
             logger.info("Fetched %d symbols from nsetools fallback", len(symbols))
             return symbols
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("nsetools fallback failed: %s", e)
 
         # Fallback: Nifty 500 CSV
         try:
@@ -115,8 +115,8 @@ class DynamicUniverse:
             symbols = [row.get("Symbol", "").strip() for row in reader if row.get("Symbol", "").strip()]
             logger.info("Fetched %d symbols from Nifty 500 CSV fallback", len(symbols))
             return symbols
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Nifty 500 CSV fallback failed: %s", e)
 
         # Final fallback: bundled list
         from src.scanner.nse_universe import FALLBACK_SYMBOLS
@@ -138,11 +138,11 @@ class DynamicUniverse:
             if age < self.cache_ttl:
                 try:
                     return pd.read_parquet(BHAVCOPY_CACHE)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Bhavcopy cache read failed: %s", e)
 
         for days_ago in range(1, 10):
-            date = datetime.now() - timedelta(days=days_ago)
+            date = datetime.now(timezone(timedelta(hours=5, minutes=30))) - timedelta(days=days_ago)
             if date.weekday() >= 5:  # skip weekends
                 continue
 
@@ -172,8 +172,8 @@ class DynamicUniverse:
                 try:
                     CACHE_DIR.mkdir(parents=True, exist_ok=True)
                     df.to_parquet(BHAVCOPY_CACHE, index=False)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Bhavcopy cache write failed: %s", e)
 
                 return df
             except Exception as e:
@@ -205,10 +205,10 @@ class DynamicUniverse:
                             mc = t.fast_info.get("marketCap", 0)
                             if mc and mc > 0:
                                 market_caps[sym] = mc
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    except Exception as e:
+                        logger.debug("Market cap fetch failed for %s: %s", sym, e)
+            except Exception as e:
+                logger.debug("Market cap batch fetch failed: %s", e)
             time.sleep(0.5)
 
         return market_caps
@@ -241,7 +241,7 @@ class DynamicUniverse:
 
         if not all_symbols:
             return {"symbols": [], "total_nse": 0, "post_filter": 0,
-                    "scan_date": datetime.utcnow().isoformat()}
+                    "scan_date": datetime.now(timezone.utc).isoformat()}
 
         # Step 2: Get bhavcopy for volume/turnover
         bhav = self.fetch_bhavcopy()
@@ -253,7 +253,7 @@ class DynamicUniverse:
                 "symbols": all_symbols[:self.target_count],
                 "total_nse": total_nse,
                 "post_filter": len(all_symbols),
-                "scan_date": datetime.utcnow().isoformat(),
+                "scan_date": datetime.now(timezone.utc).isoformat(),
                 "filter_method": "unfiltered_fallback",
             }
             self._save_cache(result)
@@ -271,11 +271,19 @@ class DynamicUniverse:
         valid_set = set(all_symbols)
         bhav = bhav[bhav["symbol"].isin(valid_set)]
 
+        # P1-5: Add min average trade value filter (INR 50K per trade)
+        # and spread proxy (turnover/volume = avg trade price; reject if < ₹10 avg trade)
+        if "volume" in bhav.columns and "turnover" in bhav.columns:
+            bhav["avg_trade_value"] = bhav["turnover"] / bhav["volume"].clip(lower=1)
+        else:
+            bhav["avg_trade_value"] = 0.0
+
         filtered = bhav[
             (bhav["volume"] >= self.min_volume) &
             (bhav["turnover"] >= self.min_turnover) &
             (bhav["close"] >= self.min_price) &
-            (bhav["close"] <= self.max_price)
+            (bhav["close"] <= self.max_price) &
+            (bhav["avg_trade_value"] >= 10.0)  # P1-5: filter out illiquid micro-lots
         ].copy()
 
         logger.info("Filter results: %d total → %d after volume/turnover/price filter",
@@ -312,7 +320,7 @@ class DynamicUniverse:
             "symbols": result_symbols,
             "total_nse": total_nse,
             "post_filter": len(filtered),
-            "scan_date": datetime.utcnow().isoformat(),
+            "scan_date": datetime.now(timezone.utc).isoformat(),
             "filter_method": "volume_turnover_ranked",
             "filters_applied": {
                 "min_volume": self.min_volume,
@@ -334,6 +342,25 @@ class DynamicUniverse:
 
     # ── Public API ────────────────────────────────────────────────────
 
+    def validate_cached_symbols(self, cached_symbols: List[str]) -> List[str]:
+        """P1-6: Remove delisted/suspended stocks from cached universe.
+        Fetches live NSE symbol list and filters out any cached symbols not present."""
+        try:
+            live_symbols = set(self.fetch_all_nse_symbols())
+            if not live_symbols:
+                return cached_symbols  # can't validate, keep as-is
+            valid = [s for s in cached_symbols if s in live_symbols]
+            removed = len(cached_symbols) - len(valid)
+            if removed > 0:
+                logger.warning(
+                    "Survivorship filter: removed %d delisted/suspended symbols from cached universe",
+                    removed,
+                )
+            return valid
+        except Exception as e:
+            logger.debug("Survivorship validation failed: %s — keeping cached", e)
+            return cached_symbols
+
     def get_tradeable_stocks(self, count: Optional[int] = None, force_refresh: bool = False) -> List[str]:
         """
         Get the best tradeable stocks. Fully autonomous — no hardcoded lists.
@@ -347,6 +374,9 @@ class DynamicUniverse:
         """
         result = self.build_universe(force_refresh=force_refresh)
         symbols = result.get("symbols", [])
+        # P1-6: validate cached symbols against live NSE listings
+        if not force_refresh and result.get("cache_ts"):
+            symbols = self.validate_cached_symbols(symbols)
         if count:
             return symbols[:count]
         return symbols
@@ -379,8 +409,8 @@ class DynamicUniverse:
                     logger.info("Using cached dynamic universe (%d symbols, scanned %s)",
                                 len(data.get("symbols", [])), data.get("scan_date", "?"))
                     return data
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Universe cache load failed: %s", e)
         return None
 
     def _save_cache(self, data: Dict) -> None:

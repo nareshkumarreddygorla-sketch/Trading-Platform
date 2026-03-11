@@ -64,6 +64,8 @@ class EMACrossoverStrategy(StrategyBase):
                 risk_level="NORMAL",
                 reason="ema_cross_down",
                 price=price,
+                stop_loss=round(price * 1.01, 2),
+                target=round(price * 0.98, 2),
                 ts=datetime.now(timezone.utc),
             )]
         return []
@@ -108,6 +110,8 @@ class MACDStrategy(StrategyBase):
                 risk_level="NORMAL",
                 reason="macd_cross_up",
                 price=price,
+                stop_loss=round(price * 0.985, 2),
+                target=round(price * 1.025, 2),
                 ts=datetime.now(timezone.utc),
             )]
         if macd < sig and macd_line.iloc[-2] >= signal_line.iloc[-2]:
@@ -121,6 +125,8 @@ class MACDStrategy(StrategyBase):
                 risk_level="NORMAL",
                 reason="macd_cross_down",
                 price=price,
+                stop_loss=round(price * 1.015, 2),
+                target=round(price * 0.975, 2),
                 ts=datetime.now(timezone.utc),
             )]
         return []
@@ -171,6 +177,8 @@ class RSIStrategy(StrategyBase):
                 risk_level="NORMAL",
                 reason="rsi_oversold",
                 price=price,
+                stop_loss=round(price * 0.985, 2),
+                target=round(price * 1.03, 2),
                 ts=datetime.now(timezone.utc),
             )]
         if rsi > self.overbought:
@@ -185,6 +193,8 @@ class RSIStrategy(StrategyBase):
                 risk_level="NORMAL",
                 reason="rsi_overbought",
                 price=price,
+                stop_loss=round(price * 1.015, 2),
+                target=round(price * 0.97, 2),
                 ts=datetime.now(timezone.utc),
             )]
         return []

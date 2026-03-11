@@ -1,8 +1,24 @@
 """
-Phase 8: Execution quality feedback loop.
-Realized vs expected slippage, rejection rate, partial fill rate, latency;
-feed into position sizing, strategy disable, broker failover.
+Execution quality feedback loop (enhanced).
+Realized vs expected slippage, implementation shortfall, benchmark comparison,
+per-algo scoring, daily reports; feed into position sizing, strategy disable, broker failover.
 """
-from .tracker import ExecutionQualityTracker, QualityMetrics
+from .tracker import (
+    AlgoQualityScore,
+    BenchmarkComparison,
+    DailyExecutionReport,
+    ExecutionQualityTracker,
+    ImplementationShortfallResult,
+    QualityMetrics,
+    SlippageMeasurement,
+)
 
-__all__ = ["ExecutionQualityTracker", "QualityMetrics"]
+__all__ = [
+    "AlgoQualityScore",
+    "BenchmarkComparison",
+    "DailyExecutionReport",
+    "ExecutionQualityTracker",
+    "ImplementationShortfallResult",
+    "QualityMetrics",
+    "SlippageMeasurement",
+]

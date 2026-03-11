@@ -3,8 +3,8 @@ Phase 7: Portfolio heat & drawdown control.
 ExposureScale = max(0.2, 1 - current_drawdown_pct / dd_limit_pct);
 heat limit; trade pause threshold; vol spike detection.
 """
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import List, Optional
 
 import numpy as np
 

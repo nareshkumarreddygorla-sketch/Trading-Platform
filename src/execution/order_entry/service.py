@@ -1,7 +1,7 @@
 """
 Single order entry pipe. ALL order flows (API, AI, manual, test) MUST go through
 OrderEntryService.submit_order. No alternate path to broker.
-Pipeline: validate -> idempotency -> kill switch -> circuit -> risk -> reserve -> router -> lifecycle -> persist -> kafka -> return.
+Pipeline: validate -> lot size -> circuit limit -> idempotency -> kill switch -> circuit -> risk -> reserve -> market impact -> router -> lifecycle -> persist -> kafka -> return.
 """
 import asyncio
 import logging
@@ -10,19 +10,21 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-from src.core.events import Order, OrderStatus, OrderType, Signal
+from src.core.events import Order, OrderStatus
 
 from src.risk_engine import RiskManager
-from src.risk_engine.limits import LimitCheckResult
 
 from ..order_router import OrderRouter
 from ..lifecycle import OrderLifecycle
+from ..nse_lot_sizes import NSELotSizeValidator
+from ..circuit_limits import CircuitLimitChecker
 
 from .request import OrderEntryRequest, OrderEntryResult, RejectReason
 from .idempotency import IdempotencyStore
-from .kill_switch import KillSwitch, KillReason
+from .kill_switch import KillSwitch
 from .rate_limiter import OrderRateLimiter
 from .reservation import ExposureReservation
+from .error_classification import classify_error, is_retryable
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +56,17 @@ class OrderEntryService:
         on_order_created: Optional[Callable[[Order], Any]] = None,
         market_impact_model=None,
         adv_cache=None,
+        lot_size_validator: Optional[NSELotSizeValidator] = None,
+        circuit_limit_checker: Optional[CircuitLimitChecker] = None,
+        max_single_order_adv_pct: float = 5.0,
     ):
         self.on_risk_rejected = on_risk_rejected
         self.on_order_created = on_order_created
         self._market_impact_model = market_impact_model
         self._adv_cache = adv_cache
+        self._lot_size_validator = lot_size_validator
+        self._circuit_limit_checker = circuit_limit_checker
+        self._max_single_order_adv_pct = max_single_order_adv_pct
         self.risk_manager = risk_manager
         self.order_router = order_router
         self.lifecycle = lifecycle
@@ -74,9 +82,13 @@ class OrderEntryService:
         self._cluster_reservation = cluster_reservation
         self._rate_limiter = rate_limiter
         self._global_lock = asyncio.Lock()
+        self._get_safe_mode: Optional[Callable[[], bool]] = None
+        self._otr_monitor: Optional[object] = None  # P2-2: OTR enforcement
         self._persist_retries = (0.5, 1.0, 2.0)
         self._persist_max_attempts = 3
         self._write_ahead = bool(persist_order_submitting and update_order_after_broker_ack and reject_order_submitting)
+        # P2-5: Dead letter queue for timed-out/uncertain orders
+        self._dead_letter_queue: list = []  # List of {idem_key, order_id, timestamp, reason}
 
     async def _release_reservation(self, order_id: str) -> None:
         """Release local and cluster reservation."""
@@ -93,6 +105,14 @@ class OrderEntryService:
         except Exception as ex:
             logger.warning("Distributed lock release failed: %s", ex)
         lock_held_ref[0] = False
+
+    def set_safe_mode_getter(self, fn: Callable[[], bool]) -> None:
+        """Set callable that returns True when safe_mode is active."""
+        self._get_safe_mode = fn
+
+    def set_otr_monitor(self, monitor) -> None:
+        """P2-2: Set OTR monitor for NSE compliance enforcement."""
+        self._otr_monitor = monitor
 
     async def _persist_order_with_retry(self, order: Order) -> None:
         """Persist order with retry and backoff. Increments orders_persist_failed_total on final failure."""
@@ -160,6 +180,30 @@ class OrderEntryService:
                 logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
             return OrderEntryResult(False, reject_reason=RejectReason.VALIDATION, reject_detail="rate_limit_exceeded", latency_ms=(time.perf_counter() - start) * 1000)
 
+        # 1b2. Safe mode: block all non-reduce orders when safe_mode is active
+        if self._get_safe_mode is not None and self._get_safe_mode() and not getattr(request, "force_reduce", False):
+            logger.warning("Order BLOCKED: safe_mode active (symbol=%s side=%s)", signal.symbol, signal.side.value)
+            return OrderEntryResult(
+                False, reject_reason=RejectReason.CIRCUIT_BREAKER,
+                reject_detail="safe_mode_active",
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
+
+        # 1b3. P2-2: OTR enforcement — reject if OTR exceeds NSE 10:1 limit
+        if self._otr_monitor is not None and not getattr(request, "force_reduce", False):
+            try:
+                algo_id = signal.strategy_id or "default_algo"
+                otr_status = self._otr_monitor.record_order(algo_id, str(uuid.uuid4())[:8], signal.symbol)
+                if hasattr(otr_status, 'value') and otr_status.value == "HALTED":
+                    logger.critical("OTR HALT: algo=%s — order rejected per NSE limit", algo_id)
+                    return OrderEntryResult(
+                        False, reject_reason=RejectReason.VALIDATION,
+                        reject_detail=f"otr_halt: algo {algo_id} exceeds NSE 10:1 limit",
+                        latency_ms=(time.perf_counter() - start) * 1000,
+                    )
+            except Exception as e:
+                logger.debug("OTR check failed: %s", e)
+
         # 1c. Minimum order value check (₹1,000)
         if price is not None and price > 0:
             order_value = quantity * price
@@ -170,6 +214,64 @@ class OrderEntryService:
                 except Exception as e:
                     logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
                 return OrderEntryResult(False, reject_reason=RejectReason.VALIDATION, reject_detail=f"order_value_below_minimum: {order_value:.0f} < 1000", latency_ms=(time.perf_counter() - start) * 1000)
+
+        # 1d. NSE lot size validation: quantity must be a multiple of the lot size
+        if self._lot_size_validator is not None:
+            segment = request.metadata.get("segment", "EQ")
+            is_valid, adjusted_qty, lot_msg = self._lot_size_validator.validate_and_adjust(
+                signal.symbol, quantity, segment=segment,
+            )
+            if not is_valid:
+                if adjusted_qty > 0:
+                    logger.info("Lot size adjustment: %s %s qty %d -> %d (%s)",
+                                signal.side.value, signal.symbol, quantity, adjusted_qty, lot_msg)
+                    quantity = adjusted_qty
+                else:
+                    try:
+                        from src.monitoring.metrics import track_orders_rejected_total
+                        track_orders_rejected_total()
+                    except Exception as e:
+                        logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
+                    return OrderEntryResult(
+                        False, reject_reason=RejectReason.VALIDATION,
+                        reject_detail=f"lot_size_invalid: {lot_msg}",
+                        latency_ms=(time.perf_counter() - start) * 1000,
+                    )
+
+        # 1e. Circuit limit check: reject if price would hit exchange circuit limit
+        if self._circuit_limit_checker is not None and price is not None and price > 0:
+            segment = request.metadata.get("segment", "EQ")
+            circuit_result = self._circuit_limit_checker.check_order(
+                signal.symbol, price, segment=segment,
+            )
+            if not circuit_result.allowed:
+                try:
+                    from src.monitoring.metrics import track_orders_rejected_total
+                    track_orders_rejected_total()
+                except Exception as e:
+                    logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
+                logger.warning("Circuit limit rejection: %s %s @ %.2f — %s",
+                               signal.side.value, signal.symbol, price, circuit_result.reason)
+                return OrderEntryResult(
+                    False, reject_reason=RejectReason.CIRCUIT_BREAKER,
+                    reject_detail=f"circuit_limit: {circuit_result.reason}",
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                )
+
+        # 1f. Maximum single-order size limit: reject if order > max_pct of ADV
+        if self._adv_cache is not None and self._max_single_order_adv_pct > 0:
+            try:
+                adv = self._adv_cache.get_adv(signal.symbol)
+                if adv and adv > 0:
+                    max_qty = int(adv * self._max_single_order_adv_pct / 100)
+                    if quantity > max_qty > 0:
+                        logger.warning(
+                            "Order size %d exceeds %.1f%% of ADV (%d) for %s; capping to %d",
+                            quantity, self._max_single_order_adv_pct, adv, signal.symbol, max_qty,
+                        )
+                        quantity = max_qty
+            except Exception as e:
+                logger.debug("ADV max-order-size check failed (proceeding): %s", e)
 
         idem_key = request.idempotency_key or IdempotencyStore.derive_key(
             signal.strategy_id, signal.symbol, signal.side.value, quantity, price, datetime.now(timezone.utc).isoformat()
@@ -220,13 +322,14 @@ class OrderEntryService:
                 latency_ms=(time.perf_counter() - start) * 1000,
             )
 
-        # 3. Kill switch (read net_position under lock to avoid race with FillHandler — BUG 1.8)
+        # 3. Kill switch (all checks under single lock to prevent race with FillHandler — FIX BUG 1.8)
         armed = await self.kill_switch.is_armed()
         if armed:
             async with self._global_lock:
                 net_pos = self._net_position(signal.symbol, signal.exchange.value)
-            state = await self.kill_switch.get_state()
-            if not KillSwitch.allow_reduce_only_order(state, signal.symbol, signal.side.value, quantity, net_pos):
+                state = await self.kill_switch.get_state()
+                kill_allowed = KillSwitch.allow_reduce_only_order(state, signal.symbol, signal.side.value, quantity, net_pos)
+            if not kill_allowed:
                 try:
                     from src.monitoring.metrics import track_orders_rejected_total
                     track_orders_rejected_total()
@@ -264,6 +367,11 @@ class OrderEntryService:
                 )
         try:
             # 5 + 6. Risk check and reservation under one lock (atomic)
+            # _global_lock (asyncio.Lock) serializes both submit_order and
+            # FillHandler.on_fill_event, preventing concurrent position mutations.
+            # No need for the threading-bridge dual-lock (acquire_async_lock) which
+            # caused deadlocks: run_in_executor acquired _positions_lock on a worker
+            # thread, then can_place_order tried to re-acquire it on the event loop.
             async with self._global_lock:
                 # Determine if this order reduces existing exposure (exit order)
                 net_pos = self._net_position(signal.symbol, signal.exchange.value if hasattr(signal.exchange, "value") else str(signal.exchange))
@@ -411,21 +519,40 @@ class OrderEntryService:
                     await loop.run_in_executor(None, lambda: self.reject_order_submitting(order_id_placeholder))
                 await self._release_reservation(order_id_placeholder)
                 await self._release_distributed_lock_if_held(lock_held)
-                if reserved:
-                    await self.idempotency.update(idem_key, order_id_placeholder, None, "REJECTED")
-                logger.error("Broker place_order timeout after %s s", BROKER_TIMEOUT_SECONDS)
+                logger.error(
+                    "Broker place_order timeout after %s s — ORDER MAY HAVE BEEN SUBMITTED. "
+                    "Reconciliation required: check broker order book for idem_key=%s",
+                    BROKER_TIMEOUT_SECONDS, idem_key,
+                )
+                # Mark as TIMEOUT_UNCERTAIN in idempotency store so reconciliation can find it
+                await self.idempotency.update(idem_key, order_id_placeholder, None, "TIMEOUT_UNCERTAIN")
+                # P2-5: Add to dead letter queue for reconciliation
+                self._dead_letter_queue.append({
+                    "idem_key": idem_key,
+                    "order_id": order_id_placeholder,
+                    "symbol": signal.symbol,
+                    "side": signal.side.value,
+                    "quantity": quantity,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "reason": "broker_timeout",
+                })
+                logger.critical(
+                    "DLQ: added timeout order %s (symbol=%s) — requires reconciliation",
+                    order_id_placeholder, signal.symbol,
+                )
                 return OrderEntryResult(
                     False,
                     reject_reason=RejectReason.TIMEOUT,
-                    reject_detail="broker_timeout",
+                    reject_detail=f"broker_timeout_uncertain:idem={idem_key}",
                     latency_ms=(time.perf_counter() - start) * 1000,
                 )
             except Exception as e:
+                error_cat = classify_error(e)
                 try:
                     from src.monitoring.metrics import track_orders_rejected_total
                     track_orders_rejected_total()
-                except Exception as e:
-                    logger.debug("Metrics track_orders_rejected_total unavailable: %s", e)
+                except Exception as _me:
+                    logger.debug("Metrics track_orders_rejected_total unavailable: %s", _me)
                 if self.reject_order_submitting:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(None, lambda: self.reject_order_submitting(order_id_placeholder))
@@ -433,8 +560,16 @@ class OrderEntryService:
                 await self._release_distributed_lock_if_held(lock_held)
                 if reserved:
                     await self.idempotency.update(idem_key, order_id_placeholder, None, "REJECTED")
-                logger.exception("Broker place_order failed: %s", e)
-                return OrderEntryResult(False, reject_reason=RejectReason.BROKER_ERROR, reject_detail=str(e), latency_ms=(time.perf_counter() - start) * 1000)
+                logger.exception(
+                    "Broker place_order failed (category=%s retryable=%s): %s",
+                    error_cat.value, is_retryable(e), e,
+                )
+                return OrderEntryResult(
+                    False,
+                    reject_reason=RejectReason.BROKER_ERROR,
+                    reject_detail=f"[{error_cat.value}] {e}",
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                )
 
             real_order_id = order_id_placeholder if self._write_ahead else (order.order_id or order_id_placeholder)
             broker_order_id = order.broker_order_id or order.order_id
@@ -526,7 +661,12 @@ class OrderEntryService:
                 lock_held[0] = False
 
     def _net_position(self, symbol: str, exchange: str) -> float:
-        """Net position for symbol (long positive, short negative)."""
+        """Net position for symbol (long positive, short negative).
+
+        BUG 33 NOTE: This method must ALWAYS be called under ``_global_lock`` to
+        prevent races with FillHandler updating positions concurrently. All current
+        call sites already hold the lock (verified).
+        """
         net = 0.0
         for p in self.risk_manager.positions:
             if p.symbol == symbol and p.exchange.value == exchange:
@@ -535,3 +675,13 @@ class OrderEntryService:
                 else:
                     net -= p.quantity
         return net
+
+    def get_dead_letter_queue(self) -> list:
+        """P2-5: Return current dead letter queue entries for reconciliation."""
+        return list(self._dead_letter_queue)
+
+    def clear_dead_letter(self, order_id: str) -> bool:
+        """P2-5: Remove a resolved entry from the DLQ."""
+        before = len(self._dead_letter_queue)
+        self._dead_letter_queue = [e for e in self._dead_letter_queue if e.get("order_id") != order_id]
+        return len(self._dead_letter_queue) < before

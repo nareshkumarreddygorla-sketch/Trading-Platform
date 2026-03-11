@@ -25,7 +25,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from src.ai.models.lstm_predictor import FEATURE_KEYS, NUM_FEATURES
+from src.ai.models.lstm_predictor import NUM_FEATURES
 from src.costs.india_costs import IndiaCostCalculator
 
 logger = logging.getLogger(__name__)

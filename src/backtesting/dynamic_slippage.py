@@ -7,8 +7,6 @@ Nonlinear scaling with participation; used in backtest and live participation ca
 from dataclasses import dataclass
 from typing import Optional
 
-import numpy as np
-
 
 @dataclass
 class DynamicSlippageConfig:

@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from .client import LLMClient, LLMConfig
+from .client import LLMClient
 
 logger = logging.getLogger(__name__)
 

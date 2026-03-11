@@ -11,6 +11,8 @@ before flagging a critical auth failure).
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from src.core.events import Exchange, Order, OrderStatus, OrderType, Position, SignalSide
@@ -34,6 +36,12 @@ _circuit_halted_symbols: Dict[str, float] = {}  # symbol -> time.monotonic() whe
 _TOKEN_MAX_AGE: float = 23 * 3600          # 23 hours (Angel One JWT validity)
 _TOKEN_REFRESH_HEADROOM: float = 1 * 3600  # refresh 1 hour before expiry
 _MAX_REFRESH_FAILURES: int = 3             # critical alert threshold
+
+# Clock drift thresholds (seconds)
+_CLOCK_DRIFT_WARN: float = 10.0
+_CLOCK_DRIFT_CRITICAL: float = 25.0
+# TOTP valid_window: ±1 means accept codes from previous, current, and next 30s window
+_TOTP_VALID_WINDOW: int = 1
 
 # Map Angel One orderstatus to our OrderStatus
 _ANGEL_STATUS_MAP = {
@@ -74,9 +82,16 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
         totp: Optional[str] = None,
         totp_secret: Optional[str] = None,
         refresh_token: Optional[str] = None,
-        request_timeout: float = 15.0,
+        request_timeout: float = 10.0,
         on_health_failure: Optional[Callable[[], None]] = None,
     ):
+        # Live mode pre-flight: api_key is mandatory
+        if not paper and not api_key:
+            raise ValueError(
+                "AngelOneExecutionGateway: paper=False but api_key is empty/None. "
+                "Refusing to start live trading without valid API credentials."
+            )
+
         self.api_key = api_key
         self.api_secret = api_secret
         self.access_token = access_token
@@ -94,6 +109,11 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
         self._refresh_failures: int = 0             # consecutive refresh failures
         self._auth_failed: bool = False              # set True after _MAX_REFRESH_FAILURES
         self._refresh_lock: asyncio.Lock = asyncio.Lock()
+
+        if not paper:
+            logger.critical(
+                "LIVE TRADING MODE ACTIVE — real orders will be placed via Angel One"
+            )
 
         if not paper and api_key:
             self._client = AngelOneHttpClient(
@@ -147,11 +167,18 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
     # Token refresh machinery
     # ------------------------------------------------------------------
 
-    def _generate_totp(self) -> str:
+    def _generate_totp(self, time_offset: int = 0) -> str:
         """Generate a fresh TOTP code from the stored secret.
+
+        Args:
+            time_offset: Offset in seconds to apply to the current time.
+                         Use -30 or +30 to generate codes for adjacent windows.
 
         Requires the ``pyotp`` package.  Falls back to the static TOTP value
         that was passed at construction time if no secret is configured.
+
+        After generating the code, verifies it is valid within a ±1 window
+        to guard against borderline timing issues.
         """
         if not self._totp_secret:
             raise BrokerClientError(
@@ -164,7 +191,69 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
                 "pyotp package is required for automatic token refresh. "
                 "Install it with: pip install pyotp"
             )
-        return pyotp.TOTP(self._totp_secret).now()
+        totp = pyotp.TOTP(self._totp_secret)
+        # Generate code, optionally for an adjacent time window
+        if time_offset != 0:
+            adjusted_time = time.time() + time_offset
+            code = totp.at(datetime.fromtimestamp(adjusted_time, tz=timezone.utc))
+        else:
+            code = totp.now()
+
+        # Verify the generated code is valid within ±1 window (drift tolerance)
+        if not totp.verify(code, valid_window=_TOTP_VALID_WINDOW):
+            logger.warning(
+                "Generated TOTP code failed verification with valid_window=%d "
+                "(possible clock drift). Code will still be returned.",
+                _TOTP_VALID_WINDOW,
+            )
+        return code
+
+    def _check_system_clock(self, response_headers: Optional[Dict[str, str]] = None) -> Optional[float]:
+        """Check system clock drift against Angel One API response headers.
+
+        Args:
+            response_headers: HTTP response headers dict (must contain 'Date').
+
+        Returns:
+            The detected drift in seconds (absolute value), or None if the
+            check could not be performed.
+
+        Logs WARNING if drift > 10 seconds, CRITICAL if drift > 25 seconds.
+        """
+        if not response_headers:
+            return None
+
+        date_header = response_headers.get("Date") or response_headers.get("date")
+        if not date_header:
+            return None
+
+        try:
+            server_time = parsedate_to_datetime(date_header)
+            local_time = datetime.now(tz=timezone.utc)
+            drift = abs((local_time - server_time).total_seconds())
+        except Exception as exc:
+            logger.debug("Could not parse Date header for clock check: %s", exc)
+            return None
+
+        if drift > _CLOCK_DRIFT_CRITICAL:
+            logger.critical(
+                "CRITICAL: System clock drift detected: %.1f seconds vs Angel One "
+                "server. TOTP authentication will likely fail. Synchronize system "
+                "clock immediately (e.g. ntpd / chrony).",
+                drift,
+            )
+            audit_logger.critical("Clock drift %.1fs (critical threshold %.1fs)", drift, _CLOCK_DRIFT_CRITICAL)
+        elif drift > _CLOCK_DRIFT_WARN:
+            logger.warning(
+                "System clock drift detected: %.1f seconds vs Angel One server. "
+                "Consider synchronizing system clock to avoid TOTP failures.",
+                drift,
+            )
+            audit_logger.warning("Clock drift %.1fs (warn threshold %.1fs)", drift, _CLOCK_DRIFT_WARN)
+        else:
+            logger.debug("Clock drift check OK: %.1fs", drift)
+
+        return drift
 
     def _is_token_expiring(self) -> bool:
         """Return True if the current token is within 1 hour of its 23-hour expiry."""
@@ -202,50 +291,96 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             )
 
             loop = asyncio.get_running_loop()
-            try:
-                fresh_totp = self._generate_totp()
 
-                # Perform TOTP-based login on the underlying sync client
-                def _do_relogin() -> None:
-                    self._client.totp = fresh_totp
-                    self._client.login()
+            # Try current TOTP first, then fall back to adjacent windows (±30s)
+            totp_attempts = [
+                (0, "current"),
+                (-30, "previous window (-30s)"),
+                (30, "next window (+30s)"),
+            ]
 
-                await asyncio.wait_for(
-                    loop.run_in_executor(None, _do_relogin),
-                    timeout=self._request_timeout + 5,
-                )
+            last_exc: Optional[Exception] = None
+            for offset, label in totp_attempts:
+                try:
+                    fresh_totp = self._generate_totp(time_offset=offset)
+                    if offset != 0:
+                        audit_logger.info(
+                            "Retrying TOTP login with %s (offset=%ds)", label, offset,
+                        )
 
-                # Success -- reset state
-                self._token_acquired_at = time.monotonic()
-                self._refresh_failures = 0
-                self._auth_failed = False
-                audit_logger.info(
-                    "Token refreshed successfully at %.0f", time.time()
-                )
-                return True
+                    # Perform TOTP-based login on the underlying sync client
+                    def _do_relogin(_totp: str = fresh_totp) -> None:
+                        self._client.totp = _totp
+                        self._client.login()
 
-            except Exception as exc:
-                self._refresh_failures += 1
-                audit_logger.warning(
-                    "Token refresh failed (attempt %d/%d): %s",
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, _do_relogin),
+                        timeout=self._request_timeout + 5,
+                    )
+
+                    # Success -- reset state
+                    self._token_acquired_at = time.monotonic()
+                    self._refresh_failures = 0
+                    self._auth_failed = False
+                    if offset != 0:
+                        audit_logger.warning(
+                            "Token refresh succeeded with %s -- system clock may be "
+                            "drifting. Consider NTP sync.",
+                            label,
+                        )
+                    audit_logger.info(
+                        "Token refreshed successfully at %.0f (window: %s)",
+                        time.time(),
+                        label,
+                    )
+
+                    # After successful login, try to check clock drift from
+                    # any cached response headers on the client
+                    try:
+                        headers = getattr(self._client, '_last_response_headers', None)
+                        if headers:
+                            self._check_system_clock(headers)
+                    except Exception:
+                        pass  # clock check is best-effort
+
+                    return True
+
+                except Exception as exc:
+                    last_exc = exc
+                    if offset == 0:
+                        audit_logger.warning(
+                            "TOTP login failed with current window: %s. "
+                            "Will try adjacent windows as fallback.",
+                            exc,
+                        )
+                    else:
+                        audit_logger.warning(
+                            "TOTP login failed with %s: %s", label, exc,
+                        )
+                    continue
+
+            # All TOTP windows exhausted
+            self._refresh_failures += 1
+            audit_logger.warning(
+                "Token refresh failed after all TOTP windows (attempt %d/%d): %s",
+                self._refresh_failures,
+                _MAX_REFRESH_FAILURES,
+                last_exc,
+            )
+            if self._refresh_failures >= _MAX_REFRESH_FAILURES:
+                self._auth_failed = True
+                logger.critical(
+                    "CRITICAL: Angel One token refresh failed %d consecutive "
+                    "times. Manual intervention required. Last error: %s",
                     self._refresh_failures,
-                    _MAX_REFRESH_FAILURES,
-                    exc,
+                    last_exc,
                 )
-                if self._refresh_failures >= _MAX_REFRESH_FAILURES:
-                    self._auth_failed = True
-                    logger.critical(
-                        "CRITICAL: Angel One token refresh failed %d consecutive "
-                        "times. Manual intervention required. Last error: %s",
-                        self._refresh_failures,
-                        exc,
-                    )
-                    audit_logger.critical(
-                        "Auth failure flag set after %d consecutive refresh failures",
-                        self._refresh_failures,
-                    )
-                    self._notify_health_failure()
-                return False
+                audit_logger.critical(
+                    "Auth failure flag set after %d consecutive refresh failures",
+                    self._refresh_failures,
+                )
+                self._notify_health_failure()
+            return False
 
     async def _ensure_valid_token(self) -> None:
         """Called before every live API request to guarantee a valid token.
@@ -410,6 +545,8 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
         ot = self._parse_order_type(order_type)
 
         # Check per-symbol circuit halt (prevent resubmission during halt)
+        # BUG 29 FIX: Don't delete during iteration / direct lookup. Use safe
+        # pattern: check first, then clear expired entries separately.
         if symbol in _circuit_halted_symbols:
             halt_time = _circuit_halted_symbols[symbol]
             elapsed = time.monotonic() - halt_time
@@ -418,8 +555,13 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
                     f"Symbol {symbol} under circuit halt ({elapsed:.0f}s ago)",
                     errorcode="CIRCUIT_HALT",
                 )
-            else:
-                del _circuit_halted_symbols[symbol]  # Clear expired halt
+        # Clear all expired halts safely (snapshot keys, then delete)
+        symbols_to_clear = [
+            k for k, v in _circuit_halted_symbols.items()
+            if time.monotonic() - v >= 300
+        ]
+        for k in symbols_to_clear:
+            del _circuit_halted_symbols[k]
 
         if self.paper:
             from uuid import uuid4
@@ -483,6 +625,29 @@ class AngelOneExecutionGateway(BaseExecutionGateway):
             broker_order_id=str(broker_order_id) if broker_order_id else None,
             metadata={"broker": "angel_one", "uniqueorderid": unique_id},
         )
+
+    async def health_check(self) -> Dict[str, object]:
+        """Verify Angel One gateway connectivity.
+
+        Paper mode: always healthy.
+        Live mode: attempt to fetch the order book (lightweight API call)
+        to confirm the session is alive and the broker API is reachable.
+        """
+        if self.paper:
+            return {"healthy": True, "broker": "angel_one", "mode": "paper", "detail": "ok"}
+        if not self._client:
+            return {"healthy": False, "broker": "angel_one", "mode": "live", "detail": "no_client"}
+        if self._auth_failed:
+            return {"healthy": False, "broker": "angel_one", "mode": "live", "detail": "auth_failed"}
+        try:
+            await self._execute_broker_call(
+                "health_check",
+                self._client.get_order_book,
+            )
+            return {"healthy": True, "broker": "angel_one", "mode": "live", "detail": "ok"}
+        except Exception as e:
+            logger.warning("Angel One health check failed: %s", e)
+            return {"healthy": False, "broker": "angel_one", "mode": "live", "detail": str(e)}
 
     async def cancel_order(self, order_id: str, broker_order_id: Optional[str] = None) -> bool:
         if self.paper:

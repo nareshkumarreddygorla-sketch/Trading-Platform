@@ -50,7 +50,6 @@ class AlphaModel:
             import joblib
             # Patch __main__ so pickle can find EnsembleClassifier saved by training script
             import sys
-            import types
             _main = sys.modules.get("__main__")
             _needs_patch = _main is not None and not hasattr(_main, "EnsembleClassifier")
             if _needs_patch:

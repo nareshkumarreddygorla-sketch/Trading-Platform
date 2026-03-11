@@ -2,7 +2,7 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session

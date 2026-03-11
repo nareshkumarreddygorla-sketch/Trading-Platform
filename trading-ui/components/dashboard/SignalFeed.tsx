@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useStore } from "@/store/useStore";
 import { endpoints } from "@/lib/api/client";
@@ -18,8 +18,11 @@ export default function SignalFeed() {
     enabled: signals.length === 0,
   });
 
+  const seededRef = useRef(false);
+
   useEffect(() => {
-    if (signals.length === 0 && ordersData?.orders?.length) {
+    if (!seededRef.current && signals.length === 0 && ordersData?.orders?.length) {
+      seededRef.current = true;
       const seeded = ordersData.orders.map((o) => ({
         symbol: o.symbol,
         direction: o.side,

@@ -18,7 +18,7 @@ def test_limits_open_positions():
 
 
 def test_risk_manager_can_place_order():
-    mgr = RiskManager(equity=100_000)
+    mgr = RiskManager(equity=100_000, load_persisted_state=False)
     sig = Signal(
         strategy_id="test",
         symbol="RELIANCE",

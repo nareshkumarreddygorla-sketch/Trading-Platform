@@ -1,20 +1,65 @@
 """
 Market data API: quote and bars. Uses Yahoo Finance when available,
-falls back to in-memory stubs.
+returns HTTP 503 when market data is unavailable (never fabricated data).
 """
-import hashlib
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from src.api.auth import get_current_user
+
+
+# ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+class MarketStatusResponse(BaseModel):
+    connected: bool
+    healthy: bool
+    message: Optional[str] = None
+    source: Optional[str] = None
+
+
+class MarketRegimeResponse(BaseModel):
+    regime: str
+    confidence: float
+    vol_percentile: float
+    trend_strength: float
+
+
+class NewsItem(BaseModel):
+    id: str
+    headline: str
+    symbol: Optional[str] = None
+    sentiment: str = "neutral"
+    score: float = 0.0
+    source: str = ""
+    timestamp: Optional[str] = None
+    category: Optional[str] = None
+
+
+class MarketNewsResponse(BaseModel):
+    news: List[NewsItem]
+    source: str
+
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# In-memory stub cache: (exchange, symbol) -> quote; (exchange, symbol, interval) -> bars
-_quote_cache: Dict[str, Dict[str, Any]] = {}
-_bars_cache: Dict[str, List[Dict[str, Any]]] = {}
+_SYMBOL_RE = re.compile(r"^[A-Z0-9&_-]{1,20}$")
+
+
+def _validate_symbol(symbol: str) -> str:
+    """Validate and sanitize a stock symbol. Raises HTTP 400 on invalid input."""
+    symbol = symbol.strip().upper()
+    if not _SYMBOL_RE.match(symbol):
+        raise HTTPException(400, f"Invalid symbol: must match {_SYMBOL_RE.pattern}")
+    return symbol
 
 # Yahoo Finance connector (lazy init)
 _yf_connector = None
@@ -35,88 +80,33 @@ def _get_yf():
     return _yf_connector
 
 
-def _seed_from_symbol(symbol: str, exchange: str) -> int:
-    h = hashlib.sha256(f"{exchange}:{symbol}".encode()).hexdigest()
-    return int(h[:8], 16) % (2**31)
-
-
-def _stub_quote(symbol: str, exchange: str) -> Dict[str, Any]:
-    import numpy as np
-    seed = _seed_from_symbol(symbol, exchange)
-    rng = np.random.default_rng(seed)
-    base = 100.0 + (seed % 500)
-    price = base * (1 + rng.standard_normal() * 0.01)
-    return {
-        "symbol": symbol,
-        "exchange": exchange,
-        "last": round(price, 2),
-        "bid": round(price - 0.05, 2),
-        "ask": round(price + 0.05, 2),
-        "volume": int(100000 + rng.integers(0, 50000)),
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "source": "stub",
-    }
-
-
-def _stub_bars(symbol: str, exchange: str, interval: str, from_ts: Optional[str], to_ts: Optional[str], limit: int = 500) -> List[Dict[str, Any]]:
-    import numpy as np
-    seed = _seed_from_symbol(symbol, exchange)
-    rng = np.random.default_rng(seed)
-    n = min(limit, 500)
-    delta = timedelta(hours=1) if interval in ("1m", "1h") else timedelta(days=1)
-    try:
-        if to_ts:
-            end = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
-        else:
-            end = datetime.now(timezone.utc)
-        if from_ts:
-            start = datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
-        else:
-            start = end - n * delta
-    except Exception:
-        end = datetime.now(timezone.utc)
-        start = end - n * delta
-    price = 100.0 + (seed % 500)
-    bars = []
-    current = start
-    for _ in range(n):
-        ret = rng.standard_normal() * 0.015
-        price = price * (1 + ret)
-        o, c = price, price
-        h = max(o, c) + abs(rng.standard_normal() * 0.5)
-        l = min(o, c) - abs(rng.standard_normal() * 0.5)
-        vol = max(1000, int(rng.exponential(30000)))
-        bars.append({
-            "open": round(o, 2),
-            "high": round(h, 2),
-            "low": round(l, 2),
-            "close": round(c, 2),
-            "volume": vol,
-            "ts": current.isoformat(),
-        })
-        current += delta
-        if current > end:
-            break
-    return bars
-
 
 @router.get("/quote/{symbol}")
-async def get_quote(symbol: str, exchange: str = "NSE"):
-    """Latest quote. Tries Yahoo Finance first, falls back to stub."""
+async def get_quote(symbol: str, exchange: str = "NSE", current_user: dict = Depends(get_current_user)):
+    """Latest quote. Uses Yahoo Finance; returns 503 if unavailable."""
+    symbol = _validate_symbol(symbol)
     yf = _get_yf()
     if yf:
         quote = yf.get_quote(symbol, exchange)
         if quote:
             return quote
 
-    key = f"{exchange}:{symbol}"
-    if key not in _quote_cache:
-        _quote_cache[key] = _stub_quote(symbol, exchange)
-    return _quote_cache[key]
+    # No real market data source available — return an explicit error
+    # instead of fabricated prices that could mislead the UI.
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "Market data unavailable",
+            "symbol": symbol,
+            "exchange": exchange,
+            "stale": True,
+            "message": "Yahoo Finance connector is not available. No quote data can be served.",
+        },
+    )
 
 
-@router.get("/status")
-async def market_status(request: Request):
+@router.get("/status", response_model=MarketStatusResponse)
+async def market_status(request: Request, current_user: dict = Depends(get_current_user)):
     """
     Market data feed status. If feed unhealthy, autonomous loop pauses; manual trading still works.
     """
@@ -136,8 +126,10 @@ async def get_bars(
     from_ts: Optional[str] = None,
     to_ts: Optional[str] = None,
     limit: int = Query(500, le=1000),
+    current_user: dict = Depends(get_current_user),
 ):
-    """OHLCV bars. Tries Yahoo Finance first, falls back to stub."""
+    """OHLCV bars. Uses Yahoo Finance; returns 503 if unavailable."""
+    symbol = _validate_symbol(symbol)
     exchange = "NSE"
     yf = _get_yf()
     if yf:
@@ -145,12 +137,23 @@ async def get_bars(
         if bars:
             return {"symbol": symbol, "exchange": exchange, "interval": interval, "bars": bars, "source": "yahoo_finance"}
 
-    bars = _stub_bars(symbol, exchange, interval, from_ts, to_ts, limit)
-    return {"symbol": symbol, "exchange": exchange, "interval": interval, "bars": bars, "source": "stub"}
+    # No real market data source available — return an explicit error
+    # instead of fabricated bar data.
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "Market data unavailable",
+            "symbol": symbol,
+            "exchange": exchange,
+            "interval": interval,
+            "stale": True,
+            "message": "Yahoo Finance connector is not available. No bar data can be served.",
+        },
+    )
 
 
-@router.get("/regime")
-async def get_regime(request: Request):
+@router.get("/regime", response_model=MarketRegimeResponse)
+async def get_regime(request: Request, current_user: dict = Depends(get_current_user)):
     """Current market regime from the regime classifier."""
     regime_classifier = getattr(request.app.state, "regime_classifier", None)
     if regime_classifier and hasattr(regime_classifier, "last_result"):
@@ -194,12 +197,9 @@ async def get_regime(request: Request):
     return {"regime": "unknown", "confidence": 0.0, "vol_percentile": 0.0, "trend_strength": 0.0}
 
 
-@router.get("/news")
-async def get_news(request: Request, limit: int = Query(20, le=50)):
+@router.get("/news", response_model=MarketNewsResponse)
+async def get_news(request: Request, limit: int = Query(20, le=50), current_user: dict = Depends(get_current_user)):
     """Market news feed. Returns recent market events and AI sentiment analysis."""
-    import random
-    from datetime import datetime, timezone
-
     # Try real news service
     news_service = getattr(request.app.state, "news_service", None)
     if news_service and hasattr(news_service, "get_latest"):

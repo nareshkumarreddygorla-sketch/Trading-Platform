@@ -19,7 +19,7 @@ class CircuitKillConfig:
     max_daily_loss_pct: float = 2.0
     max_drawdown_pct: float = 5.0
     rejection_spike_window: int = 20
-    rejection_spike_threshold: int = 5
+    rejection_spike_threshold: int = 20  # was 5; raised for multi-strategy paper trading
     broker_latency_spike_ms: float = 5000.0
     india_vix_spike_multiplier: float = 2.0
     vix_reference: float = 15.0
@@ -50,19 +50,19 @@ class CircuitAndKillController:
         """If daily loss exceeds limit: open circuit and arm kill switch. Returns True if tripped."""
         if current_equity <= 0:
             await self.kill_switch.arm(KillReason.MAX_DAILY_LOSS, "zero_equity")
-            self.risk_manager.open_circuit()
+            self.risk_manager.open_circuit(reason="zero_equity")
             return True
         loss_pct = -100.0 * self.risk_manager.daily_pnl / current_equity if self.risk_manager.daily_pnl < 0 else 0
         if loss_pct >= self.config.max_daily_loss_pct:
             await self.kill_switch.arm(KillReason.MAX_DAILY_LOSS, f"daily_loss_{loss_pct:.2f}pct")
-            self.risk_manager.open_circuit()
+            self.risk_manager.open_circuit(reason=f"daily_loss_{loss_pct:.2f}pct")
             return True
         return False
 
     async def check_drawdown_and_trip(self, peak_equity: float, current_equity: float) -> bool:
         if self.risk_manager.check_drawdown(peak_equity, current_equity):
             await self.kill_switch.arm(KillReason.MAX_DRAWDOWN, f"drawdown_limit")
-            self.risk_manager.open_circuit()
+            self.risk_manager.open_circuit(reason="max_drawdown")
             return True
         return False
 
@@ -88,7 +88,7 @@ class CircuitAndKillController:
 
     async def trip_fill_mismatch(self, detail: str = "") -> None:
         await self.kill_switch.arm(KillReason.FILL_MISMATCH, detail or "reconciliation_mismatch")
-        self.risk_manager.open_circuit()
+        self.risk_manager.open_circuit(reason=f"fill_mismatch: {detail or 'reconciliation_mismatch'}")
 
     async def check_india_vix_and_trip(self, india_vix: float) -> bool:
         if india_vix >= self.config.vix_reference * self.config.india_vix_spike_multiplier:
@@ -100,7 +100,7 @@ class CircuitAndKillController:
         """If market feed is unhealthy, arm kill switch and open circuit. Returns True if tripped."""
         if not feed_healthy:
             await self.kill_switch.arm(KillReason.MARKET_FEED_FAILURE, "market_feed_unhealthy")
-            self.risk_manager.open_circuit()
+            self.risk_manager.open_circuit(reason="market_feed_unhealthy")
             return True
         return False
 

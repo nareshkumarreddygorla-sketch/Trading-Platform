@@ -5,7 +5,6 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")  # Prevent OMP abort on macOS
 
 import logging
-import time
 
 # Load .env before anything reads os.environ
 from dotenv import load_dotenv
@@ -16,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi.responses import HTMLResponse, Response
 
-from .routers import health, strategies, risk, orders, market, backtest, trading, alpha_research, reconciliation, auth, capital, audit, performance, agents, training, broker
+from .routers import health, strategies, risk, orders, market, backtest, trading, alpha_research, reconciliation, auth, capital, audit, performance, agents, training, broker, attribution, simulation, data_pipeline, self_learning, marketplace, options, llm_strategy, alt_data
 
 # Import the modular lifespan
 from .lifespan import lifespan
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def _prometheus_metrics() -> Response:
     try:
-        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, Gauge, Counter, CollectorRegistry, REGISTRY
+        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, Gauge, REGISTRY
 
         # Register trading gauges (idempotent via try/except)
         def _get_or_create_gauge(name, doc):
@@ -132,24 +131,33 @@ configure_logging()
 
 
 def create_app() -> FastAPI:
+    _env = os.environ.get("ENV", "development").lower()
+    # Disable interactive API docs in production to reduce attack surface
+    docs_kwargs = {} if _env != "production" else {"docs_url": None, "redoc_url": None, "openapi_url": None}
     app = FastAPI(
         title="Autonomous Trading Platform API",
         version="1.0.0",
         description="Institutional-grade multi-market trading engine",
         lifespan=lifespan,
+        **docs_kwargs,
     )
 
     # Security & observability middleware (order matters: outermost first)
     from .middleware import SecurityHeadersMiddleware, RateLimitMiddleware, RequestLoggingMiddleware
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(RateLimitMiddleware, requests_per_minute=120, auth_requests_per_minute=20)
+    app.add_middleware(RateLimitMiddleware, requests_per_minute=120, auth_requests_per_minute=10)
+    allowed_origins = _get_allowed_origins()
+    if not allowed_origins:
+        logger.warning("CORS: No allowed origins configured — all cross-origin requests will be rejected.")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=_get_allowed_origins(),
+        allow_origins=allowed_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        expose_headers=["X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
+        max_age=600,  # Cache preflight for 10 minutes to reduce OPTIONS requests
     )
     # ── Global exception handlers (Sprint 9.1) ──
     import uuid
@@ -208,6 +216,14 @@ def create_app() -> FastAPI:
     app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
     app.include_router(training.router, prefix="/api/v1/training", tags=["Training"])
     app.include_router(broker.router, prefix="/api/v1", tags=["Broker"])
+    app.include_router(attribution.router, tags=["Attribution"])
+    app.include_router(simulation.router, tags=["Simulation"])
+    app.include_router(data_pipeline.router, tags=["Data Pipeline"])
+    app.include_router(self_learning.router, tags=["Self-Learning"])
+    app.include_router(marketplace.router, tags=["Marketplace"])
+    app.include_router(options.router, tags=["Options"])
+    app.include_router(llm_strategy.router, tags=["Strategy Builder"])
+    app.include_router(alt_data.router, tags=["Alternative Data"])
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
@@ -293,16 +309,18 @@ def create_app() -> FastAPI:
 
     app.get("/metrics", include_in_schema=False)(_prometheus_metrics)
 
-    @app.get("/api/v1/debug/bar-cache", include_in_schema=False)
-    def debug_bar_cache():
-        bc = getattr(app.state, "bar_cache", None)
-        if not bc:
-            return {"error": "no bar_cache"}
-        keys = list(bc._bars.keys())
-        counts = {k: len(bc._bars[k]) for k in keys[:30]}
-        from src.core.events import Exchange
-        symbols = bc.symbols_with_bars(Exchange.NSE, "1m", min_bars=20)
-        return {"total_keys": len(keys), "sample_counts": counts, "symbols_with_20_bars": symbols}
+    # Debug endpoint: only available in development (never expose internal state in production)
+    if os.environ.get("ENV", "development").lower() != "production":
+        @app.get("/api/v1/debug/bar-cache", include_in_schema=False)
+        def debug_bar_cache():
+            bc = getattr(app.state, "bar_cache", None)
+            if not bc:
+                return {"error": "no bar_cache"}
+            keys = list(bc._bars.keys())
+            counts = {k: len(bc._bars[k]) for k in keys[:30]}
+            from src.core.events import Exchange
+            symbols = bc.symbols_with_bars(Exchange.NSE, "1m", min_bars=20)
+            return {"total_keys": len(keys), "sample_counts": counts, "symbols_with_20_bars": symbols}
 
     return app
 

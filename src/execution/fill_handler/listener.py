@@ -60,12 +60,18 @@ class FillListener:
         self._REDIS_PREFIX = "fill_dedup:"
         self._REDIS_TTL = 48 * 3600  # 48 hours
 
-        # Load persisted dedup state from Redis on startup
+        # BUG 34 FIX: Redis client may be async, and __init__ is sync.
+        # Wrap in try/except to handle both sync and async client failures
+        # gracefully. If the client is async, these sync calls will fail and
+        # we fall back to empty dedup state (loaded lazily on first poll).
         if self._redis:
             try:
                 self._load_dedup_from_redis()
             except Exception as e:
-                logger.warning("Failed to load fill dedup state from Redis (using in-memory): %s", e)
+                logger.warning(
+                    "Failed to load fill dedup state from Redis on init "
+                    "(will use in-memory; dedup state may reload on first poll): %s", e
+                )
 
     def _load_dedup_from_redis(self) -> None:
         """Load persisted fill dedup state from Redis into _last_applied."""
@@ -105,8 +111,14 @@ class FillListener:
 
     async def _fetch_orders(self) -> list:
         try:
-            orders = await self.gateway.get_orders(limit=500)
+            orders = await asyncio.wait_for(
+                self.gateway.get_orders(limit=500),
+                timeout=10.0,
+            )
             return orders or []
+        except asyncio.TimeoutError:
+            logger.warning("Fill listener fetch orders timed out (10s)")
+            return []
         except Exception as e:
             logger.warning("Fill listener fetch orders failed: %s", e)
             return []
@@ -175,8 +187,23 @@ class FillListener:
 
                 delta = filled - prev_filled
                 fill_type = FillType.FILL if status_str in ("complete", "completed", "traded", "filled") else FillType.PARTIAL_FILL
+
+                # Compute marginal fill price for this delta, not the cumulative
+                # average the broker reports.  The broker gives cumulative avg_price
+                # across all fills so far; we derive the price for *this* fill only:
+                #   marginal = (avg_price * filled - prev_avg * prev_filled) / delta
+                prev_avg = prev[1]  # previous cumulative avg_price (may be None)
+                marginal_price = avg_price  # fallback: use cumulative if we can't compute
+                if avg_price is not None and delta > 0:
+                    if prev_avg is not None and prev_filled > 0:
+                        try:
+                            marginal_price = (avg_price * filled - prev_avg * prev_filled) / delta
+                        except (ZeroDivisionError, TypeError):
+                            marginal_price = avg_price
+                    # else: first fill — cumulative == marginal, no adjustment needed
+
                 event = self._order_to_event(order, delta, fill_type)
-                event.avg_price = avg_price
+                event.avg_price = marginal_price
                 try:
                     await self.fill_handler.on_fill_event(event)
                     track_fill_event("fill" if fill_type == FillType.FILL else "partial_fill")

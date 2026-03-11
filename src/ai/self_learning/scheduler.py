@@ -18,8 +18,6 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 # IST offset: UTC + 5:30

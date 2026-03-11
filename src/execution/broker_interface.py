@@ -151,6 +151,24 @@ class BrokerInterface(ABC):
         """``True`` when the gateway is running in paper / simulation mode."""
         ...
 
+    # -- health check -------------------------------------------------------
+
+    async def health_check(self) -> dict:
+        """Verify gateway connectivity and return health status.
+
+        Returns a dict with at minimum:
+            ``{"healthy": bool, "broker": str, "detail": str}``
+
+        Subclasses should override to perform a real connectivity check.
+        The default implementation delegates to :meth:`is_connected`.
+        """
+        connected = self.is_connected()
+        return {
+            "healthy": connected,
+            "broker": self.__class__.__name__,
+            "detail": "ok" if connected else "not_connected",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Factory

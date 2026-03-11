@@ -5,7 +5,7 @@ import logging
 from typing import Callable, List, Optional
 
 from .drift import ConceptDriftDetector, DataDistributionMonitor
-from .retrain import RetrainPipeline, RetrainConfig
+from .retrain import RetrainPipeline
 
 logger = logging.getLogger(__name__)
 

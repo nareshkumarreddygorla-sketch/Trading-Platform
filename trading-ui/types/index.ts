@@ -45,17 +45,6 @@ export interface Position {
   strategy_id?: string;
 }
 
-export interface RiskState {
-  max_daily_loss_pct: number;
-  current_daily_loss_pct: number;
-  var_pct?: number;
-  sector_concentration_pct?: number;
-  per_symbol_exposure_pct?: number;
-  circuit_breaker_open: boolean;
-  volatility_multiplier?: number;
-  consecutive_losses: number;
-}
-
 export interface BrokerStatus {
   connected: boolean;
   latency_ms?: number;
@@ -63,23 +52,19 @@ export interface BrokerStatus {
   status: "connected" | "disconnected" | "degraded";
 }
 
-export interface AuditEvent {
-  id: string;
-  ts: string;
-  event_type: string;
-  actor: string;
-  payload?: Record<string, unknown>;
-}
-
-export interface ApiError {
-  detail: string;
-  status?: number;
-}
-
 // ── WebSocket Event Types (shared constants) ──
 
 export const WsEventType = {
   CONNECTED: "connected",
+  // Real-time event types (new structured events via broadcast_event)
+  SNAPSHOT: "snapshot",
+  POSITION_UPDATE: "position_update",
+  PNL_UPDATE: "pnl_update",
+  ORDER_SUBMITTED: "order_submitted",
+  RISK_ALERT: "risk_alert",
+  CIRCUIT_STATE: "circuit_state",
+  MARKET_FEED_STATUS: "market_feed_status",
+  // Legacy event types (still supported)
   ORDER_CREATED: "order_created",
   ORDER_FILLED: "order_filled",
   POSITION_UPDATED: "position_updated",
@@ -88,18 +73,18 @@ export const WsEventType = {
   CIRCUIT_OPEN: "circuit_open",
   KILL_SWITCH_ARMED: "kill_switch_armed",
   MARKET_STATUS_UPDATED: "market_status_updated",
+  // Agent events
   AGENT_RESEARCH_UPDATE: "agent_research_update",
   AGENT_RISK_ALERT: "agent_risk_alert",
   AGENT_EXPOSURE_ADJUSTED: "agent_exposure_adjusted",
   AGENT_REGIME_CHANGE: "agent_regime_change",
+  // Signal & trade lifecycle
   SIGNAL_GENERATED: "signal_generated",
   TRADE_CLOSED: "trade_closed",
   PORTFOLIO_MARK_TO_MARKET: "portfolio_mark_to_market",
   STRATEGY_DISABLED: "strategy_disabled",
   PONG: "pong",
 } as const;
-
-export type WsEventTypeValue = (typeof WsEventType)[keyof typeof WsEventType];
 
 // ── Agent & Signal Types ──
 
@@ -133,8 +118,17 @@ export interface MarketFeedStatus {
   last_tick_ts: string | null;
 }
 
-// ── Order Enums (matching backend) ──
+/** Payload from the periodic `snapshot` WebSocket event (every 5s). */
+export interface SnapshotData {
+  equity: number;
+  daily_pnl: number;
+  open_positions_count: number;
+  circuit_open: boolean;
+  kill_switch_armed: boolean;
+  market_feed_healthy: boolean;
+  last_tick_ts: number | null;
+  open_trades: number;
+  tick_count: number;
+  safe_mode: boolean;
+}
 
-export type OrderSide = "BUY" | "SELL";
-export type OrderTypeValue = "LIMIT" | "MARKET" | "IOC" | "FOK";
-export type ExchangeValue = "NSE" | "BSE" | "NYSE" | "NASDAQ" | "LSE" | "FX";

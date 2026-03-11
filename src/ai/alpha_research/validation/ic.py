@@ -2,7 +2,7 @@
 Phase B: Information Coefficient and variants.
 IC (rank), IC stability across time, IC stability across regimes, turnover-adjusted IC.
 """
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 

@@ -9,7 +9,7 @@ from typing import Deque
 
 @dataclass
 class RateLimitConfig:
-    max_orders_per_minute: int = 60
+    max_orders_per_minute: int = 20  # Production: prevent broker flood (was 60)
     window_seconds: float = 60.0
 
 

@@ -8,8 +8,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
-from src.core.events import Exchange, Position, SignalSide
-
 logger = logging.getLogger(__name__)
 
 

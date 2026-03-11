@@ -4,7 +4,7 @@ OpportunityScore = calibrated_prob + E[r]_adj + meta_conf - vol_pen - spread_pen
 Rank descending; select top N with score threshold, liquidity, spread, min risk-adj return;
 sector cap, correlation cluster cap, max concurrent signals.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np

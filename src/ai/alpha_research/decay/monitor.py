@@ -3,7 +3,7 @@ Phase G: Decay monitoring.
 Rolling IC, rolling Sharpe, half-life estimate; drift metrics;
 gradual weight reduction on decay; abrupt disable only if catastrophic.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Deque, Dict, List, Optional
 
 import collections

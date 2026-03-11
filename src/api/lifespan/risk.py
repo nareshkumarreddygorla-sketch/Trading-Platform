@@ -36,12 +36,8 @@ async def init_risk(app: FastAPI) -> None:
     except Exception as e:
         logger.warning("SectorClassifier not initialized: %s", e)
 
-    try:
-        from src.risk_engine.gap_risk import GapRiskManager
-        app.state.gap_risk_manager = GapRiskManager()
-        logger.info("GapRiskManager initialized")
-    except Exception as e:
-        logger.warning("GapRiskManager not initialized: %s", e)
+    # NOTE: GapRiskManager is initialized later at lines 131-137 (Sprint 7.3).
+    # Do not duplicate initialization here.
 
     try:
         from src.risk_engine.tail_risk import TailRiskProtector
@@ -104,6 +100,7 @@ async def init_risk(app: FastAPI) -> None:
     try:
         from src.compliance.audit_trail import SEBIAuditTrail
         app.state.sebi_audit = SEBIAuditTrail()
+        app.state.audit_trail = app.state.sebi_audit  # Alias for audit router
         logger.info("SEBI audit trail initialized (append-only)")
     except Exception as e:
         logger.debug("SEBI audit trail not initialized: %s", e)
@@ -126,6 +123,23 @@ async def init_risk(app: FastAPI) -> None:
         logger.info("ADVCache initialized")
     except Exception as e:
         logger.debug("ADVCache not initialized: %s", e)
+
+    # ── Stress Testing Engine (Sprint 10.12) ──
+    try:
+        from src.risk_engine.stress_testing import StressTestEngine
+        _sector_clf = getattr(app.state, "sector_classifier", None)
+        app.state.stress_test_engine = StressTestEngine(sector_classifier=_sector_clf)
+        logger.info("StressTestEngine initialized (10 scenarios: 4 historical + 6 hypothetical)")
+    except Exception as e:
+        logger.debug("StressTestEngine not initialized: %s", e)
+
+    # ── Data Archival Manager (Sprint 10.13) ──
+    try:
+        from src.persistence.archival import DataArchivalManager
+        app.state.archival_manager = DataArchivalManager()
+        logger.info("DataArchivalManager initialized (SEBI 7yr audit retention)")
+    except Exception as e:
+        logger.debug("DataArchivalManager not initialized: %s", e)
 
     # ── Gap Risk Manager (Sprint 7.3) ──
     try:

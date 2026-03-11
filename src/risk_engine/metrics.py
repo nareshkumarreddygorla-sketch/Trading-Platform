@@ -3,7 +3,7 @@ Risk metrics: VaR, CVaR, max drawdown, Sharpe, Kelly, Optimal f.
 Used for portfolio risk and position sizing.
 """
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 
@@ -30,17 +30,12 @@ class RiskMetrics:
     optimal_f: float  # optional
 
 
-def returns_from_prices(prices: List[float]) -> np.ndarray:
-    p = np.array(prices, dtype=float)
-    return np.diff(p) / (p[:-1] + 1e-12)
-
-
 def var_parametric(returns: np.ndarray, confidence: float = 0.95) -> float:
     """Parametric (normal) VaR."""
     if len(returns) < 2:
         return 0.0
     mu = float(np.mean(returns))
-    sigma = float(np.std(returns))
+    sigma = float(np.std(returns, ddof=1))
     if sigma < 1e-12:
         return 0.0
     if _HAS_SCIPY:
@@ -55,7 +50,7 @@ def cvar_parametric(returns: np.ndarray, confidence: float = 0.95) -> float:
     if len(returns) < 2:
         return 0.0
     mu = float(np.mean(returns))
-    sigma = float(np.std(returns))
+    sigma = float(np.std(returns, ddof=1))
     if sigma < 1e-12:
         return 0.0
     if _HAS_SCIPY:
@@ -91,9 +86,9 @@ def max_drawdown(prices: np.ndarray) -> tuple[float, int]:
 
 def sharpe_annual(returns: np.ndarray, periods_per_year: int = 252) -> float:
     """Annualized Sharpe (risk-free = 0)."""
-    if len(returns) < 2 or np.std(returns) < 1e-12:
+    if len(returns) < 2 or np.std(returns, ddof=1) < 1e-12:
         return 0.0
-    return float(np.sqrt(periods_per_year) * np.mean(returns) / np.std(returns))
+    return float(np.sqrt(periods_per_year) * np.mean(returns) / np.std(returns, ddof=1))
 
 
 def kelly_fraction(returns: np.ndarray, fraction: float = 0.25) -> float:

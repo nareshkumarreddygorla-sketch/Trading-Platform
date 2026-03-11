@@ -1,8 +1,9 @@
 """Normalize exchange-specific payloads to core Bar/Tick. Time-sync to UTC."""
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from src.core.events import Bar, Exchange, OrderBookSnapshot, Tick
+from src.market_data.timestamp import normalize_ts
 
 
 class Normalizer:
@@ -10,11 +11,9 @@ class Normalizer:
 
     @staticmethod
     def to_utc(ts: Any) -> datetime:
-        if isinstance(ts, datetime):
-            return ts.astimezone(timezone.utc) if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-        if isinstance(ts, (int, float)):
-            return datetime.fromtimestamp(float(ts), tz=timezone.utc)
-        return datetime.now(timezone.utc)
+        """Convert any timestamp to UTC.  Delegates to the canonical
+        :func:`~src.market_data.timestamp.normalize_ts` implementation."""
+        return normalize_ts(ts)
 
     @classmethod
     def to_tick(cls, raw: dict[str, Any], exchange: Exchange) -> Tick:
