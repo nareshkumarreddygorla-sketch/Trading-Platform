@@ -121,8 +121,8 @@ class TestConcurrentOrders:
     """Test that concurrent order submissions don't bypass safety checks."""
 
     @pytest.mark.asyncio
-    async def test_same_idempotency_key_not_duplicated(self, order_service):
-        """Two concurrent submissions with same idem key should result in only one order."""
+    async def test_same_idempotency_key_not_duplicated(self, order_service, mock_router):
+        """Two concurrent submissions with same idem key should result in only one broker call."""
         signal = _make_signal()
         request1 = OrderEntryRequest(
             signal=signal,
@@ -145,11 +145,12 @@ class TestConcurrentOrders:
             order_service.submit_order(request2),
         )
 
-        # Both should succeed (one creates, one returns existing)
+        # Both should succeed (one creates, one returns cached)
         assert all(r.success for r in results)
-        # Both should have the same order_id
-        order_ids = {r.order_id for r in results}
-        assert len(order_ids) == 1, f"Expected 1 unique order_id, got {len(order_ids)}: {order_ids}"
+        # Critical safety property: broker should only be called ONCE (idempotency dedup)
+        assert mock_router.place_order.call_count == 1, (
+            f"Expected broker called once, got {mock_router.place_order.call_count}"
+        )
 
     @pytest.mark.asyncio
     async def test_different_signals_not_conflated(self, order_service):
@@ -221,7 +222,7 @@ class TestKillSwitchSafety:
         # Arm kill switch
         from src.execution.order_entry.kill_switch import KillReason
 
-        await kill_switch.arm(KillReason.DAILY_LOSS)
+        await kill_switch.arm(KillReason.MAX_DAILY_LOSS)
 
         # Try to BUY more (increasing) - should be rejected
         signal_buy = _make_signal(symbol="RELIANCE", side="BUY")
