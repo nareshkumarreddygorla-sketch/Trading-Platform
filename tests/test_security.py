@@ -16,6 +16,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.api.app import create_app
+from src.risk_engine.manager import RiskManager
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -37,7 +38,9 @@ def _set_jwt_env(monkeypatch):
 @pytest.fixture
 def app():
     """Fresh FastAPI application per test (middleware state is isolated)."""
-    return create_app()
+    _app = create_app()
+    _app.state.risk_manager = RiskManager(equity=1_000_000, load_persisted_state=False)
+    return _app
 
 
 @pytest.fixture

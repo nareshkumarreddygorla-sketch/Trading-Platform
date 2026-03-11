@@ -24,6 +24,7 @@ os.environ["EXEC_PAPER"] = "true"
 os.environ["ENV"] = "development"
 
 from src.api.app import create_app  # noqa: E402
+from src.risk_engine.manager import RiskManager  # noqa: E402
 
 API = "/api/v1"
 
@@ -36,7 +37,10 @@ API = "/api/v1"
 @pytest.fixture
 def app():
     """Create a fresh FastAPI app for each test function."""
-    return create_app()
+    _app = create_app()
+    # Inject RiskManager so /risk/* endpoints don't return 503 in CI.
+    _app.state.risk_manager = RiskManager(equity=1_000_000, load_persisted_state=False)
+    return _app
 
 
 @pytest.fixture
