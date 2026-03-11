@@ -3,14 +3,13 @@ NSE market universe: fetch NIFTY 500 constituents for full-market scanning.
 Caches to disk (24h TTL). Provides yfinance-compatible tickers (.NS suffix).
 Bundled fallback of top 200 liquid NSE stocks if network fetch fails.
 """
+
 import csv
 import io
 import json
 import logging
-import os
 import time
 from pathlib import Path
-from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -26,46 +25,194 @@ NIFTY500_URL = "https://en.wikipedia.org/wiki/NIFTY_500"
 # Bundled fallback: top 200 liquid NSE stocks (always available offline)
 # ---------------------------------------------------------------------------
 FALLBACK_SYMBOLS = [
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR",
-    "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "AXISBANK",
-    "BAJFINANCE", "ASIANPAINT", "MARUTI", "HCLTECH", "TITAN",
-    "SUNPHARMA", "WIPRO", "ULTRACEMCO", "NESTLEIND", "BAJAJFINSV",
-    "TATAMOTORS", "TECHM", "NTPC", "POWERGRID", "M&M", "ONGC",
-    "JSWSTEEL", "TATASTEEL", "ADANIENT", "ADANIPORTS", "COALINDIA",
-    "GRASIM", "DIVISLAB", "DRREDDY", "CIPLA", "HDFCLIFE", "SBILIFE",
-    "BPCL", "EICHERMOT", "HEROMOTOCO", "APOLLOHOSP", "BAJAJ-AUTO",
-    "BRITANNIA", "INDUSINDBK", "TATACONSUM", "UPL", "DABUR",
-    "GODREJCP", "HAVELLS", "PIDILITIND", "MARICO", "BERGEPAINT",
-    "SIEMENS", "AMBUJACEM", "ACC", "SHREECEM", "MCDOWELL-N",
-    "BIOCON", "LUPIN", "TORNTPHARM", "AUROPHARMA", "ALKEM",
-    "IPCALAB", "MINDTREE", "MPHASIS", "LTTS", "PERSISTENT",
-    "COFORGE", "NAUKRI", "IRCTC", "JUBLFOOD", "TRENT",
-    "PIIND", "CHOLAFIN", "MUTHOOTFIN", "BAJAJHLDNG", "VOLTAS",
-    "TVSMOTOR", "ASHOKLEY", "BALKRISIND", "MRF", "MOTHERSON",
-    "PAGEIND", "COLPAL", "HINDPETRO", "IOC", "GAIL",
-    "PETRONET", "IGL", "MGL", "CONCOR", "DLF",
-    "OBEROIRLTY", "GODREJPROP", "PRESTIGE", "PHOENIXLTD", "SUNTV",
-    "ZEEL", "PVR", "FEDERALBNK", "BANDHANBNK", "IDFCFIRSTB",
-    "RBLBANK", "CUB", "MANAPPURAM", "L&TFH", "PEL",
-    "CANFINHOME", "RECLTD", "PFC", "IRFC", "NHPC",
-    "SJVN", "CESC", "TATAPOWER", "ADANIGREEN", "ADANITRANS",
-    "TORNTPOWER", "JSL", "JINDALSTEL", "SAIL", "NMDC",
-    "VEDL", "NATIONALUM", "HINDALCO", "HINDCOPPER", "APLAPOLLO",
-    "RATNAMANI", "KPITTECH", "HAPPSTMNDS", "ZOMATO", "NYKAA",
-    "PAYTM", "POLICYBZR", "DELHIVERY", "STARHEALTH", "LICI",
-    "SBICARD", "ICICIPRULI", "HDFCAMC", "ICICIGI", "NIACL",
-    "INDUSTOWER", "BHARTIHEXA", "IDEA", "MFSL", "MAXHEALTH",
-    "FORTIS", "METROPOLIS", "LALPATHLAB", "ABCAPITAL", "ATUL",
-    "DEEPAKNTR", "AARTI", "CLEAN", "SRF", "FLUOROCHEM",
-    "NAVINFLUOR", "SUMICHEM", "UBL", "RAJESHEXPO", "VBL",
-    "CROMPTON", "WHIRLPOOL", "BLUESTARCO", "KAJARIACER", "CENTURYTEX",
-    "ABFRL", "RAYMOND", "RELAXO", "BATAINDIA", "CAMPUS",
-    "DIXON", "AMBER", "POLYCAB", "KEI", "CUMMINSIND",
-    "THERMAX", "BEL", "HAL", "BDL", "GRINDWELL",
+    "RELIANCE",
+    "TCS",
+    "HDFCBANK",
+    "INFY",
+    "ICICIBANK",
+    "HINDUNILVR",
+    "SBIN",
+    "BHARTIARTL",
+    "ITC",
+    "KOTAKBANK",
+    "LT",
+    "AXISBANK",
+    "BAJFINANCE",
+    "ASIANPAINT",
+    "MARUTI",
+    "HCLTECH",
+    "TITAN",
+    "SUNPHARMA",
+    "WIPRO",
+    "ULTRACEMCO",
+    "NESTLEIND",
+    "BAJAJFINSV",
+    "TATAMOTORS",
+    "TECHM",
+    "NTPC",
+    "POWERGRID",
+    "M&M",
+    "ONGC",
+    "JSWSTEEL",
+    "TATASTEEL",
+    "ADANIENT",
+    "ADANIPORTS",
+    "COALINDIA",
+    "GRASIM",
+    "DIVISLAB",
+    "DRREDDY",
+    "CIPLA",
+    "HDFCLIFE",
+    "SBILIFE",
+    "BPCL",
+    "EICHERMOT",
+    "HEROMOTOCO",
+    "APOLLOHOSP",
+    "BAJAJ-AUTO",
+    "BRITANNIA",
+    "INDUSINDBK",
+    "TATACONSUM",
+    "UPL",
+    "DABUR",
+    "GODREJCP",
+    "HAVELLS",
+    "PIDILITIND",
+    "MARICO",
+    "BERGEPAINT",
+    "SIEMENS",
+    "AMBUJACEM",
+    "ACC",
+    "SHREECEM",
+    "MCDOWELL-N",
+    "BIOCON",
+    "LUPIN",
+    "TORNTPHARM",
+    "AUROPHARMA",
+    "ALKEM",
+    "IPCALAB",
+    "MINDTREE",
+    "MPHASIS",
+    "LTTS",
+    "PERSISTENT",
+    "COFORGE",
+    "NAUKRI",
+    "IRCTC",
+    "JUBLFOOD",
+    "TRENT",
+    "PIIND",
+    "CHOLAFIN",
+    "MUTHOOTFIN",
+    "BAJAJHLDNG",
+    "VOLTAS",
+    "TVSMOTOR",
+    "ASHOKLEY",
+    "BALKRISIND",
+    "MRF",
+    "MOTHERSON",
+    "PAGEIND",
+    "COLPAL",
+    "HINDPETRO",
+    "IOC",
+    "GAIL",
+    "PETRONET",
+    "IGL",
+    "MGL",
+    "CONCOR",
+    "DLF",
+    "OBEROIRLTY",
+    "GODREJPROP",
+    "PRESTIGE",
+    "PHOENIXLTD",
+    "SUNTV",
+    "ZEEL",
+    "PVR",
+    "FEDERALBNK",
+    "BANDHANBNK",
+    "IDFCFIRSTB",
+    "RBLBANK",
+    "CUB",
+    "MANAPPURAM",
+    "L&TFH",
+    "PEL",
+    "CANFINHOME",
+    "RECLTD",
+    "PFC",
+    "IRFC",
+    "NHPC",
+    "SJVN",
+    "CESC",
+    "TATAPOWER",
+    "ADANIGREEN",
+    "ADANITRANS",
+    "TORNTPOWER",
+    "JSL",
+    "JINDALSTEL",
+    "SAIL",
+    "NMDC",
+    "VEDL",
+    "NATIONALUM",
+    "HINDALCO",
+    "HINDCOPPER",
+    "APLAPOLLO",
+    "RATNAMANI",
+    "KPITTECH",
+    "HAPPSTMNDS",
+    "ZOMATO",
+    "NYKAA",
+    "PAYTM",
+    "POLICYBZR",
+    "DELHIVERY",
+    "STARHEALTH",
+    "LICI",
+    "SBICARD",
+    "ICICIPRULI",
+    "HDFCAMC",
+    "ICICIGI",
+    "NIACL",
+    "INDUSTOWER",
+    "BHARTIHEXA",
+    "IDEA",
+    "MFSL",
+    "MAXHEALTH",
+    "FORTIS",
+    "METROPOLIS",
+    "LALPATHLAB",
+    "ABCAPITAL",
+    "ATUL",
+    "DEEPAKNTR",
+    "AARTI",
+    "CLEAN",
+    "SRF",
+    "FLUOROCHEM",
+    "NAVINFLUOR",
+    "SUMICHEM",
+    "UBL",
+    "RAJESHEXPO",
+    "VBL",
+    "CROMPTON",
+    "WHIRLPOOL",
+    "BLUESTARCO",
+    "KAJARIACER",
+    "CENTURYTEX",
+    "ABFRL",
+    "RAYMOND",
+    "RELAXO",
+    "BATAINDIA",
+    "CAMPUS",
+    "DIXON",
+    "AMBER",
+    "POLYCAB",
+    "KEI",
+    "CUMMINSIND",
+    "THERMAX",
+    "BEL",
+    "HAL",
+    "BDL",
+    "GRINDWELL",
 ]
 
 
-def _fetch_nifty500_from_web() -> List[str]:
+def _fetch_nifty500_from_web() -> list[str]:
     """Try to scrape NIFTY 500 symbols from Wikipedia."""
     try:
         import requests
@@ -96,6 +243,7 @@ def _fetch_nifty500_from_web() -> List[str]:
     # Alternative: fetch from NSE India indices CSV (public endpoint)
     try:
         import requests
+
         url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, timeout=15, headers=headers)
@@ -114,7 +262,7 @@ def _fetch_nifty500_from_web() -> List[str]:
     return []
 
 
-def _load_cache() -> List[str]:
+def _load_cache() -> list[str]:
     """Load cached universe if fresh enough."""
     try:
         if CACHE_FILE.exists():
@@ -126,7 +274,7 @@ def _load_cache() -> List[str]:
     return []
 
 
-def _save_cache(symbols: List[str]) -> None:
+def _save_cache(symbols: list[str]) -> None:
     """Persist universe to disk."""
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -135,7 +283,7 @@ def _save_cache(symbols: List[str]) -> None:
         logger.warning("Cache save failed: %s", e)
 
 
-def get_universe(*, yfinance_suffix: bool = True, force_refresh: bool = False) -> List[str]:
+def get_universe(*, yfinance_suffix: bool = True, force_refresh: bool = False) -> list[str]:
     """
     Return the full NSE trading universe (NIFTY 500).
 
@@ -170,6 +318,6 @@ def get_universe(*, yfinance_suffix: bool = True, force_refresh: bool = False) -
     return unique
 
 
-def get_universe_raw() -> List[str]:
+def get_universe_raw() -> list[str]:
     """Return raw symbols without .NS suffix."""
     return get_universe(yfinance_suffix=False)

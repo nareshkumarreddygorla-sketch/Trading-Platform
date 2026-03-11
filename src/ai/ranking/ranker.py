@@ -4,8 +4,8 @@ OpportunityScore = calibrated_prob + E[r]_adj + meta_conf - vol_pen - spread_pen
 Rank descending; select top N with score threshold, liquidity, spread, min risk-adj return;
 sector cap, correlation cluster cap, max concurrent signals.
 """
+
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -76,7 +76,7 @@ class OpportunityRanker:
     with filters and sector/correlation caps.
     """
 
-    def __init__(self, config: Optional[OpportunityScoreConfig] = None):
+    def __init__(self, config: OpportunityScoreConfig | None = None):
         self.config = config or OpportunityScoreConfig()
 
     def score_one(
@@ -115,10 +115,10 @@ class OpportunityRanker:
 
     def rank(
         self,
-        symbol_data: List[Dict],
-        current_sector_exposure: Optional[Dict[str, float]] = None,
-        current_cluster_exposure: Optional[Dict[int, float]] = None,
-    ) -> List[RankedSymbol]:
+        symbol_data: list[dict],
+        current_sector_exposure: dict[str, float] | None = None,
+        current_cluster_exposure: dict[int, float] | None = None,
+    ) -> list[RankedSymbol]:
         """
         symbol_data: list of dicts with keys symbol, calibrated_prob_up, expected_return,
           volatility, meta_confidence, regime_weight, spread_bps, adv_ratio, microstructure_noise,
@@ -128,7 +128,7 @@ class OpportunityRanker:
         cfg = self.config
         current_sector_exposure = current_sector_exposure or {}
         current_cluster_exposure = current_cluster_exposure or {}
-        scored: List[RankedSymbol] = []
+        scored: list[RankedSymbol] = []
         for d in symbol_data:
             score = self.score_one(
                 symbol=d.get("symbol", ""),
@@ -171,9 +171,9 @@ class OpportunityRanker:
             scored.append(rs)
         scored.sort(key=lambda x: x.score, reverse=True)
         # Apply caps: max concurrent, sector, cluster
-        out: List[RankedSymbol] = []
-        sector_used: Dict[str, float] = dict(current_sector_exposure)
-        cluster_used: Dict[int, float] = dict(current_cluster_exposure)
+        out: list[RankedSymbol] = []
+        sector_used: dict[str, float] = dict(current_sector_exposure)
+        cluster_used: dict[int, float] = dict(current_cluster_exposure)
         for rs in scored:
             if not rs.passed_filters:
                 continue

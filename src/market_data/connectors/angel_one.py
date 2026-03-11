@@ -3,13 +3,15 @@ Angel One SmartAPI connector for Indian markets (NSE/BSE).
 WebSocket for live ticks; REST for historical and order placement.
 See: https://smartapi.angelone.in/
 """
+
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, List
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta, timezone
 
 from src.core.events import Bar, Exchange, Tick
+
 from .base import BaseMarketDataConnector
 
 logger = logging.getLogger(__name__)
@@ -21,22 +23,22 @@ _IST = timezone(timedelta(hours=5, minutes=30))
 def _normalize_tick_ts(ts) -> datetime:
     """Normalize a raw timestamp value to a timezone-aware UTC datetime."""
     if ts is None:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     if isinstance(ts, datetime):
         if ts.tzinfo is None:
-            return ts.replace(tzinfo=_IST).astimezone(timezone.utc)
+            return ts.replace(tzinfo=_IST).astimezone(UTC)
         return ts
     if isinstance(ts, (int, float)):
-        return datetime.fromtimestamp(float(ts), tz=timezone.utc)
+        return datetime.fromtimestamp(float(ts), tz=UTC)
     if isinstance(ts, str):
         try:
             dt = datetime.fromisoformat(ts)
             if dt.tzinfo is None:
-                return dt.replace(tzinfo=_IST).astimezone(timezone.utc)
+                return dt.replace(tzinfo=_IST).astimezone(UTC)
             return dt
         except (ValueError, TypeError):
             pass
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class AngelOneConnector(BaseMarketDataConnector):
@@ -47,7 +49,9 @@ class AngelOneConnector(BaseMarketDataConnector):
 
     exchange = Exchange.NSE
 
-    def __init__(self, api_key: str, api_secret: str, token: str, feed: str = "wss://smartapis.angelone.in/smart-stream"):
+    def __init__(
+        self, api_key: str, api_secret: str, token: str, feed: str = "wss://smartapis.angelone.in/smart-stream"
+    ):
         self.api_key = api_key
         self.api_secret = api_secret
         self.token = token
@@ -57,7 +61,7 @@ class AngelOneConnector(BaseMarketDataConnector):
         self._connected = False
         self._tick_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
         self._bar_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
-        self._symbols: List[str] = []
+        self._symbols: list[str] = []
         self._interval: str = "1m"
         self._loop: asyncio.AbstractEventLoop = None
 
@@ -72,9 +76,7 @@ class AngelOneConnector(BaseMarketDataConnector):
                     "ts": message.get("exchange_timestamp", message.get("ts")),
                 }
                 if self._loop and not self._loop.is_closed():
-                    asyncio.run_coroutine_threadsafe(
-                        self._tick_queue.put(tick_data), self._loop
-                    )
+                    asyncio.run_coroutine_threadsafe(self._tick_queue.put(tick_data), self._loop)
         except Exception as e:
             logger.warning("AngelOne tick parse error: %s", e)
 
@@ -111,9 +113,8 @@ class AngelOneConnector(BaseMarketDataConnector):
 
             # Connect in a background thread (SmartAPI SDK uses synchronous WebSocket)
             import threading
-            self._ws_thread = threading.Thread(
-                target=self._ws.connect, daemon=True, name="angel-one-ws"
-            )
+
+            self._ws_thread = threading.Thread(target=self._ws.connect, daemon=True, name="angel-one-ws")
             self._ws_thread.start()
             logger.info("AngelOne WebSocket connection initiated (background thread)")
 
@@ -157,6 +158,7 @@ class AngelOneConnector(BaseMarketDataConnector):
                 stm = None
                 try:
                     from src.market_data.symbol_token_map import get_symbol_token_map
+
                     stm = get_symbol_token_map()
                 except Exception:
                     pass
@@ -174,7 +176,8 @@ class AngelOneConnector(BaseMarketDataConnector):
                     else:
                         # Fallback: pass raw symbol (will likely fail on SmartAPI)
                         logger.warning(
-                            "No numeric token for %s — passing raw symbol to SmartAPI", clean,
+                            "No numeric token for %s — passing raw symbol to SmartAPI",
+                            clean,
                         )
                         token_list.append([1, clean])
 
@@ -202,11 +205,12 @@ class AngelOneConnector(BaseMarketDataConnector):
                         size=float(raw.get("volume", 0)),
                         ts=_normalize_tick_ts(raw.get("ts")),
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 except Exception as e:
                     logger.exception(e)
                     break
+
         return _gen()
 
     def stream_bars(self) -> AsyncIterator[Bar]:
@@ -226,9 +230,10 @@ class AngelOneConnector(BaseMarketDataConnector):
                         ts=raw.get("ts"),
                         source="angel_one",
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 except Exception as e:
                     logger.exception(e)
                     break
+
         return _gen()

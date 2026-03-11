@@ -3,8 +3,8 @@ Phase 7: Portfolio heat & drawdown control.
 ExposureScale = max(0.2, 1 - current_drawdown_pct / dd_limit_pct);
 heat limit; trade pause threshold; vol spike detection.
 """
+
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
 
@@ -25,12 +25,12 @@ class PortfolioHeatController:
     exposure scale for position sizing.
     """
 
-    def __init__(self, config: Optional[HeatConfig] = None):
+    def __init__(self, config: HeatConfig | None = None):
         self.config = config or HeatConfig()
         self._peak_equity: float = 0.0
         self._current_equity: float = 0.0
-        self._position_values: List[float] = []
-        self._vol_history: List[float] = []
+        self._position_values: list[float] = []
+        self._vol_history: list[float] = []
         self._paused: bool = False
 
     def update_equity(self, equity: float) -> None:
@@ -38,7 +38,7 @@ class PortfolioHeatController:
         if equity > self._peak_equity:
             self._peak_equity = equity
 
-    def update_positions(self, position_values: List[float]) -> None:
+    def update_positions(self, position_values: list[float]) -> None:
         """position_values: list of absolute position notional (long or short)."""
         self._position_values = list(position_values)
 

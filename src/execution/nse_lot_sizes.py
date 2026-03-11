@@ -8,11 +8,11 @@ Validates order quantities against NSE F&O lot sizes.
 
 Thread-safe: uses a threading.Lock for hot-reload of lot size data.
 """
+
 import json
 import logging
 import threading
 from pathlib import Path
-from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,11 @@ class NSELotSizeValidator:
         rounded = validator.round_to_lot_size("RELIANCE", 300) # 250
     """
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         self._lock = threading.Lock()
         self._config_path = Path(config_path) if config_path else _DEFAULT_CONFIG_PATH
-        self._index_lots: Dict[str, int] = {}
-        self._stock_lots: Dict[str, int] = {}
+        self._index_lots: dict[str, int] = {}
+        self._stock_lots: dict[str, int] = {}
         self._equity_default: int = 1
         self._loaded = False
         self._load()
@@ -53,18 +53,14 @@ class NSELotSizeValidator:
                     self._loaded = True
                     return
 
-                with open(self._config_path, "r") as f:
+                with open(self._config_path) as f:
                     data = json.load(f)
 
                 self._index_lots = {
-                    k.upper(): int(v)
-                    for k, v in data.get("index_options", {}).items()
-                    if not k.startswith("_")
+                    k.upper(): int(v) for k, v in data.get("index_options", {}).items() if not k.startswith("_")
                 }
                 self._stock_lots = {
-                    k.upper(): int(v)
-                    for k, v in data.get("stock_futures", {}).items()
-                    if not k.startswith("_")
+                    k.upper(): int(v) for k, v in data.get("stock_futures", {}).items() if not k.startswith("_")
                 }
                 self._equity_default = int(data.get("equity_default_lot_size", 1))
                 self._loaded = True
@@ -178,9 +174,7 @@ class NSELotSizeValidator:
         lot = self.get_lot_size(symbol, segment)
         return (quantity // lot) * lot
 
-    def validate_and_adjust(
-        self, symbol: str, quantity: int, segment: str = "EQ"
-    ) -> Tuple[bool, int, str]:
+    def validate_and_adjust(self, symbol: str, quantity: int, segment: str = "EQ") -> tuple[bool, int, str]:
         """
         Validate quantity and return adjusted quantity if invalid.
 
@@ -205,13 +199,13 @@ class NSELotSizeValidator:
         )
 
     @property
-    def index_symbols(self) -> Dict[str, int]:
+    def index_symbols(self) -> dict[str, int]:
         """Return a copy of loaded index lot sizes."""
         with self._lock:
             return dict(self._index_lots)
 
     @property
-    def stock_symbols(self) -> Dict[str, int]:
+    def stock_symbols(self) -> dict[str, int]:
         """Return a copy of loaded stock F&O lot sizes."""
         with self._lock:
             return dict(self._stock_lots)

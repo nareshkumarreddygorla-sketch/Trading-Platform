@@ -4,14 +4,13 @@ Distributes child orders according to historical intraday volume profile.
 
 Use case: Orders that are 5-10% of ADV. Better than TWAP for liquid stocks.
 """
+
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Callable, Coroutine, Dict, List, Optional
-
-import numpy as np
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -37,26 +36,28 @@ DEFAULT_NSE_VOLUME_PROFILE = {
 @dataclass
 class VWAPConfig:
     """Configuration for VWAP execution."""
+
     total_quantity: int
     symbol: str
     side: str
     exchange: str = "NSE"
     start_time: str = "09:15"  # HH:MM IST
-    end_time: str = "15:15"    # HH:MM IST
+    end_time: str = "15:15"  # HH:MM IST
     limit_offset_bps: float = 5.0
     max_participation_pct: float = 10.0
-    volume_profile: Optional[Dict[str, float]] = None
+    volume_profile: dict[str, float] | None = None
 
 
 @dataclass
 class VWAPSlice:
     """A single child order in the VWAP schedule."""
+
     slice_id: str
     bucket_time: str
     quantity: int
     volume_weight: float
     status: str = "PENDING"
-    order_id: Optional[str] = None
+    order_id: str | None = None
     fill_price: float = 0.0
     fill_qty: int = 0
 
@@ -64,15 +65,16 @@ class VWAPSlice:
 @dataclass
 class VWAPExecution:
     """Tracks the overall VWAP execution."""
+
     exec_id: str
     config: VWAPConfig
-    slices: List[VWAPSlice] = field(default_factory=list)
+    slices: list[VWAPSlice] = field(default_factory=list)
     status: str = "CREATED"
     total_filled: int = 0
     total_submitted: int = 0  # Qty submitted (fills tracked via FillListener)
     achieved_vwap: float = 0.0
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
 
 
 class VWAPAlgorithm:
@@ -86,10 +88,10 @@ class VWAPAlgorithm:
 
     def __init__(self, submit_order_fn: Callable[..., Coroutine]):
         self._submit = submit_order_fn
-        self._active: Dict[str, VWAPExecution] = {}
-        self._custom_profiles: Dict[str, Dict[str, float]] = {}
+        self._active: dict[str, VWAPExecution] = {}
+        self._custom_profiles: dict[str, dict[str, float]] = {}
 
-    def set_volume_profile(self, symbol: str, profile: Dict[str, float]) -> None:
+    def set_volume_profile(self, symbol: str, profile: dict[str, float]) -> None:
         """Set a custom intraday volume profile for a symbol."""
         # Normalize to sum to 1.0
         total = sum(profile.values())
@@ -101,9 +103,7 @@ class VWAPAlgorithm:
         exec_id = f"vwap_{uuid.uuid4().hex[:12]}"
 
         # Get volume profile
-        profile = config.volume_profile or self._custom_profiles.get(
-            config.symbol, DEFAULT_NSE_VOLUME_PROFILE
-        )
+        profile = config.volume_profile or self._custom_profiles.get(config.symbol, DEFAULT_NSE_VOLUME_PROFILE)
 
         # Filter buckets within start/end time
         active_buckets = {}
@@ -130,32 +130,38 @@ class VWAPAlgorithm:
                 qty = max(1, int(config.total_quantity * weight))
                 allocated += qty
 
-            slices.append(VWAPSlice(
-                slice_id=f"{exec_id}_v{i:03d}",
-                bucket_time=bucket_time,
-                quantity=qty,
-                volume_weight=weight,
-            ))
+            slices.append(
+                VWAPSlice(
+                    slice_id=f"{exec_id}_v{i:03d}",
+                    bucket_time=bucket_time,
+                    quantity=qty,
+                    volume_weight=weight,
+                )
+            )
 
         execution = VWAPExecution(exec_id=exec_id, config=config, slices=slices)
         self._active[exec_id] = execution
 
         logger.info(
             "VWAP schedule: %s %s %d shares in %d buckets (%s-%s)",
-            config.side, config.symbol, config.total_quantity,
-            len(slices), config.start_time, config.end_time,
+            config.side,
+            config.symbol,
+            config.total_quantity,
+            len(slices),
+            config.start_time,
+            config.end_time,
         )
         return execution
 
     async def execute(
         self,
         execution: VWAPExecution,
-        get_market_price: Optional[Callable] = None,
+        get_market_price: Callable | None = None,
     ) -> VWAPExecution:
         """Execute the VWAP schedule."""
         config = execution.config
         execution.status = "RUNNING"
-        execution.start_time = datetime.now(timezone.utc)
+        execution.start_time = datetime.now(UTC)
 
         total_cost = 0.0
         total_filled = 0
@@ -203,8 +209,11 @@ class VWAPAlgorithm:
 
                 logger.info(
                     "VWAP bucket %s: %s %s x%d (%.0f%% weight) @ %s",
-                    slice_order.bucket_time, config.side, config.symbol,
-                    slice_order.quantity, slice_order.volume_weight * 100,
+                    slice_order.bucket_time,
+                    config.side,
+                    config.symbol,
+                    slice_order.quantity,
+                    slice_order.volume_weight * 100,
                     f"{limit_price:.2f}" if limit_price else "MARKET",
                 )
             except Exception as e:
@@ -222,11 +231,13 @@ class VWAPAlgorithm:
         execution.total_submitted = total_submitted
         execution.achieved_vwap = total_cost / total_filled if total_filled > 0 else 0.0
         execution.status = "SUBMITTED"
-        execution.end_time = datetime.now(timezone.utc)
+        execution.end_time = datetime.now(UTC)
 
         logger.info(
             "VWAP done: %s %s submitted %d/%d (fills pending via FillListener)",
-            config.side, config.symbol, total_submitted,
+            config.side,
+            config.symbol,
+            total_submitted,
             config.total_quantity,
         )
         return execution

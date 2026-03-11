@@ -5,16 +5,18 @@ for NSE/BSE stocks when Angel One is not configured.
 Uses yfinance library. Falls back gracefully if yfinance is not installed.
 In-memory cache with configurable TTL to avoid rate limits.
 """
+
 import logging
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Try to import yfinance; set flag if unavailable
 try:
     import yfinance as yf
+
     YF_AVAILABLE = True
 except ImportError:
     YF_AVAILABLE = False
@@ -32,10 +34,10 @@ class YahooFinanceConnector:
 
     def __init__(self, cache_ttl_seconds: int = 60):
         self.cache_ttl = cache_ttl_seconds
-        self._quote_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}  # key -> (timestamp, data)
-        self._bars_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+        self._quote_cache: dict[str, tuple[float, dict[str, Any]]] = {}  # key -> (timestamp, data)
+        self._bars_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
-    def _evict_stale(self, cache: Dict[str, Tuple[float, Any]]) -> None:
+    def _evict_stale(self, cache: dict[str, tuple[float, Any]]) -> None:
         """Remove stale entries and cap cache size."""
         now = time.time()
         # Remove expired entries
@@ -57,7 +59,7 @@ class YahooFinanceConnector:
         suffix = ".NS" if exchange.upper() == "NSE" else ".BO" if exchange.upper() == "BSE" else ".NS"
         return f"{symbol}{suffix}"
 
-    def get_quote(self, symbol: str, exchange: str = "NSE") -> Optional[Dict[str, Any]]:
+    def get_quote(self, symbol: str, exchange: str = "NSE") -> dict[str, Any] | None:
         """Get latest quote for a symbol. Returns None on failure."""
         if not YF_AVAILABLE:
             return None
@@ -100,7 +102,7 @@ class YahooFinanceConnector:
                 "change": round(price - prev_close, 2),
                 "change_pct": round(((price - prev_close) / prev_close * 100) if prev_close > 0 else 0, 2),
                 "volume": volume,
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "source": "yahoo_finance",
             }
             self._quote_cache[cache_key] = (time.time(), quote)
@@ -116,9 +118,9 @@ class YahooFinanceConnector:
         exchange: str = "NSE",
         interval: str = "1d",
         limit: int = 100,
-        from_ts: Optional[str] = None,
-        to_ts: Optional[str] = None,
-    ) -> Optional[List[Dict[str, Any]]]:
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+    ) -> list[dict[str, Any]] | None:
         """Get OHLCV bars. Returns None on failure."""
         if not YF_AVAILABLE:
             return None
@@ -130,8 +132,14 @@ class YahooFinanceConnector:
 
         # Map interval to yfinance format
         interval_map = {
-            "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
-            "1h": "1h", "1d": "1d", "1w": "1wk", "1M": "1mo",
+            "1m": "1m",
+            "5m": "5m",
+            "15m": "15m",
+            "30m": "30m",
+            "1h": "1h",
+            "1d": "1d",
+            "1w": "1wk",
+            "1M": "1mo",
         }
         yf_interval = interval_map.get(interval, "1d")
 
@@ -163,14 +171,16 @@ class YahooFinanceConnector:
             bars = []
             for idx, row in hist.iterrows():
                 ts = idx.isoformat() if hasattr(idx, "isoformat") else str(idx)
-                bars.append({
-                    "open": round(float(row["Open"]), 2),
-                    "high": round(float(row["High"]), 2),
-                    "low": round(float(row["Low"]), 2),
-                    "close": round(float(row["Close"]), 2),
-                    "volume": int(row["Volume"]),
-                    "ts": ts,
-                })
+                bars.append(
+                    {
+                        "open": round(float(row["Open"]), 2),
+                        "high": round(float(row["High"]), 2),
+                        "low": round(float(row["Low"]), 2),
+                        "close": round(float(row["Close"]), 2),
+                        "volume": int(row["Volume"]),
+                        "ts": ts,
+                    }
+                )
 
             if bars:
                 self._bars_cache[cache_key] = (time.time(), bars)
@@ -182,10 +192,10 @@ class YahooFinanceConnector:
 
 
 # Module-level singleton
-_connector: Optional[YahooFinanceConnector] = None
+_connector: YahooFinanceConnector | None = None
 
 
-def get_yahoo_connector() -> Optional[YahooFinanceConnector]:
+def get_yahoo_connector() -> YahooFinanceConnector | None:
     """Get or create the Yahoo Finance connector singleton."""
     global _connector
     if not YF_AVAILABLE:

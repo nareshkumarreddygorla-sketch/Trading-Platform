@@ -15,7 +15,7 @@ margin call risk, and recommended exposure adjustments.
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +31,17 @@ class ScenarioType(str, Enum):
 @dataclass
 class ShockSpec:
     """Defines a market shock for a stress scenario."""
+
     name: str
     description: str
     scenario_type: ScenarioType
     # Sector/index shocks as pct moves (negative = down)
     equity_shock_pct: float = 0.0
-    sector_shocks: Dict[str, float] = field(default_factory=dict)
+    sector_shocks: dict[str, float] = field(default_factory=dict)
     vix_level: float = 25.0
     fx_shock_pct: float = 0.0  # USDINR move
     rate_shock_bps: int = 0
-    correlation_override: Optional[float] = None  # Force all correlations to this
+    correlation_override: float | None = None  # Force all correlations to this
     volume_multiplier: float = 1.0  # <1.0 = liquidity crisis
     spread_multiplier: float = 1.0  # >1.0 = wider spreads
 
@@ -48,6 +49,7 @@ class ShockSpec:
 @dataclass
 class StressResult:
     """Result of running a single stress scenario."""
+
     scenario_name: str
     scenario_type: str
     portfolio_pnl: float  # Total P&L under stress
@@ -57,11 +59,11 @@ class StressResult:
     positions_impacted: int
     margin_call_risk: bool  # True if equity < maintenance margin
     recommended_action: str
-    position_details: List[Dict[str, Any]] = field(default_factory=list)
+    position_details: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Pre-defined historical scenarios
-HISTORICAL_SCENARIOS: List[ShockSpec] = [
+HISTORICAL_SCENARIOS: list[ShockSpec] = [
     ShockSpec(
         name="2008_GFC",
         description="Global Financial Crisis: broad equity -40%, banking -55%, VIX 80",
@@ -77,8 +79,13 @@ HISTORICAL_SCENARIOS: List[ShockSpec] = [
         description="COVID-19 pandemic crash: Nifty -38% in 1 month, VIX 84",
         scenario_type=ScenarioType.HISTORICAL,
         equity_shock_pct=-38.0,
-        sector_shocks={"Automobile": -45.0, "Energy": -50.0, "Banking & Finance": -42.0,
-                        "Pharma & Healthcare": -10.0, "Information Technology": -25.0},
+        sector_shocks={
+            "Automobile": -45.0,
+            "Energy": -50.0,
+            "Banking & Finance": -42.0,
+            "Pharma & Healthcare": -10.0,
+            "Information Technology": -25.0,
+        },
         vix_level=84.0,
         fx_shock_pct=8.0,
         correlation_override=0.90,
@@ -102,7 +109,7 @@ HISTORICAL_SCENARIOS: List[ShockSpec] = [
     ),
 ]
 
-HYPOTHETICAL_SCENARIOS: List[ShockSpec] = [
+HYPOTHETICAL_SCENARIOS: list[ShockSpec] = [
     ShockSpec(
         name="VIX_Extreme_Spike",
         description="India VIX spikes to 50+ (geopolitical event)",
@@ -170,7 +177,7 @@ class StressTestEngine:
     ):
         self.sector_classifier = sector_classifier
         self.maintenance_margin_pct = maintenance_margin_pct
-        self._last_results: List[StressResult] = []
+        self._last_results: list[StressResult] = []
 
     def _get_sector(self, symbol: str) -> str:
         if self.sector_classifier:
@@ -240,14 +247,16 @@ class StressTestEngine:
                 worst_pnl = pos_pnl
                 worst_sym = symbol
 
-            details.append({
-                "symbol": symbol,
-                "sector": sector,
-                "notional": round(notional, 2),
-                "shock_pct": round(shock_pct, 2),
-                "pnl": round(pos_pnl, 2),
-                "pnl_pct": round(pos_pnl / notional * 100, 2) if notional > 0 else 0.0,
-            })
+            details.append(
+                {
+                    "symbol": symbol,
+                    "sector": sector,
+                    "notional": round(notional, 2),
+                    "shock_pct": round(shock_pct, 2),
+                    "pnl": round(pos_pnl, 2),
+                    "pnl_pct": round(pos_pnl / notional * 100, 2) if notional > 0 else 0.0,
+                }
+            )
 
         pnl_pct = (total_pnl / equity * 100) if equity > 0 else 0.0
         stressed_equity = equity + total_pnl
@@ -280,7 +289,7 @@ class StressTestEngine:
             position_details=details,
         )
 
-    def run_all_historical(self, positions: list, equity: float) -> List[StressResult]:
+    def run_all_historical(self, positions: list, equity: float) -> list[StressResult]:
         """Run all historical stress scenarios."""
         results = []
         for scenario in HISTORICAL_SCENARIOS:
@@ -288,7 +297,7 @@ class StressTestEngine:
             results.append(result)
         return results
 
-    def run_all_hypothetical(self, positions: list, equity: float) -> List[StressResult]:
+    def run_all_hypothetical(self, positions: list, equity: float) -> list[StressResult]:
         """Run all hypothetical stress scenarios."""
         results = []
         for scenario in HYPOTHETICAL_SCENARIOS:
@@ -296,7 +305,7 @@ class StressTestEngine:
             results.append(result)
         return results
 
-    def run_full_suite(self, positions: list, equity: float) -> List[StressResult]:
+    def run_full_suite(self, positions: list, equity: float) -> list[StressResult]:
         """Run all predefined scenarios (historical + hypothetical)."""
         results = self.run_all_historical(positions, equity)
         results.extend(self.run_all_hypothetical(positions, equity))
@@ -307,14 +316,20 @@ class StressTestEngine:
         if worst:
             logger.info(
                 "Stress test suite complete: %d scenarios, worst=%s (%.1f%%)",
-                len(results), worst.scenario_name, worst.portfolio_pnl_pct,
+                len(results),
+                worst.scenario_name,
+                worst.portfolio_pnl_pct,
             )
         return results
 
     def run_custom(
-        self, name: str, description: str, equity_shock_pct: float,
-        sector_shocks: Optional[Dict[str, float]] = None,
-        vix_level: float = 25.0, positions: Optional[list] = None,
+        self,
+        name: str,
+        description: str,
+        equity_shock_pct: float,
+        sector_shocks: dict[str, float] | None = None,
+        vix_level: float = 25.0,
+        positions: list | None = None,
         equity: float = 0.0,
     ) -> StressResult:
         """Run a custom user-defined stress scenario."""
@@ -328,7 +343,7 @@ class StressTestEngine:
         )
         return self.run_scenario(scenario, positions or [], equity)
 
-    def get_last_results(self) -> List[StressResult]:
+    def get_last_results(self) -> list[StressResult]:
         """Get results from the last full suite run."""
         return self._last_results
 
@@ -337,7 +352,7 @@ class StressTestEngine:
         positions: list,
         equity: float,
         circuit_breaker=None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """P2-6: Run 4 critical stress scenarios and verify circuit breaker trips correctly.
         Returns validation report."""
         critical_scenarios = [
@@ -378,22 +393,25 @@ class StressTestEngine:
             result = self.run_scenario(scenario, positions, equity)
             # Check if circuit breaker would trip
             would_trip = result.portfolio_pnl_pct < -5.0  # conservative threshold
-            results.append({
-                "scenario": result.scenario_name,
-                "pnl_pct": result.portfolio_pnl_pct,
-                "margin_call": result.margin_call_risk,
-                "would_trip_circuit": would_trip,
-                "action": result.recommended_action,
-            })
+            results.append(
+                {
+                    "scenario": result.scenario_name,
+                    "pnl_pct": result.portfolio_pnl_pct,
+                    "margin_call": result.margin_call_risk,
+                    "would_trip_circuit": would_trip,
+                    "action": result.recommended_action,
+                }
+            )
         all_critical_trip = all(r["would_trip_circuit"] for r in results if r["pnl_pct"] < -10)
         return {
             "validation_passed": all_critical_trip,
             "scenarios": results,
-            "recommendation": "Circuit breaker thresholds are correctly calibrated" if all_critical_trip
-                else "WARNING: Circuit breaker may not trip on severe scenarios — review thresholds",
+            "recommendation": "Circuit breaker thresholds are correctly calibrated"
+            if all_critical_trip
+            else "WARNING: Circuit breaker may not trip on severe scenarios — review thresholds",
         }
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Summary of last stress test suite for API/dashboard."""
         if not self._last_results:
             return {"status": "no_results", "scenarios_run": 0}

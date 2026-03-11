@@ -6,14 +6,16 @@ and recovery procedures.
 Production-grade: provides a systematic approach to monitoring and incident
 response for autonomous trading operations.
 """
+
 import json
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +23,12 @@ _IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Severity(str, Enum):
     """Incident severity classification."""
+
     P1 = "P1"  # Critical: trading halted, data loss, broker disconnect
     P2 = "P2"  # High: degraded performance, partial outage
     P3 = "P3"  # Medium: non-critical alerts, performance degradation
@@ -34,6 +37,7 @@ class Severity(str, Enum):
 
 class SystemComponent(str, Enum):
     """Monitored system components."""
+
     DATABASE = "database"
     REDIS = "redis"
     BROKER_API = "broker_api"
@@ -49,14 +53,15 @@ class SystemComponent(str, Enum):
 @dataclass
 class HealthCheckResult:
     """Result of a single health check."""
+
     component: str
     healthy: bool
     latency_ms: float = 0.0
     message: str = ""
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
     checked_at: datetime = field(default_factory=_utc_now)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "component": self.component,
             "healthy": self.healthy,
@@ -70,17 +75,18 @@ class HealthCheckResult:
 @dataclass
 class IncidentReport:
     """Structured incident report."""
+
     severity: Severity
     component: str
     title: str
     description: str
     detected_at: datetime = field(default_factory=_utc_now)
-    resolved_at: Optional[datetime] = None
-    actions_taken: List[str] = field(default_factory=list)
+    resolved_at: datetime | None = None
+    actions_taken: list[str] = field(default_factory=list)
     recovery_procedure: str = ""
     escalation_path: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "severity": self.severity.value,
             "component": self.component,
@@ -208,24 +214,24 @@ class OperationalRunbook:
         self,
         app_state=None,
         audit_repo=None,
-        alert_callback: Optional[Callable] = None,
+        alert_callback: Callable | None = None,
     ):
         self._app_state = app_state
         self._audit_repo = audit_repo
         self._alert_callback = alert_callback
-        self._incidents: List[IncidentReport] = []
-        self._last_health_check: Optional[Dict[str, HealthCheckResult]] = None
+        self._incidents: list[IncidentReport] = []
+        self._last_health_check: dict[str, HealthCheckResult] | None = None
         self._last_health_check_ts: float = 0
         self._pre_market_ready: bool = False
 
     # ── System Health Checklist ──
 
-    async def run_health_checks(self) -> Dict[str, HealthCheckResult]:
+    async def run_health_checks(self) -> dict[str, HealthCheckResult]:
         """
         Run comprehensive system health checks.
         Returns dict of component -> HealthCheckResult.
         """
-        results: Dict[str, HealthCheckResult] = {}
+        results: dict[str, HealthCheckResult] = {}
 
         # 1. Database connectivity
         results["database"] = await self._check_database()
@@ -263,7 +269,8 @@ class OperationalRunbook:
         total = len(results)
         logger.info(
             "Health check complete: %d/%d healthy",
-            healthy_count, total,
+            healthy_count,
+            total,
         )
 
         return results
@@ -273,6 +280,7 @@ class OperationalRunbook:
         start = time.time()
         try:
             from src.persistence.database import check_database_health
+
             health = check_database_health()
             latency = (time.time() - start) * 1000
             return HealthCheckResult(
@@ -295,6 +303,7 @@ class OperationalRunbook:
         start = time.time()
         try:
             import redis
+
             redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
             r = redis.from_url(redis_url, socket_timeout=5)
             r.ping()
@@ -416,9 +425,7 @@ class OperationalRunbook:
             return HealthCheckResult(
                 component="risk_engine",
                 healthy=healthy,
-                message="OK" if healthy else (
-                    "CIRCUIT OPEN" if circuit_open else "SAFE MODE"
-                ),
+                message="OK" if healthy else ("CIRCUIT OPEN" if circuit_open else "SAFE MODE"),
                 details={
                     "equity": rm.equity,
                     "daily_pnl": rm.daily_pnl,
@@ -454,9 +461,7 @@ class OperationalRunbook:
             return HealthCheckResult(
                 component="autonomous_loop",
                 healthy=healthy,
-                message="OK" if healthy else (
-                    "CIRCUIT OPEN" if circuit_open else "NOT RUNNING"
-                ),
+                message="OK" if healthy else ("CIRCUIT OPEN" if circuit_open else "NOT RUNNING"),
                 details={
                     "running": running,
                     "tick_count": tick_count,
@@ -536,7 +541,7 @@ class OperationalRunbook:
 
     # ── Pre-Market Readiness Gate ──
 
-    async def pre_market_readiness_check(self) -> Dict[str, Any]:
+    async def pre_market_readiness_check(self) -> dict[str, Any]:
         """
         Run all pre-market checks. ALL systems must report ready before
         trading starts.
@@ -546,7 +551,7 @@ class OperationalRunbook:
             checks: dict - individual check results
             blockers: list - list of failed checks preventing trading
         """
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "ready": True,
             "checks": {},
             "blockers": [],
@@ -582,6 +587,7 @@ class OperationalRunbook:
                 bar_cache = getattr(self._app_state, "bar_cache", None)
                 if bar_cache:
                     from src.core.events import Exchange
+
                     symbols = bar_cache.symbols_with_bars(Exchange.NSE, "1m", min_bars=5)
                     result["checks"]["data_freshness"] = {
                         "healthy": len(symbols) > 0,
@@ -637,7 +643,7 @@ class OperationalRunbook:
 
     # ── Post-Market Reconciliation ──
 
-    async def trigger_post_market_reconciliation(self) -> Dict[str, Any]:
+    async def trigger_post_market_reconciliation(self) -> dict[str, Any]:
         """
         Trigger post-market reconciliation checks:
         - Compare local positions with broker
@@ -645,7 +651,7 @@ class OperationalRunbook:
         - Calculate day P&L vs broker P&L
         - Generate end-of-day summary
         """
-        report: Dict[str, Any] = {
+        report: dict[str, Any] = {
             "timestamp": _utc_now().isoformat(),
             "checks": {},
         }
@@ -691,7 +697,9 @@ class OperationalRunbook:
                         recon_result = await recon_job.run()
                         report["checks"]["broker_reconciliation"] = {
                             "in_sync": recon_result.in_sync if recon_result else False,
-                            "mismatches": len(recon_result.mismatches) if recon_result and hasattr(recon_result, "mismatches") else 0,
+                            "mismatches": len(recon_result.mismatches)
+                            if recon_result and hasattr(recon_result, "mismatches")
+                            else 0,
                         }
                     except Exception as e:
                         report["checks"]["broker_reconciliation"] = {
@@ -800,9 +808,7 @@ class OperationalRunbook:
         )
         return incident
 
-    def _create_incident_from_health_check(
-        self, component: str, check: HealthCheckResult
-    ) -> None:
+    def _create_incident_from_health_check(self, component: str, check: HealthCheckResult) -> None:
         """Create an incident from a failed health check."""
         error_type = "health_check_failed"
         if "circuit" in check.message.lower():
@@ -818,33 +824,36 @@ class OperationalRunbook:
 
     # ── Recovery Procedures ──
 
-    def get_recovery_procedure(self, component: str) -> Dict[str, Any]:
+    def get_recovery_procedure(self, component: str) -> dict[str, Any]:
         """Get the recovery procedure for a specific component."""
         comp_enum = None
         for sc in SystemComponent:
             if sc.value == component:
                 comp_enum = sc
                 break
-        return RECOVERY_PROCEDURES.get(comp_enum, {
-            "description": f"No recovery procedure defined for {component}",
-            "steps": ["Contact engineering team"],
-            "auto_recovery": "None",
-        })
+        return RECOVERY_PROCEDURES.get(
+            comp_enum,
+            {
+                "description": f"No recovery procedure defined for {component}",
+                "steps": ["Contact engineering team"],
+                "auto_recovery": "None",
+            },
+        )
 
     # ── Reporting ──
 
     def get_recent_incidents(
         self,
-        severity: Optional[Severity] = None,
+        severity: Severity | None = None,
         limit: int = 50,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get recent incidents, optionally filtered by severity."""
         incidents = self._incidents
         if severity:
             incidents = [i for i in incidents if i.severity == severity]
         return [i.to_dict() for i in incidents[-limit:]]
 
-    def get_system_status(self) -> Dict[str, Any]:
+    def get_system_status(self) -> dict[str, Any]:
         """Get overall system status summary."""
         health = self._last_health_check or {}
         healthy_count = sum(1 for r in health.values() if r.healthy) if health else 0
@@ -868,6 +877,8 @@ class OperationalRunbook:
             "active_p1_incidents": active_p1,
             "active_p2_incidents": active_p2,
             "pre_market_ready": self._pre_market_ready,
-            "last_health_check_age_s": round(time.time() - self._last_health_check_ts, 1) if self._last_health_check_ts else None,
+            "last_health_check_age_s": round(time.time() - self._last_health_check_ts, 1)
+            if self._last_health_check_ts
+            else None,
             "timestamp": _utc_now().isoformat(),
         }

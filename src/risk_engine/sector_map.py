@@ -6,15 +6,15 @@ Maps all NSE stocks to GICS-equivalent sectors using:
   - Hardcoded top-200 fallback for reliable coverage
   - Daily refresh from NSE data
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
 # NSE industry → normalised sector mapping
-INDUSTRY_TO_SECTOR: Dict[str, str] = {
+INDUSTRY_TO_SECTOR: dict[str, str] = {
     # Banking & Finance
     "FINANCIAL SERVICES": "Banking & Finance",
     "BANKS": "Banking & Finance",
@@ -28,7 +28,6 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
     "INSURANCE": "Banking & Finance",
     "STOCK/COMMODITY BROKERS": "Banking & Finance",
     "FINANCIAL INSTITUTION": "Banking & Finance",
-
     # IT
     "IT - SOFTWARE": "Information Technology",
     "IT - SERVICES": "Information Technology",
@@ -38,14 +37,12 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
     "INFORMATION TECHNOLOGY": "Information Technology",
     "COMPUTERS - SOFTWARE": "Information Technology",
     "COMPUTERS - HARDWARE": "Information Technology",
-
     # Pharma & Healthcare
     "PHARMACEUTICALS": "Pharma & Healthcare",
     "HEALTHCARE": "Pharma & Healthcare",
     "HEALTHCARE SERVICES": "Pharma & Healthcare",
     "HOSPITALS": "Pharma & Healthcare",
     "DRUGS & PHARMACEUTICALS": "Pharma & Healthcare",
-
     # FMCG
     "FMCG": "FMCG",
     "CONSUMER GOODS": "FMCG",
@@ -54,7 +51,6 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
     "PERSONAL PRODUCTS": "FMCG",
     "TOBACCO": "FMCG",
     "HOUSEHOLD PRODUCTS": "FMCG",
-
     # Auto
     "AUTOMOBILE": "Automobile",
     "AUTO": "Automobile",
@@ -64,7 +60,6 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
     "COMMERCIAL VEHICLES": "Automobile",
     "2/3 WHEELERS": "Automobile",
     "PASSENGER CARS & UTILITY VEHICLES": "Automobile",
-
     # Energy & Oil
     "OIL & GAS": "Energy",
     "OIL EXPLORATION": "Energy",
@@ -75,7 +70,6 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
     "POWER": "Energy",
     "POWER GENERATION & DISTRIBUTION": "Energy",
     "ELECTRIC UTILITIES": "Energy",
-
     # Metals & Mining
     "METALS": "Metals & Mining",
     "METALS & MINING": "Metals & Mining",
@@ -86,7 +80,6 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
     "COPPER": "Metals & Mining",
     "MINING": "Metals & Mining",
     "MINING & MINERAL PRODUCTS": "Metals & Mining",
-
     # Infrastructure & Construction
     "CONSTRUCTION": "Infrastructure",
     "INFRASTRUCTURE": "Infrastructure",
@@ -95,13 +88,11 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
     "CONSTRUCTION MATERIALS": "Infrastructure",
     "REAL ESTATE": "Infrastructure",
     "REALTY": "Infrastructure",
-
     # Telecom
     "TELECOM": "Telecom",
     "TELECOMMUNICATION": "Telecom",
     "TELECOM - SERVICES": "Telecom",
     "TELECOM EQUIPMENT & ACCESSORIES": "Telecom",
-
     # Capital Goods
     "CAPITAL GOODS": "Capital Goods",
     "INDUSTRIAL MANUFACTURING": "Capital Goods",
@@ -109,7 +100,6 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
     "ELECTRICAL EQUIPMENT": "Capital Goods",
     "HEAVY ELECTRICAL EQUIPMENT": "Capital Goods",
     "DEFENCE": "Capital Goods",
-
     # Chemicals
     "CHEMICALS": "Chemicals",
     "AGROCHEMICALS": "Chemicals",
@@ -117,17 +107,14 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
     "FERTILIZERS": "Chemicals",
     "PESTICIDES": "Chemicals",
     "PAINTS": "Chemicals",
-
     # Textiles
     "TEXTILES": "Textiles",
     "TEXTILE": "Textiles",
     "READYMADE GARMENTS/ APPARELS": "Textiles",
-
     # Media & Entertainment
     "MEDIA": "Media & Entertainment",
     "ENTERTAINMENT": "Media & Entertainment",
     "PRINTING & PUBLISHING": "Media & Entertainment",
-
     # Consumer Durables
     "CONSUMER DURABLES": "Consumer Durables",
     "ELECTRONICS": "Consumer Durables",
@@ -135,7 +122,7 @@ INDUSTRY_TO_SECTOR: Dict[str, str] = {
 }
 
 # Hardcoded sector for top NSE stocks (reliable fallback)
-TOP_STOCK_SECTORS: Dict[str, str] = {
+TOP_STOCK_SECTORS: dict[str, str] = {
     "RELIANCE": "Energy",
     "TCS": "Information Technology",
     "HDFCBANK": "Banking & Finance",
@@ -243,9 +230,9 @@ class SectorClassifier:
     """
 
     def __init__(self):
-        self._manual_overrides: Dict[str, str] = {}
-        self._bhavcopy_sectors: Dict[str, str] = {}
-        self._all_sectors: Set[str] = set()
+        self._manual_overrides: dict[str, str] = {}
+        self._bhavcopy_sectors: dict[str, str] = {}
+        self._all_sectors: set[str] = set()
         self._refresh_sectors()
 
     def _refresh_sectors(self) -> None:
@@ -275,7 +262,7 @@ class SectorClassifier:
         """Manually override sector classification for a symbol."""
         self._manual_overrides[symbol.upper().strip()] = sector
 
-    def load_from_bhavcopy(self, data: Dict[str, str]) -> int:
+    def load_from_bhavcopy(self, data: dict[str, str]) -> int:
         """
         Load sector data from NSE bhavcopy INDUSTRY field.
 
@@ -307,7 +294,7 @@ class SectorClassifier:
         logger.info("Loaded sector data: %d/%d symbols classified", count, len(data))
         return count
 
-    def get_sector_breakdown(self, positions: List[dict]) -> Dict[str, dict]:
+    def get_sector_breakdown(self, positions: list[dict]) -> dict[str, dict]:
         """
         Get sector breakdown for portfolio positions.
 
@@ -318,7 +305,7 @@ class SectorClassifier:
             {sector: {notional, count, symbols, pct}} breakdown
         """
         total_notional = sum(p.get("notional", 0) for p in positions)
-        sectors: Dict[str, dict] = {}
+        sectors: dict[str, dict] = {}
 
         for pos in positions:
             symbol = pos.get("symbol", "")
@@ -340,7 +327,7 @@ class SectorClassifier:
 
     def check_concentration(
         self,
-        positions: List[dict],
+        positions: list[dict],
         new_symbol: str,
         new_notional: float,
         max_sector_pct: float = 30.0,
@@ -364,11 +351,11 @@ class SectorClassifier:
         current_pct = current_sector_data.get("pct", 0)
         return projected_pct <= max_sector_pct, sector, current_pct, projected_pct
 
-    def list_sectors(self) -> List[str]:
+    def list_sectors(self) -> list[str]:
         """Return all known sectors."""
         return sorted(self._all_sectors)
 
-    def coverage_stats(self, symbols: List[str]) -> dict:
+    def coverage_stats(self, symbols: list[str]) -> dict:
         """Get classification coverage statistics."""
         classified = sum(1 for s in symbols if self.get_sector(s) != "UNCLASSIFIED")
         return {

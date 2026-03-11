@@ -25,31 +25,22 @@ Tests the four Phase 1 safety fixes:
    - Hash chain includes previous hash (tampering invalidates chain)
 """
 
-import asyncio
 import hashlib
 import json
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
-from src.execution.order_entry.kill_switch import (
-    KillReason,
-    KillSwitch,
-    KillSwitchState,
-    _MANUAL_DISARM_ONLY,
-)
-from src.execution.order_entry.idempotency import IdempotencyStore
-from src.execution.order_entry.redis_cluster_reservation import RedisClusterReservation
 from src.compliance.audit_trail import (
-    AuditEvent,
-    AuditEventType,
     SEBIAuditTrail,
 )
-
+from src.execution.order_entry.idempotency import IdempotencyStore
+from src.execution.order_entry.kill_switch import (
+    _MANUAL_DISARM_ONLY,
+    KillReason,
+    KillSwitch,
+)
+from src.execution.order_entry.redis_cluster_reservation import RedisClusterReservation
 
 # ========================================================================
 # Section 1: Kill Switch NameError Fix
@@ -198,9 +189,7 @@ class TestKillSwitchReasonOverwriteFix:
             ks = KillSwitch()
             await ks.arm(reason, f"test {reason.value}")
             result = await ks.check_auto_disarm(broker_healthy=True, vix_value=10.0)
-            assert result is False, (
-                f"check_auto_disarm returned True for manual-only reason {reason.value}"
-            )
+            assert result is False, f"check_auto_disarm returned True for manual-only reason {reason.value}"
 
     @pytest.mark.asyncio
     async def test_manual_only_to_manual_only_overwrites(self):
@@ -258,7 +247,7 @@ class TestKillSwitchReasonOverwriteFix:
         result2 = await ks.check_auto_disarm(broker_healthy=True)
         assert result2 is False  # only 2
         result3 = await ks.check_auto_disarm(broker_healthy=True)
-        assert result3 is True   # 3 -- auto-disarmed
+        assert result3 is True  # 3 -- auto-disarmed
 
         assert await ks.is_armed() is False
 
@@ -518,9 +507,7 @@ class TestAuditTrailWriteThroughAndHashChain:
             hashes.append(trail._last_hash)
 
         # All hashes should be unique
-        assert len(set(hashes)) == 10, (
-            f"Expected 10 unique hashes, got {len(set(hashes))}"
-        )
+        assert len(set(hashes)) == 10, f"Expected 10 unique hashes, got {len(set(hashes))}"
 
         # Hashes should be valid hex SHA-256 (64 chars)
         for h in hashes:
@@ -556,8 +543,7 @@ class TestAuditTrailWriteThroughAndHashChain:
         )
         expected_hash_1 = hashlib.sha256(payload.encode()).hexdigest()
         assert hashes[1] == expected_hash_1, (
-            "Hash for event[1] does not match manual recomputation -- "
-            "chain does not include previous hash"
+            "Hash for event[1] does not match manual recomputation -- chain does not include previous hash"
         )
 
         # Verify event[2] depends on event[1]'s hash
@@ -582,10 +568,7 @@ class TestAuditTrailWriteThroughAndHashChain:
         first_hash = trail._last_hash
 
         # Manually compute with "genesis" as previous
-        payload = (
-            f"genesis|{evt.event_id}|"
-            f"{evt.timestamp.isoformat()}|{evt.event_type.value}|{evt.symbol}"
-        )
+        payload = f"genesis|{evt.event_id}|{evt.timestamp.isoformat()}|{evt.event_type.value}|{evt.symbol}"
         expected = hashlib.sha256(payload.encode()).hexdigest()
         assert first_hash == expected
 
@@ -622,15 +605,12 @@ class TestAuditTrailWriteThroughAndHashChain:
         # Now recompute hash[1] using the tampered hash[0]
         evt1 = events[1]
         tampered_payload_1 = (
-            f"{tampered_hash_0}|{evt1.event_id}|"
-            f"{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}"
+            f"{tampered_hash_0}|{evt1.event_id}|{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}"
         )
         tampered_hash_1 = hashlib.sha256(tampered_payload_1.encode()).hexdigest()
 
         # The cascaded hash for event[1] should now differ from the real chain
-        assert tampered_hash_1 != hashes[1], (
-            "Tampering event[0] should cascade and invalidate event[1]'s hash"
-        )
+        assert tampered_hash_1 != hashes[1], "Tampering event[0] should cascade and invalidate event[1]'s hash"
 
     def test_hash_chain_different_event_types_produce_unique_hashes(self):
         """Different event types (signal, order, fill, risk) should all
@@ -639,27 +619,39 @@ class TestAuditTrailWriteThroughAndHashChain:
         hashes = set()
 
         trail.record_signal(
-            symbol="MULTI.NS", direction="BUY", confidence=0.8,
+            symbol="MULTI.NS",
+            direction="BUY",
+            confidence=0.8,
             model_source="m1",
         )
         hashes.add(trail._last_hash)
 
         trail.record_order(
-            symbol="MULTI.NS", side="BUY", qty=100, order_type="MARKET",
-            price=None, strategy_id="s1",
+            symbol="MULTI.NS",
+            side="BUY",
+            qty=100,
+            order_type="MARKET",
+            price=None,
+            strategy_id="s1",
             risk_checks_passed={"check1": True},
         )
         hashes.add(trail._last_hash)
 
         trail.record_fill(
-            symbol="MULTI.NS", side="BUY", qty=100, price=500.0,
-            costs_breakdown={"brokerage": 10.0}, slippage=0.1,
+            symbol="MULTI.NS",
+            side="BUY",
+            qty=100,
+            price=500.0,
+            costs_breakdown={"brokerage": 10.0},
+            slippage=0.1,
         )
         hashes.add(trail._last_hash)
 
         trail.record_risk_decision(
-            check_type="max_position_size", result=True,
-            values={"current": 5}, thresholds={"max": 10},
+            check_type="max_position_size",
+            result=True,
+            values={"current": 5},
+            thresholds={"max": 10},
         )
         hashes.add(trail._last_hash)
 
@@ -745,9 +737,7 @@ class TestPhase1Integration:
         assert result["order_id"] == "order-100"
 
         # set_if_new_or_get (should find existing)
-        is_new, existing = await store.set_if_new_or_get(
-            "e2e-key", "order-200", None, "PENDING"
-        )
+        is_new, existing = await store.set_if_new_or_get("e2e-key", "order-200", None, "PENDING")
         assert is_new is False
         assert existing["order_id"] == "order-100"
 

@@ -23,10 +23,10 @@ import os
 import shutil
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ DEFAULT_MAX_RETENTION_YEARS = 8  # Keep up to 8 years before purging
 
 class DataCategory(str, Enum):
     """Categories of data with retention policies."""
+
     AUDIT_EVENTS = "AUDIT_EVENTS"
     TRADE_RECORDS = "TRADE_RECORDS"
     ORDER_RECORDS = "ORDER_RECORDS"
@@ -55,10 +56,11 @@ class DataCategory(str, Enum):
 
 class RetentionAction(str, Enum):
     """Actions taken on data by the retention manager."""
-    RETAINED = "RETAINED"           # Data within retention window, kept
-    ARCHIVED = "ARCHIVED"           # Compressed and moved to cold storage
+
+    RETAINED = "RETAINED"  # Data within retention window, kept
+    ARCHIVED = "ARCHIVED"  # Compressed and moved to cold storage
     DELETION_BLOCKED = "DELETION_BLOCKED"  # Deletion attempt blocked
-    PURGED = "PURGED"               # Beyond max retention, removed
+    PURGED = "PURGED"  # Beyond max retention, removed
 
 
 @dataclass
@@ -79,6 +81,7 @@ class RetentionPolicy:
     compress_archive : bool
         Whether to gzip-compress archived data.
     """
+
     category: DataCategory
     min_retention_years: int = SEBI_MIN_RETENTION_YEARS
     max_retention_years: int = DEFAULT_MAX_RETENTION_YEARS
@@ -103,14 +106,15 @@ class RetentionPolicy:
 @dataclass
 class RetentionRecord:
     """Record of a retention action taken on a data item."""
+
     record_id: str
     category: DataCategory
     action: RetentionAction
     timestamp: datetime
     data_date: datetime
     description: str
-    file_path: Optional[str] = None
-    archive_path: Optional[str] = None
+    file_path: str | None = None
+    archive_path: str | None = None
 
 
 class RetentionManager:
@@ -131,14 +135,14 @@ class RetentionManager:
     def __init__(
         self,
         cold_storage_path: str = "data/archive",
-        policies: Optional[List[RetentionPolicy]] = None,
+        policies: list[RetentionPolicy] | None = None,
     ) -> None:
         self._cold_storage = Path(cold_storage_path)
         self._cold_storage.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
         # Initialize policies
-        self._policies: Dict[DataCategory, RetentionPolicy] = {}
+        self._policies: dict[DataCategory, RetentionPolicy] = {}
         if policies:
             for p in policies:
                 self._policies[p.category] = p
@@ -149,7 +153,7 @@ class RetentionManager:
                 self._policies[cat] = RetentionPolicy(category=cat)
 
         # Action log
-        self._action_log: List[RetentionRecord] = []
+        self._action_log: list[RetentionRecord] = []
 
     # ------------------------------------------------------------------
     # Public API: retention checks
@@ -176,7 +180,7 @@ class RetentionManager:
             True if the data must be retained (cannot be deleted).
         """
         policy = self._policies[category]
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         retention_end = data_date + timedelta(days=policy.min_retention_years * 365)
         return now < retention_end
 
@@ -207,7 +211,7 @@ class RetentionManager:
         import uuid
 
         if self.is_within_retention_window(category, data_date):
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             policy = self._policies[category]
             retention_end = data_date + timedelta(days=policy.min_retention_years * 365)
 
@@ -227,8 +231,7 @@ class RetentionManager:
                 self._action_log.append(record)
 
             logger.warning(
-                "RETENTION BLOCK: Cannot delete %s data from %s. "
-                "Retention period ends %s.",
+                "RETENTION BLOCK: Cannot delete %s data from %s. Retention period ends %s.",
                 category.value,
                 data_date.isoformat(),
                 retention_end.isoformat(),
@@ -248,7 +251,7 @@ class RetentionManager:
     ) -> bool:
         """Check if data should be moved to cold storage."""
         policy = self._policies[category]
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         archive_threshold = data_date + timedelta(days=policy.archive_after_years * 365)
         return now >= archive_threshold
 
@@ -257,8 +260,8 @@ class RetentionManager:
         category: DataCategory,
         data_date: datetime,
         data: Any,
-        source_path: Optional[str] = None,
-    ) -> Optional[str]:
+        source_path: str | None = None,
+    ) -> str | None:
         """
         Archive data to cold storage.
 
@@ -284,15 +287,10 @@ class RetentionManager:
             return None
 
         policy = self._policies[category]
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Construct archive path: cold_storage / category / year / month /
-        archive_dir = (
-            self._cold_storage
-            / category.value.lower()
-            / str(data_date.year)
-            / f"{data_date.month:02d}"
-        )
+        archive_dir = self._cold_storage / category.value.lower() / str(data_date.year) / f"{data_date.month:02d}"
         archive_dir.mkdir(parents=True, exist_ok=True)
 
         date_str = data_date.strftime("%Y%m%d_%H%M%S")
@@ -360,7 +358,7 @@ class RetentionManager:
     ) -> bool:
         """Check if data has exceeded the maximum retention period and can be purged."""
         policy = self._policies[category]
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         max_retention_end = data_date + timedelta(days=policy.max_retention_years * 365)
         return now >= max_retention_end
 
@@ -368,7 +366,7 @@ class RetentionManager:
         self,
         category: DataCategory,
         data_date: datetime,
-        file_path: Optional[str] = None,
+        file_path: str | None = None,
         record_description: str = "",
     ) -> bool:
         """
@@ -390,7 +388,7 @@ class RetentionManager:
         if not self.should_purge(category, data_date):
             return False
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Remove the file if specified
         if file_path and os.path.isfile(file_path):
@@ -423,7 +421,7 @@ class RetentionManager:
         self,
         data_directory: str,
         category: DataCategory,
-    ) -> Dict[str, int]:
+    ) -> dict[str, int]:
         """
         Run a full cleanup cycle on a data directory:
         1. Archive data older than archive_after_years.
@@ -455,11 +453,12 @@ class RetentionManager:
             try:
                 # Infer data date from file modification time
                 mtime = file_path.stat().st_mtime
-                data_date = datetime.fromtimestamp(mtime, tz=timezone.utc)
+                data_date = datetime.fromtimestamp(mtime, tz=UTC)
 
                 if self.should_purge(category, data_date):
                     if self.purge_if_expired(
-                        category, data_date,
+                        category,
+                        data_date,
                         file_path=str(file_path),
                         record_description=file_path.name,
                     ):
@@ -468,7 +467,8 @@ class RetentionManager:
                         counts["retained"] += 1
                 elif self.should_archive(category, data_date):
                     archive_path = self.archive_data(
-                        category, data_date,
+                        category,
+                        data_date,
                         data=None,
                         source_path=str(file_path),
                     )
@@ -495,7 +495,7 @@ class RetentionManager:
     # Public API: query and reporting
     # ------------------------------------------------------------------
 
-    def get_policies(self) -> List[Dict[str, Any]]:
+    def get_policies(self) -> list[dict[str, Any]]:
         """Get all configured retention policies."""
         return [
             {
@@ -511,10 +511,10 @@ class RetentionManager:
 
     def get_action_log(
         self,
-        category: Optional[DataCategory] = None,
-        action: Optional[RetentionAction] = None,
+        category: DataCategory | None = None,
+        action: RetentionAction | None = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get recent retention actions."""
         with self._lock:
             log = list(self._action_log)
@@ -541,7 +541,7 @@ class RetentionManager:
             for r in log
         ]
 
-    def get_retention_summary(self) -> Dict[str, Any]:
+    def get_retention_summary(self) -> dict[str, Any]:
         """Get a summary of retention status across all categories."""
         with self._lock:
             log = list(self._action_log)

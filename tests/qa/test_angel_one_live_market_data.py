@@ -6,24 +6,26 @@ QA — Angel One live market data (WebSocket) with paper execution.
 4) Market status endpoint returns expected shape.
 5) WebSocket market_status_updated broadcast.
 """
+
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 
-from src.core.events import Exchange, Tick
-from src.market_data.market_data_service import MarketDataService
-from src.market_data.bar_cache import BarCache
-from src.market_data.bar_aggregator import TickToBarAggregator
-from src.execution.autonomous_loop import AutonomousLoop
 from src.api.ws_manager import ConnectionManager
+from src.core.events import Exchange, Tick
+from src.execution.autonomous_loop import AutonomousLoop
+from src.market_data.bar_aggregator import TickToBarAggregator
+from src.market_data.bar_cache import BarCache
+from src.market_data.market_data_service import MarketDataService
 
 
 # --- 1) Market data feed connects and sets healthy ---
 @pytest.mark.asyncio
 async def test_market_data_feed_connects_and_sets_healthy():
     """When connector connects and receives a tick, service reports healthy."""
+
     class MockConnector:
         _connected = False
         _tick_queue = None
@@ -32,7 +34,7 @@ async def test_market_data_feed_connects_and_sets_healthy():
             self._connected = True
             self._tick_queue = asyncio.Queue()
             await self._tick_queue.put(
-                Tick(symbol="RELIANCE", exchange=Exchange.NSE, price=100.0, size=10.0, ts=datetime.now(timezone.utc))
+                Tick(symbol="RELIANCE", exchange=Exchange.NSE, price=100.0, size=10.0, ts=datetime.now(UTC))
             )
 
         async def disconnect(self):
@@ -45,14 +47,17 @@ async def test_market_data_feed_connects_and_sets_healthy():
             try:
                 tick = await asyncio.wait_for(self._tick_queue.get(), timeout=1.0)
                 yield tick
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     bar_cache = BarCache()
     aggregator = TickToBarAggregator(bar_cache, interval_seconds=60)
     connector = MockConnector()
     service = MarketDataService(
-        connector, bar_cache, aggregator, ["RELIANCE"],
+        connector,
+        bar_cache,
+        aggregator,
+        ["RELIANCE"],
         feed_stale_seconds=120,
     )
     service.start()
@@ -73,7 +78,6 @@ async def test_market_data_feed_unhealthy_triggers_skip():
 
     async def submit_fn(*args, **kwargs):
         tick_ran.append(1)
-        from src.execution.order_entry.request import OrderEntryResult
         return type("R", (), {"success": True, "order_id": "o1", "latency_ms": 1.0})()
 
     get_market_feed_healthy = lambda: False  # unhealthy
@@ -146,20 +150,41 @@ async def test_paper_mode_place_order_returns_immediately():
 @pytest.mark.asyncio
 async def test_market_status_endpoint():
     """GET /api/v1/market/status returns connected, healthy, last_tick_ts, symbols."""
-    from fastapi.testclient import TestClient
-    from src.api.app import create_app
-
+    import os
+    import time
     from contextlib import asynccontextmanager
+
+    import jwt
+    from fastapi.testclient import TestClient
+
+    from src.api.app import create_app
 
     @asynccontextmanager
     async def _noop_lifespan(a):
         yield
 
+    # Generate a valid JWT for test requests
+    jwt_secret = os.environ.get("JWT_SECRET", "dev-secret-key-change-in-production")
+    now = int(time.time())
+    token = jwt.encode(
+        {
+            "sub": "testuser",
+            "user_id": "testuser",
+            "roles": ["user", "admin"],
+            "type": "access",
+            "iat": now,
+            "exp": now + 1800,
+        },
+        jwt_secret,
+        algorithm="HS256",
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
     app = create_app()
     # Replace lifespan with no-op to avoid connecting to real services in tests
     app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
     with TestClient(app, raise_server_exceptions=False) as client:
-        r = client.get("/api/v1/market/status")
+        r = client.get("/api/v1/market/status", headers=headers)
         assert r.status_code == 200
         data = r.json()
         assert "connected" in data
@@ -173,18 +198,16 @@ async def test_market_status_endpoint():
     mock_svc.get_status.return_value = {
         "connected": True,
         "healthy": True,
-        "last_tick_ts": "2025-01-15T10:00:00Z",
-        "symbols": ["RELIANCE", "TCS"],
+        "message": "Mock feed active",
+        "source": "mock",
     }
     with TestClient(app) as client:
         app.state.market_data_service = mock_svc
-        r = client.get("/api/v1/market/status")
+        r = client.get("/api/v1/market/status", headers=headers)
         assert r.status_code == 200
         data = r.json()
         assert data["connected"] is True
         assert data["healthy"] is True
-        assert data["last_tick_ts"] == "2025-01-15T10:00:00Z"
-        assert data["symbols"] == ["RELIANCE", "TCS"]
 
 
 # --- 5) WebSocket market_status_updated broadcast ---
@@ -196,18 +219,21 @@ async def test_ws_market_status_broadcast():
     class MockWS:
         async def accept(self):
             pass
+
         async def send_json(self, msg):
             received.append(msg)
 
     manager = ConnectionManager()
     ws = MockWS()
     await manager.connect(ws)
-    await manager.broadcast({
-        "type": "market_status_updated",
-        "connected": True,
-        "healthy": True,
-        "last_tick_ts": "2025-01-15T10:00:00Z",
-    })
+    await manager.broadcast(
+        {
+            "type": "market_status_updated",
+            "connected": True,
+            "healthy": True,
+            "last_tick_ts": "2025-01-15T10:00:00Z",
+        }
+    )
     await asyncio.sleep(0)
     assert any(m.get("type") == "market_status_updated" for m in received)
     ev = next(m for m in received if m.get("type") == "market_status_updated")

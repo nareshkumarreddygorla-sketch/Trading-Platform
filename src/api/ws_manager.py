@@ -24,12 +24,14 @@ Features:
   - Graceful disconnect on pong timeout
   - Periodic snapshot broadcast every 5 seconds with full dashboard state
 """
+
 import asyncio
 import logging
 import time
 from collections import deque
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import WebSocket
 
@@ -46,6 +48,7 @@ SNAPSHOT_INTERVAL_SECONDS = 5
 
 class _ClientState:
     """Per-client tracking state."""
+
     __slots__ = ("user_id", "last_pong", "message_queue")
 
     def __init__(self, user_id: str):
@@ -59,15 +62,15 @@ class ConnectionManager:
     and periodic snapshot broadcast."""
 
     def __init__(self):
-        self._connections: Dict[WebSocket, _ClientState] = {}
+        self._connections: dict[WebSocket, _ClientState] = {}
         self._lock = asyncio.Lock()
-        self._heartbeat_task: Optional[asyncio.Task] = None
-        self._snapshot_task: Optional[asyncio.Task] = None
-        self._snapshot_provider: Optional[Callable[[], Dict[str, Any]]] = None
+        self._heartbeat_task: asyncio.Task | None = None
+        self._snapshot_task: asyncio.Task | None = None
+        self._snapshot_provider: Callable[[], dict[str, Any]] | None = None
 
     # ── Connection lifecycle ──
 
-    async def connect(self, websocket: WebSocket, user_id: Optional[str] = None, subprotocol: Optional[str] = None) -> None:
+    async def connect(self, websocket: WebSocket, user_id: str | None = None, subprotocol: str | None = None) -> None:
         try:
             await websocket.accept(subprotocol=subprotocol)
         except TypeError:
@@ -127,7 +130,7 @@ class ConnectionManager:
         message = {
             "type": event_type,
             "data": data,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         await self.broadcast(message)
 
@@ -174,7 +177,7 @@ class ConnectionManager:
 
     # ── Snapshot provider ──
 
-    def set_snapshot_provider(self, provider: Callable[[], Dict[str, Any]]) -> None:
+    def set_snapshot_provider(self, provider: Callable[[], dict[str, Any]]) -> None:
         """Register a callable that returns the current dashboard snapshot dict.
 
         The provider is called every SNAPSHOT_INTERVAL_SECONDS and the result
@@ -268,10 +271,10 @@ class ConnectionManager:
 
 
 # Module-level singleton; app sets it on startup
-_manager: Optional[ConnectionManager] = None
+_manager: ConnectionManager | None = None
 
 
-def get_ws_manager() -> Optional[ConnectionManager]:
+def get_ws_manager() -> ConnectionManager | None:
     return _manager
 
 

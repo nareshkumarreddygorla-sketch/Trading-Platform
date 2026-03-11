@@ -2,14 +2,15 @@
 Backtesting engine: historical bars + strategy -> equity curve, metrics.
 Simulates slippage, latency, fees (broker, exchange, tax).
 """
-from dataclasses import dataclass, field
-from typing import List, Optional
 
-from src.core.events import Bar, Exchange, Signal, SignalSide
+from dataclasses import dataclass, field
+
+from src.core.events import Bar, Exchange, SignalSide
 from src.strategy_engine.base import MarketState, StrategyBase
+
+from .fill_model import FillModel, FillModelConfig
 from .metrics import BacktestMetrics, compute_backtest_metrics
 from .slippage import SlippageModel
-from .fill_model import FillModel, FillModelConfig
 
 
 @dataclass
@@ -25,10 +26,10 @@ class BacktestConfig:
 
 @dataclass
 class BacktestResult:
-    equity_curve: List[float] = field(default_factory=list)
-    metrics: Optional[BacktestMetrics] = None
-    trades: List[dict] = field(default_factory=list)
-    config: Optional[BacktestConfig] = None
+    equity_curve: list[float] = field(default_factory=list)
+    metrics: BacktestMetrics | None = None
+    trades: list[dict] = field(default_factory=list)
+    config: BacktestConfig | None = None
 
 
 class BacktestEngine:
@@ -37,21 +38,23 @@ class BacktestEngine:
     Walk-forward: slice bars into train/test windows (caller can loop).
     """
 
-    def __init__(self, config: Optional[BacktestConfig] = None):
+    def __init__(self, config: BacktestConfig | None = None):
         self.config = config or BacktestConfig()
         self.slippage = SlippageModel(self.config.slippage_bps)
-        self.fill_model = FillModel(FillModelConfig(
-            latency_bars=self.config.latency_bars,
-            slippage_bps=self.config.slippage_bps,
-            spread_bps=self.config.spread_bps,
-            max_volume_participation_pct=self.config.max_volume_participation_pct,
-            commission_pct=self.config.commission_pct,
-        ))
+        self.fill_model = FillModel(
+            FillModelConfig(
+                latency_bars=self.config.latency_bars,
+                slippage_bps=self.config.slippage_bps,
+                spread_bps=self.config.spread_bps,
+                max_volume_participation_pct=self.config.max_volume_participation_pct,
+                commission_pct=self.config.commission_pct,
+            )
+        )
 
     def run(
         self,
         strategy: StrategyBase,
-        bars: List[Bar],
+        bars: list[Bar],
         symbol: str,
         exchange: Exchange = Exchange.NSE,
     ) -> BacktestResult:
@@ -59,7 +62,7 @@ class BacktestEngine:
             return BacktestResult(config=self.config)
         equity = self.config.initial_capital
         equity_curve = [equity]
-        trades: List[dict] = []
+        trades: list[dict] = []
         position = 0.0
         entry_price = 0.0
         # Rolling window of bars for strategy
@@ -92,7 +95,9 @@ class BacktestEngine:
                         position = fill_qty
                         entry_price = fill_price
                         equity -= cost + commission
-                        trades.append({"ts": fill_bar.ts, "side": "BUY", "price": fill_price, "qty": position, "equity": equity})
+                        trades.append(
+                            {"ts": fill_bar.ts, "side": "BUY", "price": fill_price, "qty": position, "equity": equity}
+                        )
                 elif sig.side == SignalSide.SELL and position > 0:
                     fill_bar, fill_price, fill_qty, commission = self.fill_model.execute_at_bar_index(
                         i, bars, "SELL", position, latest.close
@@ -101,7 +106,9 @@ class BacktestEngine:
                         sale_proceeds = fill_price * fill_qty
                         equity += sale_proceeds - commission
                         pnl = (fill_price - entry_price) * fill_qty
-                        trades.append({"ts": fill_bar.ts, "side": "SELL", "price": fill_price, "pnl": pnl, "equity": equity})
+                        trades.append(
+                            {"ts": fill_bar.ts, "side": "SELL", "price": fill_price, "pnl": pnl, "equity": equity}
+                        )
                         position = position - fill_qty
                         if position <= 0:
                             entry_price = 0.0

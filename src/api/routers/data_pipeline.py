@@ -2,8 +2,8 @@
 Data Pipeline API: trigger data refresh, check data quality, manage OHLCV data,
 real-time validation statistics, and data staleness monitoring.
 """
+
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 
@@ -18,6 +18,7 @@ def _get_quality_monitor(request: Request):
     monitor = getattr(request.app.state, "data_quality_monitor", None)
     if monitor is None:
         from src.data_pipeline.data_quality_monitor import DataQualityMonitor
+
         monitor = DataQualityMonitor()
         request.app.state.data_quality_monitor = monitor
     return monitor
@@ -28,6 +29,7 @@ def _get_reconciliator(request: Request):
     reconciliator = getattr(request.app.state, "data_reconciliator", None)
     if reconciliator is None:
         from src.data_pipeline.data_reconciliation import DataReconciliator
+
         reconciliator = DataReconciliator()
         request.app.state.data_reconciliator = reconciliator
     return reconciliator
@@ -42,8 +44,10 @@ async def trigger_data_refresh(
     _user=Depends(require_auth),
 ):
     """Trigger nightly data refresh pipeline (runs in background)."""
+
     async def _run():
         from scripts.nightly_data_refresh import main
+
         await main()
 
     background_tasks.add_task(_run)
@@ -81,6 +85,7 @@ async def check_data_quality(request: Request, _user=Depends(require_auth)):
         # Fallback: check OHLCV repo for basic quality info
         try:
             from src.persistence.ohlcv_repo import OHLCVRepository
+
             repo = OHLCVRepository()
             symbols = repo.get_symbols_with_data(interval="1d", min_bars=50)
             return {
@@ -99,7 +104,7 @@ async def check_data_quality(request: Request, _user=Depends(require_auth)):
                 "quality": "unknown",
             }
 
-    except Exception as e:
+    except Exception:
         logger.exception("Data quality check failed")
         return {"error": "Data quality check failed", "quality": "unknown"}
 
@@ -128,12 +133,9 @@ async def get_symbol_quality(
             **quality,
             "tick_validation": tick_stats,
             "ohlc_validation": ohlc_stats,
-            "alerts": [
-                a for a in monitor.get_alerts(limit=20)
-                if a.get("symbol") == symbol.upper()
-            ],
+            "alerts": [a for a in monitor.get_alerts(limit=20) if a.get("symbol") == symbol.upper()],
         }
-    except Exception as e:
+    except Exception:
         logger.exception("Symbol quality check failed for %s", symbol)
         return {"error": f"Quality check failed for {symbol}", "symbol": symbol}
 
@@ -149,7 +151,7 @@ async def get_validation_stats(request: Request, _user=Depends(require_auth)):
     try:
         monitor = _get_quality_monitor(request)
         return monitor.get_validation_stats()
-    except Exception as e:
+    except Exception:
         logger.exception("Validation stats retrieval failed")
         return {"error": "Validation stats retrieval failed"}
 
@@ -172,7 +174,7 @@ async def get_staleness_report(request: Request, _user=Depends(require_auth)):
         report["reconciliation_summary"] = reconciliator.get_reconciliation_summary()
 
         return report
-    except Exception as e:
+    except Exception:
         logger.exception("Staleness report failed")
         return {"error": "Staleness report failed"}
 
@@ -190,7 +192,7 @@ async def get_quality_alerts(
             "alerts": monitor.get_alerts(limit=limit),
             "total_alerts": len(monitor._alerts),
         }
-    except Exception as e:
+    except Exception:
         logger.exception("Alert retrieval failed")
         return {"error": "Alert retrieval failed"}
 
@@ -201,7 +203,7 @@ async def get_reconciliation_report(request: Request, _user=Depends(require_auth
     try:
         reconciliator = _get_reconciliator(request)
         return reconciliator.get_reconciliation_summary()
-    except Exception as e:
+    except Exception:
         logger.exception("Reconciliation report failed")
         return {"error": "Reconciliation report failed"}
 
@@ -218,10 +220,11 @@ async def get_available_symbols(
     """Get symbols with sufficient historical data."""
     try:
         from src.persistence.ohlcv_repo import OHLCVRepository
+
         repo = OHLCVRepository()
         symbols = repo.get_symbols_with_data(interval=interval, min_bars=min_bars)
         return {"count": len(symbols), "symbols": symbols}
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to retrieve available symbols")
         return {"error": "Failed to retrieve available symbols"}
 
@@ -236,6 +239,7 @@ async def get_bars(
     """Get OHLCV bars for a symbol."""
     try:
         from src.persistence.ohlcv_repo import OHLCVRepository
+
         repo = OHLCVRepository()
         bars = repo.get_bars(symbol.upper(), interval=interval, limit=limit)
         return {
@@ -244,7 +248,7 @@ async def get_bars(
             "count": len(bars),
             "bars": [
                 {
-                    "timestamp": b.timestamp.isoformat() if hasattr(b.timestamp, 'isoformat') else str(b.timestamp),
+                    "timestamp": b.timestamp.isoformat() if hasattr(b.timestamp, "isoformat") else str(b.timestamp),
                     "open": b.open,
                     "high": b.high,
                     "low": b.low,
@@ -254,19 +258,20 @@ async def get_bars(
                 for b in bars
             ],
         }
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to retrieve bars")
         return {"error": "Failed to retrieve bars"}
 
 
 @router.get("/instrument-map")
 async def get_instrument_info(
-    symbol: Optional[str] = None,
+    symbol: str | None = None,
     _user=Depends(require_auth),
 ):
     """Get Angel One instrument info / symbol token mapping."""
     try:
         from src.market_data.symbol_token_map import get_symbol_token_map
+
         stm = get_symbol_token_map()
         if not stm.is_loaded:
             return {"loaded": False, "message": "Instrument map not loaded. Run data refresh first."}
@@ -280,6 +285,6 @@ async def get_instrument_info(
             "instrument_count": stm.instrument_count,
             "nse_equity_count": len(stm.get_all_nse_equity_symbols()),
         }
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to retrieve instrument info")
         return {"error": "Failed to retrieve instrument info"}

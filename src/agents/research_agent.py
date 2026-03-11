@@ -4,9 +4,11 @@ to rank all stocks, and outputs the best trading opportunities.
 
 No hardcoded stock lists — dynamically discovers what to trade.
 """
+
 import asyncio
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from .base import BaseAgent
 
@@ -28,8 +30,8 @@ class ResearchAgent(BaseAgent):
 
     def __init__(
         self,
-        get_symbols: Optional[Callable] = None,
-        get_bars: Optional[Callable] = None,
+        get_symbols: Callable | None = None,
+        get_bars: Callable | None = None,
         feature_engine=None,
         ensemble_engine=None,
         market_scanner=None,
@@ -46,9 +48,9 @@ class ResearchAgent(BaseAgent):
         self._top_n = top_n
         self._min_confidence = min_confidence
         self._scan_interval = scan_interval
-        self._last_opportunities: List[Dict[str, Any]] = []
-        self._feature_history: Dict[str, List[Dict[str, float]]] = {}
-        self._dynamic_universe: List[str] = []
+        self._last_opportunities: list[dict[str, Any]] = []
+        self._feature_history: dict[str, list[dict[str, float]]] = {}
+        self._dynamic_universe: list[str] = []
         self._universe_refresh_counter = 0
 
     @property
@@ -59,10 +61,13 @@ class ResearchAgent(BaseAgent):
         """Fetch the latest dynamic stock universe from the full NSE market."""
         try:
             from src.scanner.dynamic_universe import get_dynamic_universe
+
             universe = get_dynamic_universe()
             self._dynamic_universe = universe.get_trading_stocks(count=100)
-            logger.info("ResearchAgent: dynamic universe refreshed — %d stocks from full market scan",
-                        len(self._dynamic_universe))
+            logger.info(
+                "ResearchAgent: dynamic universe refreshed — %d stocks from full market scan",
+                len(self._dynamic_universe),
+            )
         except Exception as e:
             logger.debug("Dynamic universe refresh failed: %s", e)
 
@@ -101,44 +106,46 @@ class ResearchAgent(BaseAgent):
         # === Phase 2: Scan broader market via MarketScanner (yfinance) ===
         # Only scan symbols NOT already in BarCache
         if self._market_scanner and self._dynamic_universe:
-            discovery_symbols = [
-                f"{s}.NS" for s in self._dynamic_universe
-                if s not in live_scanned
-            ]
+            discovery_symbols = [f"{s}.NS" for s in self._dynamic_universe if s not in live_scanned]
             if discovery_symbols:
                 try:
                     loop = asyncio.get_event_loop()
                     _batch = discovery_symbols[:50]
                     scan_result = await loop.run_in_executor(
-                        None, lambda: self._market_scanner.scan(universe=_batch),
+                        None,
+                        lambda: self._market_scanner.scan(universe=_batch),
                     )
                     for scored in scan_result.top_stocks:
                         if scored.confidence >= self._min_confidence:
-                            opportunities.append({
-                                "symbol": scored.symbol,
-                                "exchange": scored.exchange,
-                                "direction": scored.side,
-                                "prob_up": scored.probability,
-                                "confidence": scored.confidence,
-                                "expected_return": 0.0,
-                                "price": scored.price,
-                                "models": ["scanner"],
-                                "source": "market_discovery",
-                            })
+                            opportunities.append(
+                                {
+                                    "symbol": scored.symbol,
+                                    "exchange": scored.exchange,
+                                    "direction": scored.side,
+                                    "prob_up": scored.probability,
+                                    "confidence": scored.confidence,
+                                    "expected_return": 0.0,
+                                    "price": scored.price,
+                                    "models": ["scanner"],
+                                    "source": "market_discovery",
+                                }
+                            )
                 except Exception as e:
                     logger.debug("Market discovery scan failed: %s", e)
 
         # Sort by confidence and take top N
         opportunities.sort(key=lambda x: x["confidence"], reverse=True)
-        self._last_opportunities = opportunities[:self._top_n]
+        self._last_opportunities = opportunities[: self._top_n]
 
         if self._last_opportunities:
-            logger.info("ResearchAgent: found %d opportunities (top: %s conf=%.2f) — scanned %d live + %d discovery",
-                        len(self._last_opportunities),
-                        self._last_opportunities[0]["symbol"],
-                        self._last_opportunities[0]["confidence"],
-                        len(live_scanned),
-                        len(self._dynamic_universe))
+            logger.info(
+                "ResearchAgent: found %d opportunities (top: %s conf=%.2f) — scanned %d live + %d discovery",
+                len(self._last_opportunities),
+                self._last_opportunities[0]["symbol"],
+                self._last_opportunities[0]["confidence"],
+                len(live_scanned),
+                len(self._dynamic_universe),
+            )
 
             # Send to execution agent
             await self.send_message(
@@ -159,7 +166,7 @@ class ResearchAgent(BaseAgent):
                 },
             )
 
-    def _score_symbol(self, symbol: str, exchange) -> Optional[Dict[str, Any]]:
+    def _score_symbol(self, symbol: str, exchange) -> dict[str, Any] | None:
         """Score a single symbol using the ensemble engine."""
         bars = self._get_bars(symbol, exchange, "1m", 100)
         if not bars or len(bars) < 60:

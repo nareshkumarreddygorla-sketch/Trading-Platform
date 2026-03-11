@@ -13,13 +13,10 @@ and require no external services (Redis, DB, etc.).
 """
 
 import asyncio
-import os
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -43,7 +40,6 @@ from src.execution.order_router import OrderRouter
 from src.risk_engine.circuit_breaker import CircuitBreaker, CircuitState
 from src.risk_engine.limits import RiskLimits
 from src.risk_engine.manager import RiskManager
-
 
 # ---------------------------------------------------------------------------
 # Shared event loop for async operations from multiple threads
@@ -104,6 +100,7 @@ def _reset_shared_loop():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_signal(symbol: str = "RELIANCE", side: SignalSide = SignalSide.BUY, price: float = 100.0) -> Signal:
     """Create a test Signal."""
@@ -186,7 +183,7 @@ def _build_order_entry_service(
     idempotency._redis_available = False
 
     # Patch the kill switch state file path to avoid loading stale state from disk
-    with patch.object(KillSwitch, '_load_state', return_value=None):
+    with patch.object(KillSwitch, "_load_state", return_value=None):
         kill_switch = KillSwitch()
 
     reservation = ExposureReservation()
@@ -206,6 +203,7 @@ def _build_order_entry_service(
 # ---------------------------------------------------------------------------
 # Test 1: Concurrent order submission (10 simultaneous orders)
 # ---------------------------------------------------------------------------
+
 
 class TestConcurrentOrderSubmission:
     """Verify 10 simultaneous orders can be submitted without data corruption."""
@@ -262,10 +260,7 @@ class TestConcurrentOrderSubmission:
                 results_by_symbol[symbol] = result
 
         symbols = [f"STOCK{i}" for i in range(10)]
-        threads = [
-            threading.Thread(target=submit_order, args=(sym, 100.0 + i))
-            for i, sym in enumerate(symbols)
-        ]
+        threads = [threading.Thread(target=submit_order, args=(sym, 100.0 + i)) for i, sym in enumerate(symbols)]
         for t in threads:
             t.start()
         for t in threads:
@@ -280,6 +275,7 @@ class TestConcurrentOrderSubmission:
 # ---------------------------------------------------------------------------
 # Test 2: Rate limiter under concurrent load
 # ---------------------------------------------------------------------------
+
 
 class TestRateLimiterConcurrency:
     """Verify rate limiter correctly throttles under concurrent access."""
@@ -327,9 +323,7 @@ class TestRateLimiterConcurrency:
             t.join(timeout=10)
 
         # Should never exceed the limit of 10
-        assert allowed_count[0] <= 10, (
-            f"Rate limiter allowed {allowed_count[0]} orders, expected <= 10"
-        )
+        assert allowed_count[0] <= 10, f"Rate limiter allowed {allowed_count[0]} orders, expected <= 10"
 
     def test_rate_limiter_rejects_orders_in_service(self):
         """OrderEntryService should reject orders when rate limiter is exhausted."""
@@ -365,6 +359,7 @@ class TestRateLimiterConcurrency:
 # ---------------------------------------------------------------------------
 # Test 3: Idempotency guard under concurrent duplicate submissions
 # ---------------------------------------------------------------------------
+
 
 class TestIdempotencyConcurrency:
     """Verify idempotency guard handles concurrent duplicate keys correctly."""
@@ -421,7 +416,7 @@ class TestIdempotencyConcurrency:
         idempotency._redis_checked = True
         idempotency._redis_available = False
 
-        with patch.object(KillSwitch, '_load_state', return_value=None):
+        with patch.object(KillSwitch, "_load_state", return_value=None):
             kill_switch = KillSwitch()
 
         reservation = ExposureReservation()
@@ -468,6 +463,7 @@ class TestIdempotencyConcurrency:
 # ---------------------------------------------------------------------------
 # Test 4: RiskManager thread safety under concurrent can_place_order
 # ---------------------------------------------------------------------------
+
 
 class TestRiskManagerThreadSafety:
     """Verify RiskManager.can_place_order is thread-safe."""
@@ -560,14 +556,13 @@ class TestRiskManagerThreadSafety:
             t.join(timeout=10)
 
         expected_pnl = n_threads * calls_per_thread * pnl_per_call
-        assert abs(rm.daily_pnl - expected_pnl) < 0.01, (
-            f"PnL corruption: expected {expected_pnl}, got {rm.daily_pnl}"
-        )
+        assert abs(rm.daily_pnl - expected_pnl) < 0.01, f"PnL corruption: expected {expected_pnl}, got {rm.daily_pnl}"
 
 
 # ---------------------------------------------------------------------------
 # Test 5: CircuitBreaker thread safety
 # ---------------------------------------------------------------------------
+
 
 class TestCircuitBreakerThreadSafety:
     """Verify CircuitBreaker operations are thread-safe."""
@@ -630,9 +625,7 @@ class TestCircuitBreakerThreadSafety:
         assert len(allowed) == 20
         allowed_count = sum(1 for a in allowed if a)
         # Should allow exactly _half_open_max_trades (3)
-        assert allowed_count == 3, (
-            f"Expected 3 allowed in HALF_OPEN, got {allowed_count}"
-        )
+        assert allowed_count == 3, f"Expected 3 allowed in HALF_OPEN, got {allowed_count}"
 
     def test_concurrent_update_equity_triggers_trip(self):
         """Concurrent equity updates that breach drawdown should trip the circuit exactly once."""
@@ -650,10 +643,7 @@ class TestCircuitBreakerThreadSafety:
                 errors.append(e)
 
         # 10 threads simultaneously report equity drop of 6% (should trigger)
-        threads = [
-            threading.Thread(target=update_equity, args=(94_000.0,))
-            for _ in range(10)
-        ]
+        threads = [threading.Thread(target=update_equity, args=(94_000.0,)) for _ in range(10)]
         for t in threads:
             t.start()
         for t in threads:
@@ -691,6 +681,7 @@ class TestCircuitBreakerThreadSafety:
 # Test 6: Stress - many orders with max_open_positions limit
 # ---------------------------------------------------------------------------
 
+
 class TestPositionLimitUnderConcurrency:
     """Verify max_open_positions is not exceeded under concurrent submissions."""
 
@@ -723,14 +714,13 @@ class TestPositionLimitUnderConcurrency:
         assert len(results) == 8
         succeeded = [r for r in results if r.success]
         # Should not exceed max_open_positions (3)
-        assert len(succeeded) <= 3, (
-            f"Position limit violated: {len(succeeded)} orders succeeded, max allowed is 3"
-        )
+        assert len(succeeded) <= 3, f"Position limit violated: {len(succeeded)} orders succeeded, max allowed is 3"
 
 
 # ---------------------------------------------------------------------------
 # Test 7: Kill switch thread safety
 # ---------------------------------------------------------------------------
+
 
 class TestKillSwitchConcurrency:
     """Verify KillSwitch operations under concurrent access."""
@@ -739,7 +729,7 @@ class TestKillSwitchConcurrency:
         """Rapid sequential arm/disarm (via shared loop) should not corrupt state."""
         from src.execution.order_entry.kill_switch import KillReason
 
-        with patch.object(KillSwitch, '_load_state', return_value=None):
+        with patch.object(KillSwitch, "_load_state", return_value=None):
             ks = KillSwitch()
 
         errors = []
@@ -812,6 +802,7 @@ class TestKillSwitchConcurrency:
 # ---------------------------------------------------------------------------
 # Test 8: Mixed concurrent operations (orders + position updates + risk checks)
 # ---------------------------------------------------------------------------
+
 
 class TestMixedConcurrentOperations:
     """Stress test with mixed concurrent operations happening simultaneously."""

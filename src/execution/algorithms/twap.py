@@ -10,27 +10,30 @@ Drift circuit breaker:
   - CRITICAL threshold (default 1.0%): cancels remaining slices.
   - All drift events logged for post-trade analysis.
 """
+
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Callable, Coroutine, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class DriftSeverity(str, Enum):
     """TWAP drift severity levels."""
+
     NORMAL = "NORMAL"
-    WARNING = "WARNING"     # Drift exceeds warning threshold -> pause
-    CRITICAL = "CRITICAL"   # Drift exceeds critical threshold -> cancel
+    WARNING = "WARNING"  # Drift exceeds warning threshold -> pause
+    CRITICAL = "CRITICAL"  # Drift exceeds critical threshold -> cancel
 
 
 @dataclass
 class TWAPDriftEvent:
     """Recorded drift event for post-trade analysis."""
+
     exec_id: str
     slice_sequence: int
     timestamp: datetime
@@ -45,6 +48,7 @@ class TWAPDriftEvent:
 @dataclass
 class TWAPConfig:
     """Configuration for TWAP execution."""
+
     total_quantity: int
     symbol: str
     side: str  # BUY or SELL
@@ -55,20 +59,21 @@ class TWAPConfig:
     max_participation_pct: float = 10.0  # max % of each interval's volume
     randomize_pct: float = 20.0  # randomize slice sizes by +/- this %
     # Drift circuit breaker thresholds (basis points)
-    drift_warning_pct: float = 0.5    # 0.5% = 50 bps -> pause and alert
-    drift_critical_pct: float = 1.0   # 1.0% = 100 bps -> cancel remaining slices
-    drift_check_enabled: bool = True   # Enable/disable drift monitoring
+    drift_warning_pct: float = 0.5  # 0.5% = 50 bps -> pause and alert
+    drift_critical_pct: float = 1.0  # 1.0% = 100 bps -> cancel remaining slices
+    drift_check_enabled: bool = True  # Enable/disable drift monitoring
 
 
 @dataclass
 class TWAPSlice:
     """A single child order in the TWAP schedule."""
+
     slice_id: str
     sequence: int
     quantity: int
     scheduled_time: datetime
     status: str = "PENDING"  # PENDING, SENT, FILLED, FAILED
-    order_id: Optional[str] = None
+    order_id: str | None = None
     fill_price: float = 0.0
     fill_qty: int = 0
 
@@ -76,21 +81,22 @@ class TWAPSlice:
 @dataclass
 class TWAPExecution:
     """Tracks the overall TWAP execution."""
+
     exec_id: str
     config: TWAPConfig
-    slices: List[TWAPSlice] = field(default_factory=list)
+    slices: list[TWAPSlice] = field(default_factory=list)
     status: str = "CREATED"  # CREATED, RUNNING, SUBMITTED, COMPLETED, CANCELLED, DRIFT_PAUSED, DRIFT_CANCELLED
     total_filled: int = 0
     total_submitted: int = 0  # Qty submitted (fills tracked via FillListener)
     vwap: float = 0.0
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
     # Drift circuit breaker state
-    arrival_price: float = 0.0       # Price at TWAP start (benchmark)
-    drift_events: List[TWAPDriftEvent] = field(default_factory=list)
+    arrival_price: float = 0.0  # Price at TWAP start (benchmark)
+    drift_events: list[TWAPDriftEvent] = field(default_factory=list)
     drift_paused: bool = False
     drift_cancelled: bool = False
-    max_drift_bps: float = 0.0       # Maximum observed drift in bps
+    max_drift_bps: float = 0.0  # Maximum observed drift in bps
 
 
 class TWAPAlgorithm:
@@ -108,7 +114,7 @@ class TWAPAlgorithm:
     def __init__(
         self,
         submit_order_fn: Callable[..., Coroutine],
-        on_drift_alert: Optional[Callable] = None,
+        on_drift_alert: Callable | None = None,
     ):
         """
         Args:
@@ -118,7 +124,7 @@ class TWAPAlgorithm:
         """
         self._submit = submit_order_fn
         self._on_drift_alert = on_drift_alert
-        self._active_executions: Dict[str, TWAPExecution] = {}
+        self._active_executions: dict[str, TWAPExecution] = {}
 
     def create_schedule(self, config: TWAPConfig) -> TWAPExecution:
         """
@@ -127,15 +133,16 @@ class TWAPAlgorithm:
         Returns TWAPExecution with pre-computed slice schedule.
         """
         exec_id = f"twap_{uuid.uuid4().hex[:12]}"
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Compute slice sizes
         base_qty = config.total_quantity // config.num_slices
-        remainder = config.total_quantity - base_qty * config.num_slices
+        _remainder = config.total_quantity - base_qty * config.num_slices
         interval_seconds = (config.duration_minutes * 60) / config.num_slices
 
         slices = []
         import random
+
         for i in range(config.num_slices):
             # Randomize slice size
             randomize = config.randomize_pct / 100
@@ -153,12 +160,14 @@ class TWAPAlgorithm:
 
             scheduled = now + timedelta(seconds=interval_seconds * i)
 
-            slices.append(TWAPSlice(
-                slice_id=f"{exec_id}_s{i:03d}",
-                sequence=i,
-                quantity=qty,
-                scheduled_time=scheduled,
-            ))
+            slices.append(
+                TWAPSlice(
+                    slice_id=f"{exec_id}_s{i:03d}",
+                    sequence=i,
+                    quantity=qty,
+                    scheduled_time=scheduled,
+                )
+            )
 
         execution = TWAPExecution(
             exec_id=exec_id,
@@ -169,8 +178,11 @@ class TWAPAlgorithm:
 
         logger.info(
             "TWAP schedule created: %s %s %d shares in %d slices over %d min",
-            config.side, config.symbol, config.total_quantity,
-            config.num_slices, config.duration_minutes,
+            config.side,
+            config.symbol,
+            config.total_quantity,
+            config.num_slices,
+            config.duration_minutes,
         )
         return execution
 
@@ -219,8 +231,13 @@ class TWAPAlgorithm:
             logger.critical(
                 "TWAP DRIFT CRITICAL: %s %s drift=%.1fbps (%.3f%%) > critical=%.1f%% — "
                 "CANCELLING remaining slices. arrival=%.2f current=%.2f",
-                config.side, config.symbol, drift_bps, drift_pct,
-                config.drift_critical_pct, execution.arrival_price, current_price,
+                config.side,
+                config.symbol,
+                drift_bps,
+                drift_pct,
+                config.drift_critical_pct,
+                execution.arrival_price,
+                current_price,
             )
         elif drift_pct >= config.drift_warning_pct:
             severity = DriftSeverity.WARNING
@@ -230,14 +247,19 @@ class TWAPAlgorithm:
             logger.warning(
                 "TWAP DRIFT WARNING: %s %s drift=%.1fbps (%.3f%%) > warning=%.1f%% — "
                 "PAUSING TWAP. arrival=%.2f current=%.2f",
-                config.side, config.symbol, drift_bps, drift_pct,
-                config.drift_warning_pct, execution.arrival_price, current_price,
+                config.side,
+                config.symbol,
+                drift_bps,
+                drift_pct,
+                config.drift_warning_pct,
+                execution.arrival_price,
+                current_price,
             )
 
         drift_event = TWAPDriftEvent(
             exec_id=execution.exec_id,
             slice_sequence=slice_seq,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             arrival_price=execution.arrival_price,
             execution_price=current_price,
             drift_bps=drift_bps,
@@ -269,7 +291,7 @@ class TWAPAlgorithm:
     async def execute(
         self,
         execution: TWAPExecution,
-        get_market_price: Optional[Callable] = None,
+        get_market_price: Callable | None = None,
     ) -> TWAPExecution:
         """
         Execute the TWAP schedule with drift circuit breaker.
@@ -280,7 +302,7 @@ class TWAPAlgorithm:
         """
         config = execution.config
         execution.status = "RUNNING"
-        execution.start_time = datetime.now(timezone.utc)
+        execution.start_time = datetime.now(UTC)
         interval = (config.duration_minutes * 60) / config.num_slices
 
         total_cost = 0.0
@@ -294,10 +316,11 @@ class TWAPAlgorithm:
                 if arrival and arrival > 0:
                     execution.arrival_price = arrival
                     logger.info(
-                        "TWAP drift benchmark: %s arrival_price=%.2f "
-                        "(warning=%.1f%% critical=%.1f%%)",
-                        config.symbol, arrival,
-                        config.drift_warning_pct, config.drift_critical_pct,
+                        "TWAP drift benchmark: %s arrival_price=%.2f (warning=%.1f%% critical=%.1f%%)",
+                        config.symbol,
+                        arrival,
+                        config.drift_warning_pct,
+                        config.drift_critical_pct,
                     )
             except Exception:
                 pass
@@ -307,7 +330,9 @@ class TWAPAlgorithm:
                 slice_order.status = "CANCELLED"
                 logger.info(
                     "TWAP slice %d skipped (execution %s): %s",
-                    slice_order.sequence, execution.status, execution.exec_id,
+                    slice_order.sequence,
+                    execution.status,
+                    execution.exec_id,
                 )
                 continue
 
@@ -326,7 +351,8 @@ class TWAPAlgorithm:
                     slice_order.status = "CANCELLED"
                     logger.warning(
                         "TWAP drift pause timeout after %.0fs; cancelling remaining slices: %s",
-                        waited, execution.exec_id,
+                        waited,
+                        execution.exec_id,
                     )
                     continue
 
@@ -351,8 +377,10 @@ class TWAPAlgorithm:
                 if current_market_price and config.drift_check_enabled:
                     cumulative_vwap = total_cost / total_filled if total_filled > 0 else 0.0
                     severity = self._check_drift(
-                        execution, current_market_price,
-                        slice_order.sequence, cumulative_vwap,
+                        execution,
+                        current_market_price,
+                        slice_order.sequence,
+                        cumulative_vwap,
                     )
                     if severity == DriftSeverity.CRITICAL:
                         slice_order.status = "CANCELLED"
@@ -386,8 +414,11 @@ class TWAPAlgorithm:
 
                 logger.info(
                     "TWAP slice %d/%d: %s %s x%d @ %s",
-                    slice_order.sequence + 1, config.num_slices,
-                    config.side, config.symbol, slice_order.quantity,
+                    slice_order.sequence + 1,
+                    config.num_slices,
+                    config.side,
+                    config.symbol,
+                    slice_order.quantity,
                     f"{limit_price:.2f}" if limit_price else "MARKET",
                 )
 
@@ -406,20 +437,25 @@ class TWAPAlgorithm:
         execution.vwap = total_cost / total_filled if total_filled > 0 else 0.0
         if execution.status not in ("DRIFT_CANCELLED", "DRIFT_PAUSED", "CANCELLED"):
             execution.status = "SUBMITTED"
-        execution.end_time = datetime.now(timezone.utc)
+        execution.end_time = datetime.now(UTC)
 
         # Log drift summary for post-trade analysis
         if execution.drift_events:
             logger.info(
-                "TWAP drift summary: %s %s — %d drift events, max_drift=%.1f bps, "
-                "final_status=%s",
-                config.side, config.symbol, len(execution.drift_events),
-                execution.max_drift_bps, execution.status,
+                "TWAP drift summary: %s %s — %d drift events, max_drift=%.1f bps, final_status=%s",
+                config.side,
+                config.symbol,
+                len(execution.drift_events),
+                execution.max_drift_bps,
+                execution.status,
             )
 
         logger.info(
             "TWAP done: %s %s submitted %d/%d (fills pending via FillListener)",
-            config.side, config.symbol, total_submitted, config.total_quantity,
+            config.side,
+            config.symbol,
+            total_submitted,
+            config.total_quantity,
         )
         return execution
 

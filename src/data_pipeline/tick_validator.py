@@ -8,18 +8,17 @@ Thread-safe with per-symbol statistics tracking.
 
 import logging
 import threading
-import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 class TickRejectReason(str, Enum):
     """Reasons a tick can be rejected."""
+
     VALID = "VALID"
     NEGATIVE_PRICE = "NEGATIVE_PRICE"
     ZERO_PRICE = "ZERO_PRICE"
@@ -35,13 +34,14 @@ class TickRejectReason(str, Enum):
 @dataclass
 class TickValidationResult:
     """Result of validating a single tick."""
+
     is_valid: bool
     symbol: str
     price: float
     volume: float
     timestamp: datetime
-    reject_reasons: List[TickRejectReason] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    reject_reasons: list[TickRejectReason] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -58,17 +58,18 @@ class TickValidationResult:
 @dataclass
 class SymbolTickStats:
     """Per-symbol tick validation statistics."""
+
     total_ticks: int = 0
     valid_ticks: int = 0
     rejected_ticks: int = 0
-    reject_counts: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
-    last_valid_price: Optional[float] = None
-    last_valid_volume: Optional[float] = None
-    last_valid_timestamp: Optional[datetime] = None
-    previous_close: Optional[float] = None
-    average_daily_volume: Optional[float] = None
+    reject_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    last_valid_price: float | None = None
+    last_valid_volume: float | None = None
+    last_valid_timestamp: datetime | None = None
+    previous_close: float | None = None
+    average_daily_volume: float | None = None
     # For duplicate detection
-    last_tick_key: Optional[Tuple[float, float]] = None  # (timestamp_epoch, price)
+    last_tick_key: tuple[float, float] | None = None  # (timestamp_epoch, price)
 
 
 class TickValidator:
@@ -97,7 +98,7 @@ class TickValidator:
         self._volume_bound_mult = volume_bound_multiplier
         self._stale_seconds = stale_seconds
         self._circuit_limit_pct = circuit_limit_pct
-        self._stats: Dict[str, SymbolTickStats] = defaultdict(SymbolTickStats)
+        self._stats: dict[str, SymbolTickStats] = defaultdict(SymbolTickStats)
         self._lock = threading.RLock()
 
     def set_previous_close(self, symbol: str, price: float) -> None:
@@ -129,12 +130,12 @@ class TickValidator:
         Returns:
             TickValidationResult with is_valid=True/False and reject reasons.
         """
-        reject_reasons: List[TickRejectReason] = []
-        warnings: List[str] = []
+        reject_reasons: list[TickRejectReason] = []
+        warnings: list[str] = []
 
         # Ensure timestamp is timezone-aware
         if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
+            timestamp = timestamp.replace(tzinfo=UTC)
 
         with self._lock:
             stats = self._stats[symbol]
@@ -166,7 +167,7 @@ class TickValidator:
                 reject_reasons.append(TickRejectReason.VOLUME_EXCEEDS_BOUND)
 
             # 5. Timestamp validation
-            now_utc = datetime.now(timezone.utc)
+            now_utc = datetime.now(UTC)
 
             # Future timestamp (allow 2 seconds clock skew)
             if timestamp > now_utc + timedelta(seconds=2):
@@ -227,11 +228,7 @@ class TickValidator:
             stats = self._stats.get(symbol)
             if stats is None:
                 return {"symbol": symbol, "total_ticks": 0}
-            valid_pct = (
-                (stats.valid_ticks / stats.total_ticks * 100)
-                if stats.total_ticks > 0
-                else 0.0
-            )
+            valid_pct = (stats.valid_ticks / stats.total_ticks * 100) if stats.total_ticks > 0 else 0.0
             return {
                 "symbol": symbol,
                 "total_ticks": stats.total_ticks,
@@ -241,15 +238,13 @@ class TickValidator:
                 "reject_counts": dict(stats.reject_counts),
                 "last_valid_price": stats.last_valid_price,
                 "last_valid_timestamp": (
-                    stats.last_valid_timestamp.isoformat()
-                    if stats.last_valid_timestamp
-                    else None
+                    stats.last_valid_timestamp.isoformat() if stats.last_valid_timestamp else None
                 ),
                 "previous_close": stats.previous_close,
                 "average_daily_volume": stats.average_daily_volume,
             }
 
-    def get_all_stats(self) -> Dict[str, dict]:
+    def get_all_stats(self) -> dict[str, dict]:
         """Get validation statistics for all tracked symbols."""
         with self._lock:
             return {symbol: self.get_stats(symbol) for symbol in self._stats}
@@ -263,7 +258,7 @@ class TickValidator:
             valid_pct = (valid / total * 100) if total > 0 else 0.0
 
             # Aggregate reject reasons
-            all_reasons: Dict[str, int] = defaultdict(int)
+            all_reasons: dict[str, int] = defaultdict(int)
             for s in self._stats.values():
                 for reason, count in s.reject_counts.items():
                     all_reasons[reason] += count
@@ -277,7 +272,7 @@ class TickValidator:
                 "reject_reasons": dict(all_reasons),
             }
 
-    def reset_stats(self, symbol: Optional[str] = None) -> None:
+    def reset_stats(self, symbol: str | None = None) -> None:
         """Reset statistics for a symbol or all symbols."""
         with self._lock:
             if symbol:

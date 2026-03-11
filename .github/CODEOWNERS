@@ -1,0 +1,35 @@
+# ================================================================
+# CODEOWNERS - AlphaForge Trading Platform
+# Each line is a file pattern followed by one or more owners.
+# Order matters: later rules override earlier ones.
+# ================================================================
+
+# Default owners for everything
+*                                   @nareshkumarreddygorla-sketch
+
+# -- Critical Trading Logic --
+/src/execution/                     @nareshkumarreddygorla-sketch
+/src/risk_engine/                   @nareshkumarreddygorla-sketch
+/src/strategy_engine/               @nareshkumarreddygorla-sketch
+/src/compliance/                    @nareshkumarreddygorla-sketch
+
+# -- AI/ML Models --
+/src/ai/                            @nareshkumarreddygorla-sketch
+/scripts/train_*.py                 @nareshkumarreddygorla-sketch
+/models/                            @nareshkumarreddygorla-sketch
+
+# -- API Layer --
+/src/api/                           @nareshkumarreddygorla-sketch
+
+# -- Frontend --
+/trading-ui/                        @nareshkumarreddygorla-sketch
+
+# -- Infrastructure & CI/CD --
+/.github/                           @nareshkumarreddygorla-sketch
+/deploy/                            @nareshkumarreddygorla-sketch
+/docker-compose*.yml                @nareshkumarreddygorla-sketch
+/Dockerfile                         @nareshkumarreddygorla-sketch
+
+# -- Configuration (high-sensitivity) --
+/alembic/                           @nareshkumarreddygorla-sketch
+/requirements*.txt                  @nareshkumarreddygorla-sketch

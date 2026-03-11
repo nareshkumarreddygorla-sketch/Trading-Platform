@@ -4,9 +4,10 @@ POST /run — trigger pipeline run (async or sync);
 GET /status — last run status;
 GET /results — last run results (selected signals, scores).
 """
+
 import logging
 import threading
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
@@ -17,7 +18,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # In-memory last run (replace with DB or cache in production); lock for thread-safe access
-_last_run: Dict[str, Any] = {"status": "idle", "results": None, "error": None}
+_last_run: dict[str, Any] = {"status": "idle", "results": None, "error": None}
 _last_run_lock = threading.Lock()
 
 
@@ -26,7 +27,9 @@ def _get_pipeline(request: Request):
 
 
 @router.post("/alpha_research/run")
-async def run_alpha_research(request: Request, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
+async def run_alpha_research(
+    request: Request, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)
+):
     """
     Trigger one full pipeline run: generate -> validate -> score -> cluster -> capacity.
     Runs in background; use GET /alpha_research/status for status.
@@ -117,4 +120,3 @@ async def get_decay_multipliers(request: Request, body: dict = None, current_use
         return JSONResponse(status_code=400, content={"error": "signal_ids must be a list"})
     mults = pipeline.get_decay_weight_multipliers(signal_ids)
     return {"multipliers": mults}
-

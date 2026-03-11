@@ -1,11 +1,12 @@
 """
 Model registry: versioning, performance tracking, auto-replace when new model beats current.
 """
+
 import logging
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from .base import BasePredictor
 
@@ -17,15 +18,15 @@ class ModelVersion:
     version: str
     created_at: datetime
     path: str  # artifact path or key
-    metrics: Dict[str, float]  # e.g. sharpe, accuracy, logloss
+    metrics: dict[str, float]  # e.g. sharpe, accuracy, logloss
 
 
 @dataclass
 class ModelMetadata:
     model_id: str
     current_version: str
-    versions: List[ModelVersion] = field(default_factory=list)
-    performance_log: List[Dict[str, Any]] = field(default_factory=list)
+    versions: list[ModelVersion] = field(default_factory=list)
+    performance_log: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ModelRegistry:
@@ -36,30 +37,28 @@ class ModelRegistry:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._models: Dict[str, BasePredictor] = {}
-        self._metadata: Dict[str, ModelMetadata] = {}
+        self._models: dict[str, BasePredictor] = {}
+        self._metadata: dict[str, ModelMetadata] = {}
 
     def __repr__(self) -> str:
         return f"<ModelRegistry models={list(self._models.keys())}>"
 
-    def register(self, model: BasePredictor, metrics: Optional[Dict[str, float]] = None) -> None:
+    def register(self, model: BasePredictor, metrics: dict[str, float] | None = None) -> None:
         with self._lock:
             self._register_unlocked(model, metrics)
 
-    def get(self, model_id: str) -> Optional[BasePredictor]:
+    def get(self, model_id: str) -> BasePredictor | None:
         with self._lock:
             return self._models.get(model_id)
 
-    def get_metadata(self, model_id: str) -> Optional[ModelMetadata]:
+    def get_metadata(self, model_id: str) -> ModelMetadata | None:
         with self._lock:
             return self._metadata.get(model_id)
 
-    def log_performance(self, model_id: str, metrics: Dict[str, Any]) -> None:
+    def log_performance(self, model_id: str, metrics: dict[str, Any]) -> None:
         with self._lock:
             if model_id in self._metadata:
-                self._metadata[model_id].performance_log.append(
-                    {"ts": datetime.now(timezone.utc).isoformat(), **metrics}
-                )
+                self._metadata[model_id].performance_log.append({"ts": datetime.now(UTC).isoformat(), **metrics})
                 if len(self._metadata[model_id].performance_log) > 200:
                     self._metadata[model_id].performance_log = self._metadata[model_id].performance_log[-200:]
 
@@ -67,7 +66,7 @@ class ModelRegistry:
         self,
         model_id: str,
         candidate: BasePredictor,
-        candidate_metrics: Dict[str, float],
+        candidate_metrics: dict[str, float],
         compare_metric: str = "sharpe",
         higher_is_better: bool = True,
     ) -> bool:
@@ -94,11 +93,13 @@ class ModelRegistry:
             better = candidate_metric > current_metric if higher_is_better else candidate_metric < current_metric
             if better:
                 self._register_unlocked(candidate, candidate_metrics)
-                logger.info("Model %s replaced: %s %s -> %s", model_id, compare_metric, current_metric, candidate_metric)
+                logger.info(
+                    "Model %s replaced: %s %s -> %s", model_id, compare_metric, current_metric, candidate_metric
+                )
                 return True
             return False
 
-    def _register_unlocked(self, model: BasePredictor, metrics: Optional[Dict[str, float]] = None) -> None:
+    def _register_unlocked(self, model: BasePredictor, metrics: dict[str, float] | None = None) -> None:
         """Internal register without acquiring lock (caller must hold lock)."""
         self._models[model.model_id] = model
         if model.model_id not in self._metadata:
@@ -112,7 +113,7 @@ class ModelRegistry:
         meta.versions.append(
             ModelVersion(
                 version=model.version,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 path=getattr(model, "path", ""),
                 metrics=metrics or {},
             )
@@ -129,7 +130,7 @@ class ModelRegistry:
                 logger.info("Model %s deregistered", model_id)
             return removed is not None
 
-    def list_models(self) -> List[str]:
+    def list_models(self) -> list[str]:
         """Return list of all registered model IDs."""
         with self._lock:
             return list(self._models.keys())

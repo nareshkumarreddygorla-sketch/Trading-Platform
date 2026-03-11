@@ -11,12 +11,13 @@ Pipeline:
 Replaces the crude 6-hour subprocess retrain with a principled,
 drift-aware, market-close-aligned scheduler.
 """
+
 import asyncio
 import logging
-import os
 import time
-from datetime import datetime, timezone, timedelta
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ IST_OFFSET = timedelta(hours=5, minutes=30)
 
 
 def _now_ist() -> datetime:
-    return datetime.now(timezone.utc) + IST_OFFSET
+    return datetime.now(UTC) + IST_OFFSET
 
 
 class SelfLearningScheduler:
@@ -55,10 +56,10 @@ class SelfLearningScheduler:
         self,
         drift_detector=None,
         distribution_monitor=None,
-        retrain_fn: Optional[Callable[[], Dict[str, bool]]] = None,
-        ic_update_fn: Optional[Callable[[], Dict[str, float]]] = None,
-        alert_fn: Optional[Callable] = None,
-        get_recent_features_fn: Optional[Callable[[], List[Dict[str, float]]]] = None,
+        retrain_fn: Callable[[], dict[str, bool]] | None = None,
+        ic_update_fn: Callable[[], dict[str, float]] | None = None,
+        alert_fn: Callable | None = None,
+        get_recent_features_fn: Callable[[], list[dict[str, float]]] | None = None,
         post_market_hour: int = 15,
         post_market_minute: int = 45,
         min_drift_layers_for_retrain: int = 2,
@@ -75,10 +76,10 @@ class SelfLearningScheduler:
         self.min_drift_layers = min_drift_layers_for_retrain
         self.weekly_revalidation_day = weekly_revalidation_day
 
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
-        self._last_run_date: Optional[str] = None
-        self._history: List[Dict[str, Any]] = []
+        self._last_run_date: str | None = None
+        self._history: list[dict[str, Any]] = []
 
     def start(self) -> None:
         """Start the scheduler as an asyncio background task."""
@@ -87,8 +88,7 @@ class SelfLearningScheduler:
         self._running = True
         self._task = asyncio.ensure_future(self._run_loop())
         logger.info(
-            "SelfLearningScheduler started (post-market %02d:%02d IST, "
-            "drift_layers=%d, weekly_day=%d)",
+            "SelfLearningScheduler started (post-market %02d:%02d IST, drift_layers=%d, weekly_day=%d)",
             self.post_market_hour,
             self.post_market_minute,
             self.min_drift_layers,
@@ -102,7 +102,7 @@ class SelfLearningScheduler:
             self._task.cancel()
         logger.info("SelfLearningScheduler stopped")
 
-    def get_history(self) -> List[Dict[str, Any]]:
+    def get_history(self) -> list[dict[str, Any]]:
         """Return execution history for audit."""
         return list(self._history)
 
@@ -157,9 +157,9 @@ class SelfLearningScheduler:
         t0 = time.monotonic()
         now_ist = _now_ist()
         is_weekly = now_ist.weekday() == self.weekly_revalidation_day
-        entry: Dict[str, Any] = {
+        entry: dict[str, Any] = {
             "date": date_str,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "is_weekly": is_weekly,
         }
 
@@ -179,7 +179,7 @@ class SelfLearningScheduler:
 
         # Step 2: Multi-layer drift detection
         drift_layers_fired = 0
-        drift_reasons: List[str] = []
+        drift_reasons: list[str] = []
 
         # Layer 1: Feature distribution drift (ConceptDriftDetector)
         if self.drift_detector and recent_features:
@@ -218,9 +218,7 @@ class SelfLearningScheduler:
                     total_ic_count = sum(1 for v in ic_result.values() if isinstance(v, (int, float)))
                     if total_ic_count > 0 and negative_ic_count >= total_ic_count * 0.8:
                         drift_layers_fired += 1
-                        drift_reasons.append(
-                            f"ic_degradation: {negative_ic_count}/{total_ic_count} models negative IC"
-                        )
+                        drift_reasons.append(f"ic_degradation: {negative_ic_count}/{total_ic_count} models negative IC")
                     elif total_ic_count > 0:
                         logger.debug("IC check: %d/%d models have negative IC", negative_ic_count, total_ic_count)
             except Exception as e:
@@ -230,11 +228,11 @@ class SelfLearningScheduler:
         entry["drift_reasons"] = drift_reasons
 
         # Step 3: Decision — retrain or just update weights
-        retrain_triggered = False
+        _retrain_triggered = False
         if drift_layers_fired >= self.min_drift_layers or is_weekly:
             # Trigger retrain
             trigger_reason = (
-                f"weekly_revalidation"
+                "weekly_revalidation"
                 if is_weekly and drift_layers_fired < self.min_drift_layers
                 else f"drift ({drift_layers_fired} layers)"
             )
@@ -243,7 +241,7 @@ class SelfLearningScheduler:
                 trigger_reason,
                 drift_reasons,
             )
-            retrain_triggered = True
+            _retrain_triggered = True
             entry["action"] = "retrain"
             entry["trigger_reason"] = trigger_reason
 
@@ -258,10 +256,7 @@ class SelfLearningScheduler:
                     if self.alert_fn:
                         try:
                             replaced = [m for m, r in retrain_results.items() if r]
-                            msg = (
-                                f"Models retrained: {replaced or 'none replaced'} "
-                                f"(trigger: {trigger_reason})"
-                            )
+                            msg = f"Models retrained: {replaced or 'none replaced'} (trigger: {trigger_reason})"
                             await self._fire_alert("INFO", "Model Retrain Complete", msg)
                         except Exception:
                             pass
@@ -269,9 +264,7 @@ class SelfLearningScheduler:
                     logger.exception("Retrain failed: %s", e)
                     entry["retrain_error"] = str(e)
                     if self.alert_fn:
-                        await self._fire_alert(
-                            "WARNING", "Model Retrain Failed", str(e)
-                        )
+                        await self._fire_alert("WARNING", "Model Retrain Failed", str(e))
         else:
             # No retrain needed — just update IC weights
             entry["action"] = "ic_update"
@@ -287,8 +280,8 @@ class SelfLearningScheduler:
                     entry["ic_error"] = str(e)
 
         # Step 4: Fit calibrator from recent prediction history (Sprint 8.4)
-        _ensemble = getattr(self, '_ensemble', None)
-        if _ensemble and hasattr(_ensemble, 'fit_calibrator') and hasattr(_ensemble, '_prediction_history'):
+        _ensemble = getattr(self, "_ensemble", None)
+        if _ensemble and hasattr(_ensemble, "fit_calibrator") and hasattr(_ensemble, "_prediction_history"):
             try:
                 # Collect raw probs and actual outcomes from prediction history
                 raw_probs = []
@@ -336,6 +329,7 @@ class SelfLearningScheduler:
         try:
             # Adapt to AlertNotifier.send() signature
             from src.alerts.notifier import AlertSeverity
+
             sev_map = {
                 "INFO": AlertSeverity.INFO,
                 "WARNING": AlertSeverity.WARNING,
@@ -350,7 +344,7 @@ class SelfLearningScheduler:
         except Exception as e:
             logger.debug("Alert send failed: %s", e)
 
-    async def run_now(self) -> Dict[str, Any]:
+    async def run_now(self) -> dict[str, Any]:
         """Force an immediate run (for API/testing). Returns cycle result."""
         date_str = _now_ist().strftime("%Y-%m-%d") + "_manual"
         await self._run_cycle(date_str)

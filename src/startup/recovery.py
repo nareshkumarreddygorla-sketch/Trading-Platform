@@ -3,21 +3,23 @@ Cold start recovery: load persisted orders/positions, warm RiskManager and Order
 reconcile with broker when in live mode. No re-submit; no silent correction.
 Startup invariant validation: fail if exposure > equity or duplicate active orders.
 """
+
 import asyncio
 import logging
 import time
-from typing import Any, Callable, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from src.core.events import Order, OrderStatus, Position
-from src.persistence.order_repo import OrderRepository
-from src.persistence.position_repo import PositionRepository
-from src.persistence.reconciliation import reconcile_positions
 from src.monitoring.metrics import (
+    track_reconciliation_mismatches_total,
     track_startup_recovery_duration,
     track_startup_recovery_failure,
     track_startup_recovery_mismatches,
-    track_reconciliation_mismatches_total,
 )
+from src.persistence.order_repo import OrderRepository
+from src.persistence.position_repo import PositionRepository
+from src.persistence.reconciliation import reconcile_positions
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +63,8 @@ async def _query_broker_order_status(get_broker_positions, broker_order_id: str)
 
 def _validate_recovery_invariants(
     risk_manager: Any,
-    positions: List[Position],
-    active_orders: List[Order],
+    positions: list[Position],
+    active_orders: list[Order],
     lifecycle: Any,
 ) -> None:
     """
@@ -92,10 +94,10 @@ async def run_cold_start_recovery(
     position_repo: PositionRepository,
     risk_manager: Any,
     lifecycle: Any,
-    get_broker_positions: Optional[Callable] = None,
+    get_broker_positions: Callable | None = None,
     is_live_mode: bool = False,
-    get_risk_snapshot: Optional[Callable[[], Any]] = None,
-) -> Tuple[bool, int]:
+    get_risk_snapshot: Callable[[], Any] | None = None,
+) -> tuple[bool, int]:
     """
     Load active orders and positions from DB; warm RiskManager and OrderLifecycle.
     If is_live_mode and get_broker_positions provided, run reconciliation (log discrepancies; do not auto-correct).
@@ -133,7 +135,7 @@ async def run_cold_start_recovery(
         # Reconcile SUBMITTING (write-ahead): check broker for actual status before marking REJECTED
         submitting = await loop.run_in_executor(None, order_repo.list_submitting_orders)
         if submitting:
-            resolved_count = 0
+            _resolved_count = 0
             filled_count = 0
             rejected_count = 0
             deferred_count = 0
@@ -154,7 +156,8 @@ async def run_cold_start_recovery(
                             # Broker says filled: update DB and create position in RiskManager
                             order_repo.update_order_status(o.order_id, OrderStatus.FILLED)
                             await lifecycle.update_status(
-                                o.order_id, OrderStatus.FILLED,
+                                o.order_id,
+                                OrderStatus.FILLED,
                                 filled_qty=getattr(o, "quantity", 0),
                                 avg_price=getattr(o, "limit_price", None),
                             )
@@ -173,15 +176,19 @@ async def run_cold_start_recovery(
                         elif broker_status in ("REJECTED", "CANCELLED", "UNKNOWN"):
                             # Broker confirms not active: mark REJECTED
                             order_repo.update_order_status(o.order_id, OrderStatus.REJECTED)
-                            await lifecycle.update_status(o.order_id, OrderStatus.REJECTED, filled_qty=0.0, avg_price=None)
+                            await lifecycle.update_status(
+                                o.order_id, OrderStatus.REJECTED, filled_qty=0.0, avg_price=None
+                            )
                             rejected_count += 1
                             continue
                         else:
                             # Broker returned ambiguous status: leave as SUBMITTING, retry next cycle
                             deferred_count += 1
-                            logger.warning("Cold start: order %s broker status=%s, deferring", o.order_id, broker_status)
+                            logger.warning(
+                                "Cold start: order %s broker status=%s, deferring", o.order_id, broker_status
+                            )
                             continue
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         deferred_count += 1
                         logger.warning("Cold start: broker query timeout for order %s, deferring", o.order_id)
                         continue
@@ -197,7 +204,10 @@ async def run_cold_start_recovery(
 
             logger.info(
                 "Cold start: reconciled %d SUBMITTING orders (filled=%d, rejected=%d, deferred=%d)",
-                len(submitting), filled_count, rejected_count, deferred_count,
+                len(submitting),
+                filled_count,
+                rejected_count,
+                deferred_count,
             )
 
         logger.info(
@@ -209,6 +219,7 @@ async def run_cold_start_recovery(
         # If live mode, reconcile with broker; on broker failure enter safe mode
         if is_live_mode and get_broker_positions is not None:
             try:
+
                 def on_mismatch_count(n: int):
                     track_reconciliation_mismatches_total(n)
                     track_startup_recovery_mismatches(n)
@@ -233,5 +244,7 @@ async def run_cold_start_recovery(
 
     elapsed = time.perf_counter() - start
     track_startup_recovery_duration(elapsed)
-    logger.info("Cold start recovery completed in %.2fs (safe_mode=%s, mismatches=%d)", elapsed, safe_mode, mismatch_count)
+    logger.info(
+        "Cold start recovery completed in %.2fs (safe_mode=%s, mismatches=%d)", elapsed, safe_mode, mismatch_count
+    )
     return safe_mode, mismatch_count

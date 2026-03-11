@@ -7,16 +7,13 @@ exercising all pipeline stages with realistic mocks for external dependencies.
 """
 
 import asyncio
-import os
 import uuid
-from datetime import datetime, timezone
-from typing import List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 
 from src.core.events import (
-    Bar,
     Exchange,
     Order,
     OrderStatus,
@@ -35,7 +32,6 @@ from src.execution.order_entry.kill_switch import KillReason, KillSwitch
 from src.execution.order_entry.rate_limiter import OrderRateLimiter, RateLimitConfig
 from src.execution.order_entry.request import (
     OrderEntryRequest,
-    OrderEntryResult,
     RejectReason,
 )
 from src.execution.order_entry.reservation import ExposureReservation
@@ -44,7 +40,6 @@ from src.execution.order_router import OrderRouter
 from src.risk_engine.limits import RiskLimits
 from src.risk_engine.manager import RiskManager
 from src.strategy_engine.allocator import AllocatorConfig, PortfolioAllocator
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -70,7 +65,7 @@ class FakeGateway(BaseExecutionGateway):
         side: str,
         quantity: float,
         order_type: str,
-        limit_price: Optional[float] = None,
+        limit_price: float | None = None,
         strategy_id: str = "",
         **kwargs,
     ) -> Order:
@@ -89,16 +84,16 @@ class FakeGateway(BaseExecutionGateway):
         self.placed_orders.append(order)
         return order
 
-    async def cancel_order(self, order_id: str, broker_order_id: Optional[str] = None) -> bool:
+    async def cancel_order(self, order_id: str, broker_order_id: str | None = None) -> bool:
         return True
 
-    async def get_order_status(self, order_id: str, broker_order_id: Optional[str] = None) -> OrderStatus:
+    async def get_order_status(self, order_id: str, broker_order_id: str | None = None) -> OrderStatus:
         return OrderStatus.PENDING
 
-    async def get_positions(self) -> List[Position]:
+    async def get_positions(self) -> list[Position]:
         return []
 
-    async def get_orders(self, status: Optional[str] = None, limit: int = 100) -> List[Order]:
+    async def get_orders(self, status: str | None = None, limit: int = 100) -> list[Order]:
         return list(self.placed_orders)
 
 
@@ -118,7 +113,7 @@ def make_signal(
         score=score,
         portfolio_weight=0.1,
         price=price,
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
     )
 
 
@@ -243,9 +238,7 @@ def order_service_with_rate_limiter(risk_manager, order_router, lifecycle, idemp
 
 
 @pytest.mark.asyncio
-async def test_full_pipeline_happy_path(
-    allocator, risk_manager, order_service, fill_handler, lifecycle, gateway
-):
+async def test_full_pipeline_happy_path(allocator, risk_manager, order_service, fill_handler, lifecycle, gateway):
     """Signal -> allocate -> risk check -> submit order -> simulate fill -> verify position."""
     # Step 1: Create a signal
     signal = make_signal(score=0.75, price=2500.0)
@@ -284,7 +277,7 @@ async def test_full_pipeline_happy_path(
         filled_qty=qty,
         remaining_qty=0,
         avg_price=2501.0,
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         strategy_id=signal.strategy_id,
     )
     await fill_handler.on_fill_event(fill_event)
@@ -540,7 +533,7 @@ async def test_paper_fill_lifecycle_partial_then_full(fill_handler, lifecycle, r
         filled_qty=60,
         remaining_qty=40,
         avg_price=2501.0,
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         strategy_id="test",
     )
     await fill_handler.on_fill_event(partial_event)
@@ -564,7 +557,7 @@ async def test_paper_fill_lifecycle_partial_then_full(fill_handler, lifecycle, r
         filled_qty=40,
         remaining_qty=0,
         avg_price=2502.0,
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         strategy_id="test",
     )
     await fill_handler.on_fill_event(full_event)
@@ -590,8 +583,8 @@ def test_signal_filtering_low_confidence(allocator, risk_manager):
     """Low-confidence signals filtered out by allocator."""
     signals = [
         make_signal(symbol="RELIANCE", score=0.3, price=2500.0),  # Below min_confidence=0.5
-        make_signal(symbol="TCS", score=0.45, price=3500.0),      # Below threshold
-        make_signal(symbol="INFY", score=0.75, price=1500.0),     # Above threshold
+        make_signal(symbol="TCS", score=0.45, price=3500.0),  # Below threshold
+        make_signal(symbol="INFY", score=0.75, price=1500.0),  # Above threshold
     ]
     allocations = allocator.allocate(
         signals=signals,
@@ -766,7 +759,7 @@ async def test_position_close_sell_signal(order_service, risk_manager, fill_hand
         filled_qty=10,
         remaining_qty=0,
         avg_price=2550.0,
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         strategy_id=sell_signal.strategy_id,
     )
     await fill_handler.on_fill_event(fill_event)
@@ -852,7 +845,9 @@ async def test_kill_switch_allows_reduce_only(order_service, risk_manager, kill_
         source="test",
     )
     sell_result = await order_service.submit_order(sell_request)
-    assert sell_result.success, f"Reduce-only SELL should be allowed, got: {sell_result.reject_reason} - {sell_result.reject_detail}"
+    assert sell_result.success, (
+        f"Reduce-only SELL should be allowed, got: {sell_result.reject_reason} - {sell_result.reject_detail}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1053,7 +1048,7 @@ async def test_fill_handler_reject_event(fill_handler, lifecycle):
         filled_qty=0,
         remaining_qty=10,
         avg_price=0.0,
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
     )
     await fill_handler.on_fill_event(reject_event)
 

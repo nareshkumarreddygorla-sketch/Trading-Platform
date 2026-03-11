@@ -3,9 +3,10 @@ LSTM time-series predictor for price direction.
 Two-layer LSTM with dropout, trained on FeatureEngine output sequences.
 Implements BasePredictor contract for EnsembleEngine integration.
 """
+
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -19,28 +20,54 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 BASE_FEATURE_KEYS = [
     # Returns (4)
-    "returns_1", "returns_5", "returns_10", "returns_20",
+    "returns_1",
+    "returns_5",
+    "returns_10",
+    "returns_20",
     # Volatility (3)
-    "rolling_volatility", "atr", "bollinger_bandwidth",
+    "rolling_volatility",
+    "atr",
+    "bollinger_bandwidth",
     # Trend indicators (8)
-    "rsi", "ema_spread", "macd_line", "macd_signal", "macd_histogram",
-    "stochastic_k", "stochastic_d", "adx",
+    "rsi",
+    "ema_spread",
+    "macd_line",
+    "macd_signal",
+    "macd_histogram",
+    "stochastic_k",
+    "stochastic_d",
+    "adx",
     # Momentum (4)
-    "momentum_5", "momentum_10", "momentum_20", "roc_10",
+    "momentum_5",
+    "momentum_10",
+    "momentum_20",
+    "roc_10",
     # Volume indicators (3)
-    "volume_spike", "obv_slope", "vwap_distance",
+    "volume_spike",
+    "obv_slope",
+    "vwap_distance",
     # Price structure (3)
-    "bollinger_pct_b", "price_position", "gap_pct",
+    "bollinger_pct_b",
+    "price_position",
+    "gap_pct",
     # Candlestick patterns (4)
-    "candle_body_ratio", "candle_upper_shadow", "candle_lower_shadow", "candle_engulfing",
+    "candle_body_ratio",
+    "candle_upper_shadow",
+    "candle_lower_shadow",
+    "candle_engulfing",
     # Additional oscillators (2)
-    "williams_r", "mfi",
+    "williams_r",
+    "mfi",
     # Microstructure features (6)
-    "minute_of_day_sin", "minute_of_day_cos",
-    "hurst_exponent", "volume_profile_deviation",
-    "vol_of_vol", "rolling_vol_20",
+    "minute_of_day_sin",
+    "minute_of_day_cos",
+    "hurst_exponent",
+    "volume_profile_deviation",
+    "vol_of_vol",
+    "rolling_vol_20",
     # Raw reference (2, normalized during training)
-    "close", "volume",
+    "close",
+    "volume",
 ]
 
 # ---------------------------------------------------------------------------
@@ -49,14 +76,21 @@ BASE_FEATURE_KEYS = [
 # ---------------------------------------------------------------------------
 LSTM_SPECIFIC_FEATURES = [
     # Lagged returns for autoregressive structure (5)
-    "lagged_return_1", "lagged_return_2", "lagged_return_3",
-    "lagged_return_5", "lagged_return_10",
+    "lagged_return_1",
+    "lagged_return_2",
+    "lagged_return_3",
+    "lagged_return_5",
+    "lagged_return_10",
     # Autocorrelation features (3)
-    "autocorr_5", "autocorr_10", "autocorr_20",
+    "autocorr_5",
+    "autocorr_10",
+    "autocorr_20",
     # Regime indicators (2)
-    "regime_hmm_state", "regime_volatility_zscore",
+    "regime_hmm_state",
+    "regime_volatility_zscore",
     # Orderflow imbalance proxies (2)
-    "orderflow_imbalance", "tick_direction_ratio",
+    "orderflow_imbalance",
+    "tick_direction_ratio",
 ]
 
 # Backward-compatible alias: legacy code importing FEATURE_KEYS still works,
@@ -71,6 +105,7 @@ def _try_import_torch():
     try:
         import torch
         import torch.nn as nn
+
         return torch, nn
     except ImportError:
         return None, None
@@ -79,8 +114,9 @@ def _try_import_torch():
 class LSTMModel:
     """PyTorch LSTM network with self-attention for binary classification (price up/down)."""
 
-    def __init__(self, input_size: int = NUM_FEATURES, hidden_size: int = 128,
-                 num_layers: int = 2, dropout: float = 0.3):
+    def __init__(
+        self, input_size: int = NUM_FEATURES, hidden_size: int = 128, num_layers: int = 2, dropout: float = 0.3
+    ):
         torch, nn = _try_import_torch()
         if torch is None:
             self._model = None
@@ -164,9 +200,11 @@ class LSTMModel:
             for key in model_sd:
                 if key in state_dict and model_sd[key].shape != state_dict[key].shape:
                     logger.warning(
-                        "Failed to load LSTM model from %s: shape mismatch for %s: "
-                        "checkpoint=%s vs model=%s",
-                        path, key, state_dict[key].shape, model_sd[key].shape,
+                        "Failed to load LSTM model from %s: shape mismatch for %s: checkpoint=%s vs model=%s",
+                        path,
+                        key,
+                        state_dict[key].shape,
+                        model_sd[key].shape,
                     )
                     return False
             missing = set(model_sd.keys()) - set(state_dict.keys())
@@ -189,7 +227,7 @@ class LSTMPredictor(BasePredictor):
     version = "v3"
 
     @classmethod
-    def get_feature_keys(cls) -> List[str]:
+    def get_feature_keys(cls) -> list[str]:
         """Return the full feature list for this model (base + LSTM-specific).
 
         This classmethod allows the training pipeline and feature engine to
@@ -208,8 +246,8 @@ class LSTMPredictor(BasePredictor):
         self._lstm = LSTMModel()
         self.path = model_path
         self._loaded = False
-        self._feature_means: Optional[np.ndarray] = None
-        self._feature_stds: Optional[np.ndarray] = None
+        self._feature_means: np.ndarray | None = None
+        self._feature_stds: np.ndarray | None = None
 
         if model_path and os.path.exists(model_path):
             self._loaded = self._lstm.load(model_path)
@@ -221,7 +259,11 @@ class LSTMPredictor(BasePredictor):
                     self._feature_means = stats["means"]
                     self._feature_stds = stats["stds"]
                 except Exception as e:
-                    logger.warning("Failed to load normalization stats from %s: %s — falling back to expanding window normalization", stats_path, e)
+                    logger.warning(
+                        "Failed to load normalization stats from %s: %s — falling back to expanding window normalization",
+                        stats_path,
+                        e,
+                    )
 
     def _normalize_sequence(self, seq: np.ndarray) -> np.ndarray:
         """Z-score normalize using training statistics (no lookahead bias)."""
@@ -233,14 +275,14 @@ class LSTMPredictor(BasePredictor):
         # Each timestep normalized using only data available up to that point
         normed = np.zeros_like(seq)
         for t in range(len(seq)):
-            window = seq[:t + 1]
+            window = seq[: t + 1]
             mean = window.mean(axis=0)
             std = window.std(axis=0)
             std = np.where(std < 1e-8, 1.0, std)
             normed[t] = (seq[t] - mean) / std
         return normed
 
-    def _build_sequence_from_features(self, feature_history: List[Dict[str, float]]) -> Optional[np.ndarray]:
+    def _build_sequence_from_features(self, feature_history: list[dict[str, float]]) -> np.ndarray | None:
         """Convert list of feature dicts to (seq_len, num_features) array.
         Uses FEATURE_KEYS ordering; missing features default to 0.0.
         Logs warning if too many features are missing for reliable prediction."""
@@ -251,9 +293,12 @@ class LSTMPredictor(BasePredictor):
         sample = feature_history[-1]
         available = [k for k in FEATURE_KEYS if k in sample]
         if len(available) < len(FEATURE_KEYS) * 0.7:
-            logger.warning("LSTM: Only %d/%d expected features available (missing: %s)",
-                          len(available), len(FEATURE_KEYS),
-                          [k for k in FEATURE_KEYS if k not in sample][:5])
+            logger.warning(
+                "LSTM: Only %d/%d expected features available (missing: %s)",
+                len(available),
+                len(FEATURE_KEYS),
+                [k for k in FEATURE_KEYS if k not in sample][:5],
+            )
         for fdict in feature_history[-SEQ_LEN:]:
             row = [fdict.get(k, np.nan) for k in FEATURE_KEYS]
             rows.append(row)
@@ -262,7 +307,7 @@ class LSTMPredictor(BasePredictor):
         arr = np.nan_to_num(arr, nan=0.0)
         return arr
 
-    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> Optional[PredictionOutput]:
+    def predict(self, features: dict[str, float], context: dict[str, Any] | None = None) -> PredictionOutput | None:
         if not self._lstm.available:
             return None
 

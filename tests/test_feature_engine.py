@@ -1,10 +1,11 @@
 """Feature engine: deterministic output for same bars; no lookahead."""
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 
 import pytest
 
-from src.core.events import Bar, Exchange
 from src.ai.feature_engine import FeatureEngine
+from src.core.events import Bar, Exchange
 
 
 def _bar(ts: float, o: float, h: float, l: float, c: float, v: float) -> Bar:
@@ -12,8 +13,12 @@ def _bar(ts: float, o: float, h: float, l: float, c: float, v: float) -> Bar:
         symbol="TEST",
         exchange=Exchange.NSE,
         interval="1m",
-        open=o, high=h, low=l, close=c, volume=v,
-        ts=datetime.fromtimestamp(ts, tz=timezone.utc),
+        open=o,
+        high=h,
+        low=l,
+        close=c,
+        volume=v,
+        ts=datetime.fromtimestamp(ts, tz=UTC),
         source="test",
     )
 

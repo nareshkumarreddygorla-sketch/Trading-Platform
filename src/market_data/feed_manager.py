@@ -6,13 +6,14 @@ disconnections, and switches between feeds with exponential backoff
 reconnection. Wraps existing feed implementations (MarketDataService,
 YFinanceFallbackFeeder) without managing their WebSocket connections directly.
 """
+
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +30,11 @@ class FeedRole(str, Enum):
 @dataclass
 class FeedHealth:
     """Snapshot of a single feed's health status."""
+
     feed_name: str
     connected: bool = False
     healthy: bool = False
-    last_tick_ts: Optional[datetime] = None
+    last_tick_ts: datetime | None = None
     latency_ms: float = 0.0
     stale_seconds: float = 0.0
 
@@ -40,8 +42,9 @@ class FeedHealth:
 @dataclass
 class FeedSwitchEvent:
     """Record of a feed failover/restore event for debugging history."""
+
     timestamp: datetime
-    from_feed: Optional[str]
+    from_feed: str | None
     to_feed: str
     reason: str
 
@@ -86,17 +89,17 @@ class FeedManager:
         # Active feed tracking
         self._active_role: FeedRole = FeedRole.PRIMARY
         self._running = False
-        self._monitor_task: Optional[asyncio.Task] = None
+        self._monitor_task: asyncio.Task | None = None
 
         # Reconnect backoff state (for attempting to restore primary)
         self._reconnect_delay = RECONNECT_BASE_DELAY
         self._last_reconnect_attempt: float = 0.0
 
         # Feed switch history
-        self._switch_history: List[FeedSwitchEvent] = []
+        self._switch_history: list[FeedSwitchEvent] = []
 
         # Callback for external notification (e.g. WebSocket push to UI)
-        self._on_failover: Optional[Callable[[str, str, str], None]] = None
+        self._on_failover: Callable[[str, str, str], None] | None = None
 
     # ------------------------------------------------------------------
     # Public configuration
@@ -166,12 +169,12 @@ class FeedManager:
             "running": self._running,
             "stale_threshold_seconds": self._stale_threshold,
             "reconnect_delay": self._reconnect_delay,
-            "primary": _feed_health_to_dict(
-                self._build_feed_health(self._primary, "primary")
-            ) if self._primary else None,
-            "secondary": _feed_health_to_dict(
-                self._build_feed_health(self._secondary, "secondary")
-            ) if self._secondary else None,
+            "primary": _feed_health_to_dict(self._build_feed_health(self._primary, "primary"))
+            if self._primary
+            else None,
+            "secondary": _feed_health_to_dict(self._build_feed_health(self._secondary, "secondary"))
+            if self._secondary
+            else None,
             "switch_history": [
                 {
                     "timestamp": e.timestamp.isoformat(),
@@ -208,13 +211,9 @@ class FeedManager:
         if self._active_role == FeedRole.PRIMARY:
             if not primary_ok:
                 if secondary_ok:
-                    self._failover_to_secondary(
-                        reason="primary unhealthy, secondary available"
-                    )
+                    self._failover_to_secondary(reason="primary unhealthy, secondary available")
                 else:
-                    logger.warning(
-                        "FeedManager: primary unhealthy and no healthy secondary"
-                    )
+                    logger.warning("FeedManager: primary unhealthy and no healthy secondary")
         else:
             # Currently on secondary -- try to restore primary
             if primary_ok:
@@ -234,9 +233,7 @@ class FeedManager:
         self._active_role = FeedRole.SECONDARY
         self._reconnect_delay = RECONNECT_BASE_DELAY  # reset backoff for restore attempts
         self._record_switch(old_name, new_name, reason)
-        logger.warning(
-            "FeedManager FAILOVER: %s -> %s (%s)", old_name, new_name, reason
-        )
+        logger.warning("FeedManager FAILOVER: %s -> %s (%s)", old_name, new_name, reason)
 
     def _restore_primary(self, reason: str = "primary recovered") -> None:
         """Switch back from secondary to primary."""
@@ -245,9 +242,7 @@ class FeedManager:
         self._active_role = FeedRole.PRIMARY
         self._reconnect_delay = RECONNECT_BASE_DELAY
         self._record_switch(old_name, new_name, reason)
-        logger.info(
-            "FeedManager RESTORE: %s -> %s (%s)", old_name, new_name, reason
-        )
+        logger.info("FeedManager RESTORE: %s -> %s (%s)", old_name, new_name, reason)
 
     def _attempt_primary_reconnect(self) -> None:
         """
@@ -263,13 +258,10 @@ class FeedManager:
             return  # still within backoff window
         self._last_reconnect_attempt = now
         logger.info(
-            "FeedManager: both feeds down, waiting %.1fs before next check "
-            "(primary reconnect managed by feed itself)",
+            "FeedManager: both feeds down, waiting %.1fs before next check (primary reconnect managed by feed itself)",
             self._reconnect_delay,
         )
-        self._reconnect_delay = min(
-            RECONNECT_MAX_DELAY, self._reconnect_delay * 2
-        )
+        self._reconnect_delay = min(RECONNECT_MAX_DELAY, self._reconnect_delay * 2)
 
     # ------------------------------------------------------------------
     # Feed health helpers
@@ -309,12 +301,12 @@ class FeedManager:
                         continue
                 if isinstance(v, datetime):
                     if v.tzinfo is None:
-                        v = v.replace(tzinfo=timezone.utc)
+                        v = v.replace(tzinfo=UTC)
                     normalized.append(v)
             if not normalized:
                 return True  # can't determine staleness, assume healthy
             most_recent = max(normalized)
-            age = (datetime.now(timezone.utc) - most_recent).total_seconds()
+            age = (datetime.now(UTC) - most_recent).total_seconds()
             return age < self._stale_threshold
 
         # If running but no staleness info yet, consider healthy (just started)
@@ -354,7 +346,7 @@ class FeedManager:
                         continue
                 if isinstance(v, datetime):
                     if v.tzinfo is None:
-                        v = v.replace(tzinfo=timezone.utc)
+                        v = v.replace(tzinfo=UTC)
                     normalized_ts.append(v)
             if normalized_ts:
                 last_tick_ts = max(normalized_ts)
@@ -362,10 +354,8 @@ class FeedManager:
         # Calculate staleness
         if last_tick_ts is not None:
             if last_tick_ts.tzinfo is None:
-                last_tick_ts = last_tick_ts.replace(tzinfo=timezone.utc)
-            stale_seconds = (
-                datetime.now(timezone.utc) - last_tick_ts
-            ).total_seconds()
+                last_tick_ts = last_tick_ts.replace(tzinfo=UTC)
+            stale_seconds = (datetime.now(UTC) - last_tick_ts).total_seconds()
             # Rough latency estimate (time since last data)
             latency_ms = min(stale_seconds * 1000, 999999.0)
 
@@ -412,7 +402,7 @@ class FeedManager:
     def _record_switch(self, from_feed: str, to_feed: str, reason: str) -> None:
         """Record a feed switch event and fire the callback."""
         event = FeedSwitchEvent(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             from_feed=from_feed,
             to_feed=to_feed,
             reason=reason,

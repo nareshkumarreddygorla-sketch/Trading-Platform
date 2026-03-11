@@ -5,14 +5,15 @@ Designed to run at 16:00 IST daily after market close.
 Aggregates trade results, cost breakdowns, risk events, and rolling metrics
 into a single DailyReport snapshot suitable for persistence and downstream analytics.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 
@@ -23,9 +24,11 @@ logger = logging.getLogger(__name__)
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CostSummary:
     """Aggregated transaction costs for the day, mirroring india_costs.CostBreakdown."""
+
     stt: float = 0.0
     brokerage: float = 0.0
     exchange_charges: float = 0.0
@@ -81,12 +84,13 @@ class DailyReport:
     orders_rejected: int = 0
 
     # Risk events captured during the session
-    risk_events: List[Dict[str, Any]] = field(default_factory=list)
+    risk_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy model for daily_snapshots table
 # ---------------------------------------------------------------------------
+
 
 def _get_daily_snapshot_model():
     """
@@ -94,6 +98,7 @@ def _get_daily_snapshot_model():
     without a live database or SQLAlchemy dependency at import time.
     """
     from sqlalchemy import Column, DateTime, Float, Integer, String, Text
+
     from src.persistence.models import Base
 
     class DailySnapshotModel(Base):
@@ -132,8 +137,7 @@ def _get_daily_snapshot_model():
         # risk_events stored as JSON text
         risk_events_json = Column(Text, nullable=True, default="[]")
 
-        created_at = Column(DateTime(timezone=True), nullable=False,
-                            default=lambda: datetime.now(timezone.utc))
+        created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     return DailySnapshotModel
 
@@ -141,6 +145,7 @@ def _get_daily_snapshot_model():
 # ---------------------------------------------------------------------------
 # Generator
 # ---------------------------------------------------------------------------
+
 
 class DailyReportGenerator:
     """
@@ -169,16 +174,16 @@ class DailyReportGenerator:
         self._persistence_service = persistence_service
 
         # In-memory accumulators (reset each day via ``_reset_daily``) -----------
-        self._trades: List[Dict[str, Any]] = []
+        self._trades: list[dict[str, Any]] = []
         self._cost_accumulator = CostSummary()
         self._signals_generated: int = 0
         self._orders_submitted: int = 0
         self._orders_rejected: int = 0
-        self._risk_events: List[Dict[str, Any]] = []
+        self._risk_events: list[dict[str, Any]] = []
 
         # Rolling history (persists across days for Sharpe / drawdown) -----------
-        self._daily_returns: List[float] = []
-        self._equity_curve: List[float] = []
+        self._daily_returns: list[float] = []
+        self._equity_curve: list[float] = []
 
         # Lazy-loaded model reference
         self._DailySnapshotModel = None
@@ -189,7 +194,7 @@ class DailyReportGenerator:
     # Recording helpers (called during the trading day)
     # ------------------------------------------------------------------
 
-    def record_trade(self, pnl: float, metadata: Optional[Dict[str, Any]] = None) -> None:
+    def record_trade(self, pnl: float, metadata: dict[str, Any] | None = None) -> None:
         """Record a completed trade with its realised P&L."""
         self._trades.append({"pnl": pnl, "metadata": metadata or {}})
 
@@ -202,7 +207,7 @@ class DailyReportGenerator:
     def record_order_rejected(self, count: int = 1) -> None:
         self._orders_rejected += count
 
-    def record_risk_event(self, event: Dict[str, Any]) -> None:
+    def record_risk_event(self, event: dict[str, Any]) -> None:
         """Record a risk event (circuit breaker, limit breach, etc.)."""
         self._risk_events.append(event)
 
@@ -222,7 +227,7 @@ class DailyReportGenerator:
     # Report generation
     # ------------------------------------------------------------------
 
-    def generate(self, date: Optional[str] = None) -> DailyReport:
+    def generate(self, date: str | None = None) -> DailyReport:
         """
         Generate the daily report from accumulated data.
 
@@ -232,7 +237,7 @@ class DailyReportGenerator:
         Returns:
             Fully populated ``DailyReport`` dataclass instance.
         """
-        report_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        report_date = date or datetime.now(UTC).strftime("%Y-%m-%d")
         logger.info("Generating daily report for %s", report_date)
 
         # Trade statistics -------------------------------------------------------
@@ -304,7 +309,12 @@ class DailyReportGenerator:
 
         logger.info(
             "Daily report %s: trades=%d win_rate=%.1f%% net_pnl=%.2f sharpe_20d=%.4f max_dd=%.2f%%",
-            report_date, total_trades, win_rate, net_pnl, sharpe_20d, max_dd_pct,
+            report_date,
+            total_trades,
+            win_rate,
+            net_pnl,
+            sharpe_20d,
+            max_dd_pct,
         )
 
         # Reset intraday accumulators for next session ---------------------------
@@ -325,7 +335,7 @@ class DailyReportGenerator:
     # Rolling metrics
     # ------------------------------------------------------------------
 
-    def _calculate_sharpe(self, daily_returns: List[float], window: int = 20) -> float:
+    def _calculate_sharpe(self, daily_returns: list[float], window: int = 20) -> float:
         """
         Calculate annualised Sharpe ratio over the most recent ``window`` trading days.
         Risk-free rate assumed zero.
@@ -344,7 +354,7 @@ class DailyReportGenerator:
         sharpe = (mean_ret / std) * math.sqrt(252)
         return sharpe
 
-    def _calculate_max_drawdown(self, equity_curve: List[float]) -> float:
+    def _calculate_max_drawdown(self, equity_curve: list[float]) -> float:
         """
         Calculate maximum drawdown percentage from the equity curve.
 
@@ -378,7 +388,7 @@ class DailyReportGenerator:
 
         Model = self._get_model()
 
-        def _risk_events_json(events: List[Dict[str, Any]]) -> str:
+        def _risk_events_json(events: list[dict[str, Any]]) -> str:
             try:
                 return json.dumps(events, default=str)
             except (TypeError, ValueError):
@@ -443,7 +453,7 @@ class DailyReportGenerator:
             logger.exception("Failed to save daily report for %s", report.date)
             raise
 
-    def get_report(self, date: str) -> Optional[DailyReport]:
+    def get_report(self, date: str) -> DailyReport | None:
         """Retrieve a single day's report from the database."""
         from src.persistence.database import session_scope
 
@@ -458,19 +468,14 @@ class DailyReportGenerator:
             logger.exception("Failed to retrieve report for %s", date)
             return None
 
-    def get_reports_range(self, start: str, end: str) -> List[DailyReport]:
+    def get_reports_range(self, start: str, end: str) -> list[DailyReport]:
         """Retrieve reports for a date range (inclusive) ordered chronologically."""
         from src.persistence.database import session_scope
 
         Model = self._get_model()
         try:
             with session_scope() as session:
-                rows = (
-                    session.query(Model)
-                    .filter(Model.date >= start, Model.date <= end)
-                    .order_by(Model.date)
-                    .all()
-                )
+                rows = session.query(Model).filter(Model.date >= start, Model.date <= end).order_by(Model.date).all()
                 return [self._row_to_report(r) for r in rows]
         except Exception:
             logger.exception("Failed to retrieve reports for range %s to %s", start, end)
@@ -478,7 +483,7 @@ class DailyReportGenerator:
 
     def _row_to_report(self, row) -> DailyReport:
         """Convert a DailySnapshotModel row to a DailyReport dataclass."""
-        risk_events: List[Dict[str, Any]] = []
+        risk_events: list[dict[str, Any]] = []
         if row.risk_events_json:
             try:
                 risk_events = json.loads(row.risk_events_json)

@@ -2,14 +2,13 @@
 Regime-related features: volatility clustering, Hurst exponent, trend strength,
 market correlation, sector dispersion.
 """
-from typing import Dict, List, Optional
 
 import numpy as np
 
 from src.core.events import Bar
 
 
-def _to_close(bars: List[Bar]) -> np.ndarray:
+def _to_close(bars: list[Bar]) -> np.ndarray:
     return np.array([b.close for b in bars], dtype=float)
 
 
@@ -69,15 +68,15 @@ def compute_trend_strength_index(high: np.ndarray, low: np.ndarray, close: np.nd
 
 
 def compute_regime_features(
-    bars: List[Bar],
-    index_returns: Optional[np.ndarray] = None,
-    sector_returns: Optional[List[np.ndarray]] = None,
-) -> Dict[str, float]:
+    bars: list[Bar],
+    index_returns: np.ndarray | None = None,
+    sector_returns: list[np.ndarray] | None = None,
+) -> dict[str, float]:
     """
     Compute regime-related features. index_returns and sector_returns optional
     (same length as bar series for correlation).
     """
-    features: Dict[str, float] = {}
+    features: dict[str, float] = {}
     if not bars or len(bars) < 30:
         return features
 

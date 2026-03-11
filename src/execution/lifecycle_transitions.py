@@ -2,6 +2,7 @@
 Order lifecycle state machine. Institutional: only valid transitions allowed.
 Prevents illegal status transitions (e.g. FILLED -> CANCELLED).
 """
+
 from src.core.events import OrderStatus
 
 # DB status strings (order_repo uses these)

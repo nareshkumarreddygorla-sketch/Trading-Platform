@@ -4,12 +4,12 @@ In-memory implementation; can be backed by Redis for multi-pod consistency.
 No trading allowed if market data unavailable (empty bars).
 Thread-safe: all mutations and reads protected by threading.RLock (accessed from multiple threads).
 """
+
 import logging
-import time
 import threading
+import time
 from collections import defaultdict, deque
-from datetime import datetime, timezone
-from typing import Deque, Dict, List, Optional
+from datetime import UTC, datetime
 
 from src.core.events import Bar, Exchange
 from src.data_pipeline.ohlc_validator import OHLCValidator
@@ -35,13 +35,13 @@ class BarCache:
     def __init__(
         self,
         max_bars: int = MAX_BARS_PER_SYMBOL,
-        ohlc_validator: Optional[OHLCValidator] = None,
+        ohlc_validator: OHLCValidator | None = None,
     ):
         self._max_bars = max_bars
-        self._bars: Dict[str, Deque[Bar]] = defaultdict(lambda: deque(maxlen=max_bars))
+        self._bars: dict[str, deque[Bar]] = defaultdict(lambda: deque(maxlen=max_bars))
         # Track last bar arrival per key for idle-symbol pruning
-        self._last_update: Dict[str, float] = {}
-        self._current_bar_ts: Optional[str] = None
+        self._last_update: dict[str, float] = {}
+        self._current_bar_ts: str | None = None
         self._lock = threading.RLock()
         # Use a generous stale threshold (7 days) to allow historical
         # backfill (e.g. yfinance initial 2-day load) while still catching
@@ -59,10 +59,12 @@ class BarCache:
         OHLC validator or chronological ordering check.
         """
         with self._lock:
-            k = self._key(bar.symbol, bar.exchange.value if hasattr(bar.exchange, "value") else str(bar.exchange), bar.interval)
+            k = self._key(
+                bar.symbol, bar.exchange.value if hasattr(bar.exchange, "value") else str(bar.exchange), bar.interval
+            )
             dq = self._bars[k]
             # Chronological validation: skip out-of-order bars
-            if dq and hasattr(bar.ts, 'timestamp') and hasattr(dq[-1].ts, 'timestamp'):
+            if dq and hasattr(bar.ts, "timestamp") and hasattr(dq[-1].ts, "timestamp"):
                 if bar.ts.timestamp() <= dq[-1].ts.timestamp():
                     return False  # Out-of-order bar, skip silently
 
@@ -104,7 +106,7 @@ class BarCache:
         exchange: Exchange,
         interval: str = "1m",
         n: int = 100,
-    ) -> List[Bar]:
+    ) -> list[Bar]:
         with self._lock:
             k = self._key(symbol, exchange.value if hasattr(exchange, "value") else str(exchange), interval)
             dq = self._bars.get(k)
@@ -118,7 +120,7 @@ class BarCache:
                 return list(dq)[start:]
             return list(dq)
 
-    def get_current_bar_ts(self) -> Optional[str]:
+    def get_current_bar_ts(self) -> str | None:
         with self._lock:
             return self._current_bar_ts
 
@@ -129,7 +131,7 @@ class BarCache:
         interval: str = "1m",
         n: int = 100,
         max_age_seconds: float = 90.0,
-    ) -> Optional[List[Bar]]:
+    ) -> list[Bar] | None:
         """Return bars only if the most recent bar is within max_age_seconds.
         Returns None if data is stale — callers MUST NOT trade on None."""
         bars = self.get_bars(symbol, exchange, interval, n)
@@ -146,15 +148,17 @@ class BarCache:
             except (ValueError, TypeError):
                 return None
         if hasattr(bar_ts, "tzinfo") and bar_ts.tzinfo is None:
-            bar_ts = bar_ts.replace(tzinfo=timezone.utc)
+            bar_ts = bar_ts.replace(tzinfo=UTC)
         try:
-            age = (datetime.now(timezone.utc) - bar_ts).total_seconds()
+            age = (datetime.now(UTC) - bar_ts).total_seconds()
         except (TypeError, AttributeError):
             return None
         if age > max_age_seconds:
             logger.warning(
                 "Stale data for %s: last bar %.0fs old (max=%.0fs) — blocking signal",
-                symbol, age, max_age_seconds,
+                symbol,
+                age,
+                max_age_seconds,
             )
             return None
         return bars
@@ -165,7 +169,7 @@ class BarCache:
         exchange: Exchange,
         interval: str = "1m",
         n: int = 100,
-    ) -> List[int]:
+    ) -> list[int]:
         """Return indices where bar gaps > 2.5x expected interval exist."""
         bars = self.get_bars(symbol, exchange, interval, n)
         if len(bars) < 2:
@@ -181,21 +185,25 @@ class BarCache:
                     gaps.append(i)
         return gaps
 
-    def last_bar_timestamp(self) -> Optional[float]:
+    def last_bar_timestamp(self) -> float | None:
         """Return timestamp (epoch seconds) of last bar arrival, or None."""
         return getattr(self, "_last_bar_time", None)
 
     def has_data(self, symbol: str, exchange: Exchange, interval: str = "1m", min_bars: int = 20) -> bool:
         return len(self.get_bars(symbol, exchange, interval, 0)) >= min_bars
 
-    def symbols_with_bars(self, exchange: Exchange, interval: str = "1m", min_bars: int = 20) -> List[str]:
+    def symbols_with_bars(self, exchange: Exchange, interval: str = "1m", min_bars: int = 20) -> list[str]:
         with self._lock:
             out = []
             for k, dq in self._bars.items():
                 if not dq:
                     continue
                 parts = k.split(":", 2)
-                if len(parts) >= 3 and parts[0] == (exchange.value if hasattr(exchange, "value") else str(exchange)) and parts[2] == interval:
+                if (
+                    len(parts) >= 3
+                    and parts[0] == (exchange.value if hasattr(exchange, "value") else str(exchange))
+                    and parts[2] == interval
+                ):
                     if len(dq) >= min_bars:
                         out.append(parts[1])
             return out
@@ -210,10 +218,7 @@ class BarCache:
         now = time.time()
         pruned = 0
         with self._lock:
-            stale_keys = [
-                k for k, ts in self._last_update.items()
-                if (now - ts) > max_idle_seconds
-            ]
+            stale_keys = [k for k, ts in self._last_update.items() if (now - ts) > max_idle_seconds]
             for k in stale_keys:
                 del self._bars[k]
                 del self._last_update[k]

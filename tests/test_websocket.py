@@ -6,11 +6,10 @@ Uses a minimal FastAPI app (without the full lifespan) to avoid startup
 hangs from Redis/broker connections. The WebSocket handler is replicated
 from the main app to test the same logic.
 """
-import asyncio
+
+import json
 import os
 import time
-import json
-from typing import Optional
 
 import jwt
 import pytest
@@ -32,6 +31,7 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_jwt(
     sub: str = "wsuser",
@@ -57,7 +57,7 @@ def _expired_jwt(sub: str = "wsuser") -> str:
     return _make_jwt(sub=sub, exp_delta=-60)
 
 
-def _decode_token(token: str) -> Optional[dict]:
+def _decode_token(token: str) -> dict | None:
     """Minimal JWT decode for the test WS app."""
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
@@ -68,6 +68,7 @@ def _decode_token(token: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 # Minimal WebSocket app (mirrors the main app's /ws handler logic)
 # ---------------------------------------------------------------------------
+
 
 def _create_ws_test_app() -> FastAPI:
     """Create a minimal FastAPI app with just the WebSocket endpoint.
@@ -88,7 +89,7 @@ def _create_ws_test_app() -> FastAPI:
             for proto in subprotocols.split(","):
                 proto = proto.strip()
                 if proto.startswith("access_token."):
-                    token = proto[len("access_token."):]
+                    token = proto[len("access_token.") :]
                     selected_subprotocol = proto
                     break
 
@@ -144,6 +145,7 @@ def _create_ws_test_app() -> FastAPI:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def ws_app():
     return _create_ws_test_app()
@@ -160,8 +162,8 @@ def sync_client(ws_app):
 # Tests
 # =========================================================================
 
-class TestWebSocket:
 
+class TestWebSocket:
     def test_ws_connects_with_valid_token(self, sync_client):
         """Connect with a valid JWT in the query param and receive the
         initial 'connected' message."""
@@ -219,9 +221,7 @@ class TestWebSocket:
 
         for i in range(3):
             assert i in results, f"Connection {i} did not complete"
-            assert results[i].get("type") == "connected", (
-                f"Connection {i} failed: {results[i]}"
-            )
+            assert results[i].get("type") == "connected", f"Connection {i} failed: {results[i]}"
             assert results[i].get("user_id") == f"user{i}"
 
     def test_ws_subprotocol_auth(self, sync_client):

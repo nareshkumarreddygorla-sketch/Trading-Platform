@@ -1,0 +1,30 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [staging]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build staging images
+        run: |
+          docker build -f deploy/docker/Dockerfile.api \
+            -t trading-api:staging-${GITHUB_SHA::8} .
+          docker build -f deploy/docker/Dockerfile.frontend \
+            -t trading-frontend:staging-${GITHUB_SHA::8} .
+
+      - name: Staging deployment ready
+        run: |
+          echo "Staging images built successfully:"
+          echo "  trading-api:staging-${GITHUB_SHA::8}"
+          echo "  trading-frontend:staging-${GITHUB_SHA::8}"
+          echo ""
+          echo "Deploy with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"

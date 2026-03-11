@@ -20,34 +20,36 @@ Index-level market-wide circuit breakers (SEBI mandated):
 
 Thread-safe: all state mutations are guarded by a threading.Lock.
 """
+
 import logging
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 class CircuitBand(str, Enum):
     """Individual stock circuit limit bands."""
-    NONE = "NONE"           # F&O stocks: no circuit limit
-    PCT_2 = "PCT_2"         # +/- 2%
-    PCT_5 = "PCT_5"         # +/- 5%
-    PCT_10 = "PCT_10"       # +/- 10%
-    PCT_20 = "PCT_20"       # +/- 20%
+
+    NONE = "NONE"  # F&O stocks: no circuit limit
+    PCT_2 = "PCT_2"  # +/- 2%
+    PCT_5 = "PCT_5"  # +/- 5%
+    PCT_10 = "PCT_10"  # +/- 10%
+    PCT_20 = "PCT_20"  # +/- 20%
 
 
 class MarketCircuitLevel(str, Enum):
     """Market-wide circuit breaker levels."""
+
     NORMAL = "NORMAL"
-    LEVEL_1 = "LEVEL_1"    # +/- 10% index move
-    LEVEL_2 = "LEVEL_2"    # +/- 15% index move
-    LEVEL_3 = "LEVEL_3"    # +/- 20% index move (market closed for day)
+    LEVEL_1 = "LEVEL_1"  # +/- 10% index move
+    LEVEL_2 = "LEVEL_2"  # +/- 15% index move
+    LEVEL_3 = "LEVEL_3"  # +/- 20% index move (market closed for day)
 
 
-BAND_PERCENTAGES: Dict[CircuitBand, float] = {
+BAND_PERCENTAGES: dict[CircuitBand, float] = {
     CircuitBand.NONE: 0.0,
     CircuitBand.PCT_2: 2.0,
     CircuitBand.PCT_5: 5.0,
@@ -55,7 +57,7 @@ BAND_PERCENTAGES: Dict[CircuitBand, float] = {
     CircuitBand.PCT_20: 20.0,
 }
 
-INDEX_CIRCUIT_THRESHOLDS: List[Tuple[float, MarketCircuitLevel]] = [
+INDEX_CIRCUIT_THRESHOLDS: list[tuple[float, MarketCircuitLevel]] = [
     (10.0, MarketCircuitLevel.LEVEL_1),
     (15.0, MarketCircuitLevel.LEVEL_2),
     (20.0, MarketCircuitLevel.LEVEL_3),
@@ -65,6 +67,7 @@ INDEX_CIRCUIT_THRESHOLDS: List[Tuple[float, MarketCircuitLevel]] = [
 @dataclass
 class CircuitCheckResult:
     """Result of a pre-order circuit limit check."""
+
     allowed: bool
     reason: str = ""
     upper_limit: float = 0.0
@@ -87,7 +90,7 @@ class CircuitLimitChecker:
 
     def __init__(
         self,
-        fno_symbols: Optional[set] = None,
+        fno_symbols: set | None = None,
         default_band: CircuitBand = CircuitBand.PCT_20,
     ):
         """
@@ -100,17 +103,17 @@ class CircuitLimitChecker:
         self._default_band = default_band
 
         # Previous close / reference prices (set daily at market open)
-        self._reference_prices: Dict[str, float] = {}
+        self._reference_prices: dict[str, float] = {}
 
         # Per-symbol band overrides
-        self._symbol_bands: Dict[str, CircuitBand] = {}
+        self._symbol_bands: dict[str, CircuitBand] = {}
 
         # Market-wide circuit breaker state
         self._market_circuit_level = MarketCircuitLevel.NORMAL
-        self._market_circuit_triggered_at: Optional[datetime] = None
+        self._market_circuit_triggered_at: datetime | None = None
 
         # Index reference for market-wide circuit breaker
-        self._index_reference: Dict[str, float] = {}  # e.g. {"NIFTY": 22000.0}
+        self._index_reference: dict[str, float] = {}  # e.g. {"NIFTY": 22000.0}
 
     # --- Configuration ---
 
@@ -122,7 +125,7 @@ class CircuitLimitChecker:
         with self._lock:
             self._reference_prices[symbol.upper()] = price
 
-    def set_reference_prices_bulk(self, prices: Dict[str, float]) -> None:
+    def set_reference_prices_bulk(self, prices: dict[str, float]) -> None:
         """Bulk-set reference prices (e.g. at market open)."""
         with self._lock:
             for sym, px in prices.items():
@@ -156,7 +159,7 @@ class CircuitLimitChecker:
                 return CircuitBand.NONE
             return self._symbol_bands.get(clean, self._default_band)
 
-    def get_limits(self, symbol: str) -> Tuple[float, float]:
+    def get_limits(self, symbol: str) -> tuple[float, float]:
         """
         Get upper and lower circuit limits for a symbol.
 
@@ -223,9 +226,7 @@ class CircuitLimitChecker:
             ref = self._reference_prices.get(clean)
             if ref is None or ref <= 0:
                 # No reference price available — allow with warning
-                logger.debug(
-                    "No reference price for %s; skipping circuit limit check", clean
-                )
+                logger.debug("No reference price for %s; skipping circuit limit check", clean)
                 return CircuitCheckResult(
                     allowed=True,
                     reason="no_reference_price",
@@ -244,7 +245,7 @@ class CircuitLimitChecker:
                 return CircuitCheckResult(
                     allowed=False,
                     reason=f"price {price:.2f} exceeds upper circuit limit {upper:.2f} "
-                           f"(ref={ref:.2f}, band={band.value})",
+                    f"(ref={ref:.2f}, band={band.value})",
                     upper_limit=upper,
                     lower_limit=lower,
                     band=band,
@@ -254,7 +255,7 @@ class CircuitLimitChecker:
                 return CircuitCheckResult(
                     allowed=False,
                     reason=f"price {price:.2f} below lower circuit limit {lower:.2f} "
-                           f"(ref={ref:.2f}, band={band.value})",
+                    f"(ref={ref:.2f}, band={band.value})",
                     upper_limit=upper,
                     lower_limit=lower,
                     band=band,
@@ -294,14 +295,19 @@ class CircuitLimitChecker:
                     triggered_level = level
 
             if triggered_level != MarketCircuitLevel.NORMAL:
-                if self._market_circuit_level == MarketCircuitLevel.NORMAL or \
-                   triggered_level.value > self._market_circuit_level.value:
+                if (
+                    self._market_circuit_level == MarketCircuitLevel.NORMAL
+                    or triggered_level.value > self._market_circuit_level.value
+                ):
                     self._market_circuit_level = triggered_level
-                    self._market_circuit_triggered_at = datetime.now(timezone.utc)
+                    self._market_circuit_triggered_at = datetime.now(UTC)
                     logger.critical(
-                        "MARKET-WIDE CIRCUIT BREAKER TRIGGERED: %s index=%s "
-                        "ref=%.2f current=%.2f change=%.2f%%",
-                        triggered_level.value, clean, ref, current_price, change_pct,
+                        "MARKET-WIDE CIRCUIT BREAKER TRIGGERED: %s index=%s ref=%.2f current=%.2f change=%.2f%%",
+                        triggered_level.value,
+                        clean,
+                        ref,
+                        current_price,
+                        change_pct,
                     )
 
             return self._market_circuit_level

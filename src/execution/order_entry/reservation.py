@@ -2,11 +2,11 @@
 Atomic exposure reservation: reserve before broker call; rollback if broker fails.
 Prevents two concurrent orders from both passing risk check and exceeding limits.
 """
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Dict, Optional
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +14,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ReservedExposure:
     """One reserved exposure (pending order)."""
+
     order_id: str
     symbol: str
     exchange: str
     side: str
     quantity: float
     price: float
-    ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    ts: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class ExposureReservation:
@@ -31,7 +32,7 @@ class ExposureReservation:
     """
 
     def __init__(self):
-        self._reservations: Dict[str, ReservedExposure] = {}  # order_id -> reserved
+        self._reservations: dict[str, ReservedExposure] = {}  # order_id -> reserved
         self._lock = asyncio.Lock()
 
     async def reserve(

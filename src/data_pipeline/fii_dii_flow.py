@@ -6,10 +6,10 @@ ingest data from an external provider (e.g. NSE bulk data downloads,
 broker API).  All query methods return empty results when no real data
 has been ingested.
 """
+
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Dict, List
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class FlowAnalysis:
     total_dii_net_month: float
     signal_strength: float
     recommendation: str
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class FIIDIITracker:
@@ -54,18 +54,15 @@ class FIIDIITracker:
     """
 
     def __init__(self):
-        self._flows: List[InstitutionalFlow] = []
-        logger.info(
-            "FIIDIITracker initialised with no data source. "
-            "Call add_flow() to ingest real FII/DII data."
-        )
+        self._flows: list[InstitutionalFlow] = []
+        logger.info("FIIDIITracker initialised with no data source. Call add_flow() to ingest real FII/DII data.")
 
     def add_flow(self, flow: InstitutionalFlow) -> None:
         self._flows.append(flow)
         if len(self._flows) > 90:
             self._flows = self._flows[-90:]
 
-    def get_recent_flows(self, days: int = 10) -> List[InstitutionalFlow]:
+    def get_recent_flows(self, days: int = 10) -> list[InstitutionalFlow]:
         if not self._flows:
             logger.warning("FIIDIITracker.get_recent_flows: no real data available")
         return self._flows[-days:]
@@ -73,15 +70,17 @@ class FIIDIITracker:
     def analyze(self) -> FlowAnalysis:
         if len(self._flows) < 5:
             if not self._flows:
-                logger.warning(
-                    "FIIDIITracker.analyze: no real FII/DII data ingested -- "
-                    "returning neutral analysis"
-                )
+                logger.warning("FIIDIITracker.analyze: no real FII/DII data ingested -- returning neutral analysis")
             return FlowAnalysis(
-                trend="neutral", fii_streak=0, dii_streak=0,
-                avg_fii_net_5d=0, avg_dii_net_5d=0,
-                total_fii_net_month=0, total_dii_net_month=0,
-                signal_strength=0, recommendation="Insufficient data",
+                trend="neutral",
+                fii_streak=0,
+                dii_streak=0,
+                avg_fii_net_5d=0,
+                avg_dii_net_5d=0,
+                total_fii_net_month=0,
+                total_dii_net_month=0,
+                signal_strength=0,
+                recommendation="Insufficient data",
             )
 
         r5 = self._flows[-5:]
@@ -126,10 +125,15 @@ class FIIDIITracker:
             rec += ". FII selling streak — watch for continued outflows."
 
         return FlowAnalysis(
-            trend=trend, fii_streak=fii_streak, dii_streak=dii_streak,
-            avg_fii_net_5d=round(avg_fii, 2), avg_dii_net_5d=round(avg_dii, 2),
-            total_fii_net_month=round(total_fii, 2), total_dii_net_month=round(total_dii, 2),
-            signal_strength=round(strength, 3), recommendation=rec,
+            trend=trend,
+            fii_streak=fii_streak,
+            dii_streak=dii_streak,
+            avg_fii_net_5d=round(avg_fii, 2),
+            avg_dii_net_5d=round(avg_dii, 2),
+            total_fii_net_month=round(total_fii, 2),
+            total_dii_net_month=round(total_dii, 2),
+            signal_strength=round(strength, 3),
+            recommendation=rec,
         )
 
     def to_exposure_multiplier(self) -> float:

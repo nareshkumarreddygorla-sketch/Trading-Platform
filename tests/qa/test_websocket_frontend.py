@@ -3,9 +3,8 @@ QA Phase 7 — Frontend integration.
 18) WebSocket flood: 1000 events → UI/store stable; no crash.
 19) JWT expiry: expired token → connection rejected (4001); no silent continuation.
 """
-import asyncio
+
 import os
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -42,8 +41,10 @@ async def test_websocket_flood_multiple_clients():
     class MockWS:
         def __init__(self, out):
             self._out = out
+
         async def accept(self):
             pass
+
         async def send_json(self, msg):
             self._out.append(msg)
 
@@ -76,12 +77,14 @@ async def test_websocket_rejects_expired_jwt():
     )
     app = FastAPI()
     from src.api.ws_manager import ConnectionManager, set_ws_manager
+
     mgr = ConnectionManager()
     set_ws_manager(mgr)
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):
         from src.api.auth import _decode_token
+
         token = websocket.scope.get("query_string", b"").decode().split("token=")
         token = (token[1].split("&")[0] if len(token) > 1 else "") or None
         if os.environ.get("JWT_SECRET"):

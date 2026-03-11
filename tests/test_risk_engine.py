@@ -1,6 +1,5 @@
-import pytest
-from src.core.events import Signal, SignalSide, Exchange
-from src.risk_engine import RiskLimits, RiskManager, LimitCheckResult
+from src.core.events import Exchange, Signal, SignalSide
+from src.risk_engine import RiskLimits, RiskManager
 
 
 def test_limits_position_size():

@@ -1,4 +1,5 @@
 """Statistical performance decay detection."""
+
 import numpy as np
 
 
@@ -18,7 +19,7 @@ class DecayDetector:
         """
         if len(returns) < self.min_periods:
             return False
-        r = returns[-self.lookback:] if len(returns) >= self.lookback else returns
+        r = returns[-self.lookback :] if len(returns) >= self.lookback else returns
         n = len(r)
         mid = n // 2
         first = r[:mid]

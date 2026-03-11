@@ -2,6 +2,7 @@
 Lifespan: database engine, session factory, repos, trade_store, Redis health check,
 Sentry init, production env validation, and WebSocket manager setup.
 """
+
 import logging
 import os
 import time
@@ -16,11 +17,16 @@ async def init_database(app: FastAPI) -> None:
     persistence layer (DB repos), and Redis health check."""
     # ── Error tracking & observability ──
     from src.api.sentry_setup import init_sentry
+
     init_sentry()
 
     # Cold start: trading not allowed until recovery completes
     # Production env validation: require DATABASE_URL and JWT_SECRET when ENV=production
-    if os.environ.get("ENV", "").lower() == "production" or os.environ.get("PRODUCTION", "").lower() in ("1", "true", "yes"):
+    if os.environ.get("ENV", "").lower() == "production" or os.environ.get("PRODUCTION", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
         if not os.environ.get("DATABASE_URL"):
             logger.error("Production: DATABASE_URL is required")
             raise RuntimeError("DATABASE_URL is required in production")
@@ -40,6 +46,7 @@ async def init_database(app: FastAPI) -> None:
     app.state.position_repo = None
 
     from src.api.ws_manager import ConnectionManager, set_ws_manager
+
     ws_manager = ConnectionManager()
     set_ws_manager(ws_manager)
     app.state.ws_manager = ws_manager
@@ -52,15 +59,16 @@ async def init_database(app: FastAPI) -> None:
     if os.environ.get("DATABASE_URL"):
         try:
             from src.persistence import (
-                get_engine,
-                PersistenceService,
+                AuditRepository,
                 OrderRepository,
+                PersistenceService,
                 PositionRepository,
                 RiskSnapshotRepository,
-                AuditRepository,
                 UserRepository,
+                get_engine,
             )
             from src.persistence.models import Base
+
             engine = get_engine()
             Base.metadata.create_all(engine)
             order_repo = OrderRepository()
@@ -88,11 +96,13 @@ async def init_database(app: FastAPI) -> None:
     app.state.redis_healthy = False
     try:
         from src.core.config import get_settings as _gs
+
         _redis_url_check = _gs().market_data.redis_url
     except Exception:
         _redis_url_check = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     try:
         import redis as _redis_sync
+
         _rc = _redis_sync.from_url(_redis_url_check, socket_timeout=5)
         _rc.ping()
         _rc.close()
@@ -103,9 +113,11 @@ async def init_database(app: FastAPI) -> None:
         _paper_mode_env = os.environ.get("PAPER_MODE", "true").lower() in ("true", "1", "yes")
         if _require_redis:
             logger.error("Redis health check FAILED (REQUIRE_REDIS=true): %s", _redis_err)
-            raise RuntimeError(f"Redis required but unavailable: {_redis_err}")
+            raise RuntimeError(f"Redis required but unavailable: {_redis_err}") from _redis_err
         elif _paper_mode_env:
-            logger.warning("Redis health check FAILED (paper mode — continuing with in-memory fallback): %s", _redis_err)
+            logger.warning(
+                "Redis health check FAILED (paper mode — continuing with in-memory fallback): %s", _redis_err
+            )
         else:
             logger.warning("Redis health check FAILED: %s — fill dedup will use in-memory only", _redis_err)
 
@@ -116,7 +128,7 @@ async def shutdown_database(app: FastAPI) -> None:
 
     # ── Close Redis connection (app.state.redis) ──
     try:
-        _redis = getattr(app.state, 'redis', None)
+        _redis = getattr(app.state, "redis", None)
         if _redis:
             await _redis.close()
             logger.info("Redis connection closed")
@@ -173,6 +185,7 @@ async def shutdown_database(app: FastAPI) -> None:
     # Stop token blacklist cleanup thread
     try:
         from src.api.token_blacklist import stop_cleanup_thread
+
         stop_cleanup_thread()
     except Exception:
         pass

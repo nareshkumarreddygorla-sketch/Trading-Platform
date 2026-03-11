@@ -1,7 +1,7 @@
 """Risk snapshot repo: persist/restore equity and daily_pnl for cold start."""
+
 import logging
-from datetime import datetime, timezone
-from typing import Optional, Tuple
+from datetime import UTC, datetime
 
 from .database import session_scope
 from .models import RiskSnapshotModel
@@ -14,9 +14,10 @@ class RiskSnapshotRepository:
 
     def __init__(self, session_factory=None):
         from .database import get_session_factory
+
         self._session_factory = session_factory or get_session_factory()
 
-    def get_latest(self) -> Optional[Tuple[float, float]]:
+    def get_latest(self) -> tuple[float, float] | None:
         """Return (equity, daily_pnl) for id=1, or None if no row."""
         with session_scope() as session:
             row = session.query(RiskSnapshotModel).filter(RiskSnapshotModel.id == 1).first()
@@ -28,11 +29,9 @@ class RiskSnapshotRepository:
         """Upsert row id=1 with given equity and daily_pnl."""
         with session_scope() as session:
             row = session.query(RiskSnapshotModel).filter(RiskSnapshotModel.id == 1).first()
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if row is None:
-                session.add(
-                    RiskSnapshotModel(id=1, equity=equity, daily_pnl=daily_pnl, updated_at=now)
-                )
+                session.add(RiskSnapshotModel(id=1, equity=equity, daily_pnl=daily_pnl, updated_at=now))
             else:
                 row.equity = equity
                 row.daily_pnl = daily_pnl

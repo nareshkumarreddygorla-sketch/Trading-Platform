@@ -11,11 +11,10 @@ Pipeline:
 7. Update strategy registry for next day
 8. Send notification
 """
-import asyncio
+
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
 
 from src.simulation.nightly_simulator import NightlySimulator, SimulationResult
 
@@ -32,7 +31,7 @@ class SimulationOrchestrator:
 
     def __init__(
         self,
-        simulator: Optional[NightlySimulator] = None,
+        simulator: NightlySimulator | None = None,
         ohlcv_repo=None,
         strategy_registry=None,
         notifier=None,
@@ -47,13 +46,13 @@ class SimulationOrchestrator:
         self._strategy_registry = strategy_registry
         self._notifier = notifier
         self._running = False
-        self._last_results: List[SimulationResult] = []
+        self._last_results: list[SimulationResult] = []
 
     async def run_nightly_pipeline(
         self,
-        symbols: Optional[List[str]] = None,
-        intervals: List[str] = None,
-    ) -> List[SimulationResult]:
+        symbols: list[str] | None = None,
+        intervals: list[str] = None,
+    ) -> list[SimulationResult]:
         """
         Execute the full nightly simulation pipeline.
 
@@ -116,10 +115,11 @@ class SimulationOrchestrator:
         finally:
             self._running = False
 
-    async def _get_tradeable_symbols(self) -> List[str]:
+    async def _get_tradeable_symbols(self) -> list[str]:
         """Get symbols from dynamic universe scanner."""
         try:
             from src.scanner.dynamic_universe import DynamicUniverse
+
             scanner = DynamicUniverse()
             symbols = await scanner.get_tradeable_stocks(max_count=100)
             logger.info("Universe scanner returned %d symbols", len(symbols))
@@ -127,22 +127,38 @@ class SimulationOrchestrator:
         except Exception as e:
             logger.warning("Universe scanner failed, using defaults: %s", e)
             return [
-                "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK",
-                "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK",
-                "LT", "AXISBANK", "BAJFINANCE", "MARUTI", "TITAN",
-                "ASIANPAINT", "SUNPHARMA", "WIPRO", "HCLTECH", "ULTRACEMCO",
+                "RELIANCE",
+                "TCS",
+                "INFY",
+                "HDFCBANK",
+                "ICICIBANK",
+                "HINDUNILVR",
+                "ITC",
+                "SBIN",
+                "BHARTIARTL",
+                "KOTAKBANK",
+                "LT",
+                "AXISBANK",
+                "BAJFINANCE",
+                "MARUTI",
+                "TITAN",
+                "ASIANPAINT",
+                "SUNPHARMA",
+                "WIPRO",
+                "HCLTECH",
+                "ULTRACEMCO",
             ]
 
     async def _fetch_bars_data(
         self,
-        symbols: List[str],
-        intervals: List[str],
-    ) -> Dict[str, list]:
+        symbols: list[str],
+        intervals: list[str],
+    ) -> dict[str, list]:
         """
         Fetch bar data from OHLCV repo or yfinance fallback.
         Returns dict of symbol -> list of serializable bar dicts.
         """
-        bars_data: Dict[str, list] = {}
+        bars_data: dict[str, list] = {}
 
         # Try OHLCV repo first
         if self._ohlcv_repo:
@@ -152,9 +168,14 @@ class SimulationOrchestrator:
                     if bars:
                         bars_data[symbol] = [
                             {
-                                "open": b.open, "high": b.high, "low": b.low,
-                                "close": b.close, "volume": b.volume,
-                                "timestamp": b.timestamp.isoformat() if hasattr(b.timestamp, 'isoformat') else str(b.timestamp),
+                                "open": b.open,
+                                "high": b.high,
+                                "low": b.low,
+                                "close": b.close,
+                                "volume": b.volume,
+                                "timestamp": b.timestamp.isoformat()
+                                if hasattr(b.timestamp, "isoformat")
+                                else str(b.timestamp),
                             }
                             for b in bars
                         ]
@@ -167,6 +188,7 @@ class SimulationOrchestrator:
         # Fallback: yfinance
         try:
             import yfinance as yf
+
             logger.info("Fetching bars from yfinance for %d symbols", len(symbols))
 
             for symbol in symbols:
@@ -196,7 +218,7 @@ class SimulationOrchestrator:
 
         return bars_data
 
-    async def _store_results(self, results: List[SimulationResult]) -> None:
+    async def _store_results(self, results: list[SimulationResult]) -> None:
         """Store simulation results in database."""
         try:
             from src.persistence.database import session_scope
@@ -228,7 +250,7 @@ class SimulationOrchestrator:
         except Exception as e:
             logger.error("Failed to store simulation results: %s", e)
 
-    async def _update_registry(self, selected: List[SimulationResult]) -> None:
+    async def _update_registry(self, selected: list[SimulationResult]) -> None:
         """Update strategy registry with selected strategies for next day."""
         if not self._strategy_registry or not selected:
             return
@@ -241,21 +263,24 @@ class SimulationOrchestrator:
                 self._strategy_registry.enable(r.strategy_id)
                 logger.info(
                     "Selected for tomorrow: %s (Sharpe=%.2f, WR=%.1f%%, DD=%.1f%%)",
-                    r.strategy_id, r.sharpe_ratio, r.win_rate, r.max_drawdown_pct,
+                    r.strategy_id,
+                    r.sharpe_ratio,
+                    r.win_rate,
+                    r.max_drawdown_pct,
                 )
         except Exception as e:
             logger.error("Failed to update strategy registry: %s", e)
 
     async def _send_notification(
         self,
-        results: List[SimulationResult],
-        selected: List[SimulationResult],
+        results: list[SimulationResult],
+        selected: list[SimulationResult],
     ) -> None:
         """Send simulation summary notification."""
         if not selected:
             return
         try:
-            summary = f"Nightly Simulation Complete\n"
+            summary = "Nightly Simulation Complete\n"
             summary += f"Total permutations tested: {len(results)}\n"
             summary += f"Selected {len(selected)} strategies for tomorrow:\n\n"
             for r in selected:
@@ -277,5 +302,5 @@ class SimulationOrchestrator:
         return self._running
 
     @property
-    def last_results(self) -> List[SimulationResult]:
+    def last_results(self) -> list[SimulationResult]:
         return self._last_results

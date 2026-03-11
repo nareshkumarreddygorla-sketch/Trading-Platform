@@ -4,10 +4,10 @@ logout integration.
 
 Tests the in-memory fallback path (no Redis) which is the default in tests.
 """
+
 import os
 import time
 import uuid
-from typing import Optional
 
 import jwt
 import pytest
@@ -32,9 +32,10 @@ API = "/api/v1"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_token(
     sub: str = "testadmin",
-    roles: Optional[list] = None,
+    roles: list | None = None,
     token_type: str = "access",
     exp_delta: int = 1800,
 ) -> str:
@@ -57,12 +58,14 @@ def _make_token(
 # 1. Direct blacklist module tests (no FastAPI)
 # =========================================================================
 
+
 class TestBlacklistModule:
     """Test src.api.token_blacklist directly."""
 
     def setup_method(self):
         """Reset the in-memory blacklist before each test to avoid leaks."""
         from src.api.token_blacklist import _blacklist, _lock
+
         with _lock:
             _blacklist.clear()
 
@@ -89,7 +92,7 @@ class TestBlacklistModule:
 
         The is_blacklisted function eagerly cleans up expired entries on read.
         """
-        from src.api.token_blacklist import blacklist_token, is_blacklisted, _blacklist, _lock
+        from src.api.token_blacklist import _blacklist, _lock, blacklist_token, is_blacklisted
 
         token = f"expired-token-{uuid.uuid4()}"
         # Set expires_at to 2 seconds in the past
@@ -140,6 +143,7 @@ class TestBlacklistModule:
 # 2. Logout invalidates token (integration via FastAPI)
 # =========================================================================
 
+
 class TestLogoutBlacklist:
     """Test that POST /auth/logout blacklists the token so subsequent
     requests with the same token are rejected."""
@@ -149,7 +153,8 @@ class TestLogoutBlacklist:
         """After POST /auth/logout, the old token is rejected on protected endpoints."""
         app = create_app()
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test",
+            transport=ASGITransport(app=app),
+            base_url="http://test",
         ) as client:
             # Login to get a token
             login_resp = await client.post(
@@ -181,7 +186,8 @@ class TestLogoutBlacklist:
         """POST /auth/logout without a token returns 401."""
         app = create_app()
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test",
+            transport=ASGITransport(app=app),
+            base_url="http://test",
         ) as client:
             resp = await client.post(f"{API}/auth/logout")
             assert resp.status_code == 401
@@ -191,7 +197,8 @@ class TestLogoutBlacklist:
         """After refreshing, the old refresh token is blacklisted and cannot be reused."""
         app = create_app()
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test",
+            transport=ASGITransport(app=app),
+            base_url="http://test",
         ) as client:
             # Login to get tokens
             login_resp = await client.post(

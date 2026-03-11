@@ -9,6 +9,7 @@ Supports:
 Alert deduplication: same alert not sent twice within 30 minutes.
 Configurable severity levels: INFO, WARNING, CRITICAL
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +19,6 @@ import os
 import time as _time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +38,14 @@ class AlertChannel(str, Enum):
 @dataclass
 class AlertConfig:
     """Alert system configuration."""
+
     # Email
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
     email_from: str = ""
-    email_to: List[str] = field(default_factory=list)
+    email_to: list[str] = field(default_factory=list)
 
     # Telegram
     telegram_bot_token: str = ""
@@ -52,13 +53,14 @@ class AlertConfig:
 
     # General
     dedup_window_seconds: float = 1800.0  # 30 minutes
-    enabled_channels: Set[AlertChannel] = field(default_factory=lambda: {AlertChannel.CONSOLE})
+    enabled_channels: set[AlertChannel] = field(default_factory=lambda: {AlertChannel.CONSOLE})
     min_severity: AlertSeverity = AlertSeverity.WARNING
 
 
 @dataclass
 class Alert:
     """An alert event."""
+
     severity: AlertSeverity
     title: str
     message: str
@@ -83,10 +85,10 @@ class AlertNotifier:
         await notifier.send(AlertSeverity.CRITICAL, "Circuit Breaker", "Trading halted — daily loss limit reached")
     """
 
-    def __init__(self, config: Optional[AlertConfig] = None):
+    def __init__(self, config: AlertConfig | None = None):
         self.config = config or AlertConfig()
-        self._sent_alerts: Dict[str, float] = {}  # dedup_key -> last_sent_ts
-        self._alert_history: List[Alert] = []
+        self._sent_alerts: dict[str, float] = {}  # dedup_key -> last_sent_ts
+        self._alert_history: list[Alert] = []
 
         # Auto-configure from environment
         if not self.config.telegram_bot_token:
@@ -174,15 +176,20 @@ class AlertNotifier:
             return
         try:
             import aiohttp
+
             emoji = {"INFO": "ℹ️", "WARNING": "⚠️", "CRITICAL": "🚨"}.get(alert.severity.value, "📢")
             text = f"{emoji} *{alert.severity.value}: {alert.title}*\n\n{alert.message}\n\n_Source: {alert.source}_"
             url = f"https://api.telegram.org/bot{self.config.telegram_bot_token}/sendMessage"
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json={
-                    "chat_id": self.config.telegram_chat_id,
-                    "text": text,
-                    "parse_mode": "Markdown",
-                }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.post(
+                    url,
+                    json={
+                        "chat_id": self.config.telegram_chat_id,
+                        "text": text,
+                        "parse_mode": "Markdown",
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
                     if resp.status != 200:
                         logger.warning("Telegram alert failed: HTTP %d", resp.status)
         except ImportError:
@@ -195,7 +202,6 @@ class AlertNotifier:
         if not self.config.smtp_host or not self.config.email_to:
             return
         try:
-            import smtplib
             from email.mime.text import MIMEText
 
             msg = MIMEText(f"Severity: {alert.severity.value}\n\n{alert.message}\n\nSource: {alert.source}")
@@ -211,13 +217,14 @@ class AlertNotifier:
     def _send_smtp(self, msg) -> None:
         """Synchronous SMTP send."""
         import smtplib
+
         with smtplib.SMTP(self.config.smtp_host, self.config.smtp_port, timeout=10) as server:
             server.starttls()
             if self.config.smtp_user and self.config.smtp_password:
                 server.login(self.config.smtp_user, self.config.smtp_password)
             server.send_message(msg)
 
-    def get_history(self, limit: int = 50) -> List[dict]:
+    def get_history(self, limit: int = 50) -> list[dict]:
         """Get recent alert history."""
         return [
             {

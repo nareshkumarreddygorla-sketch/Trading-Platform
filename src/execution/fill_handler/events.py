@@ -1,8 +1,8 @@
 """Fill events from broker WebSocket or REST."""
+
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 
 class FillType(str, Enum):
@@ -15,14 +15,14 @@ class FillType(str, Enum):
 @dataclass
 class FillEvent:
     order_id: str
-    broker_order_id: Optional[str]
+    broker_order_id: str | None
     symbol: str
     exchange: str
     side: str
     fill_type: FillType
     filled_qty: float
     remaining_qty: float
-    avg_price: Optional[float]
+    avg_price: float | None
     ts: datetime
     strategy_id: str = ""
     metadata: dict = None

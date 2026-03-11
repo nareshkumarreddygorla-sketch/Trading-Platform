@@ -2,7 +2,8 @@
 Market data persistence models: OHLCV bars and trade outcomes.
 Used for: historical data storage, model training, performance attribution.
 """
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Column,
@@ -19,7 +20,7 @@ from src.persistence.models import Base
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class OHLCVBarModel(Base):
@@ -27,6 +28,7 @@ class OHLCVBarModel(Base):
     Historical OHLCV bar storage. One row per (symbol, exchange, interval, timestamp).
     Designed for TimescaleDB hypertable partitioning on timestamp.
     """
+
     __tablename__ = "ohlcv_bars"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -42,8 +44,7 @@ class OHLCVBarModel(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utc_now)
 
     __table_args__ = (
-        UniqueConstraint("symbol", "exchange", "interval", "timestamp",
-                         name="uq_ohlcv_symbol_exchange_interval_ts"),
+        UniqueConstraint("symbol", "exchange", "interval", "timestamp", name="uq_ohlcv_symbol_exchange_interval_ts"),
         Index("ix_ohlcv_symbol_interval_ts", "symbol", "interval", "timestamp"),
         Index("ix_ohlcv_timestamp", "timestamp"),
     )
@@ -54,6 +55,7 @@ class TradeOutcomeModel(Base):
     Closed trade outcomes for self-learning and performance attribution.
     Records the full context at trade entry for feature importance analysis.
     """
+
     __tablename__ = "trade_outcomes"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -90,6 +92,7 @@ class SimulationResultModel(Base):
     Nightly simulation results: strategy permutation performance metrics.
     Used by the Holly-style strategy selector.
     """
+
     __tablename__ = "simulation_results"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -112,6 +115,4 @@ class SimulationResultModel(Base):
     selected = Column(Integer, nullable=False, default=0)  # 1 if selected for next day
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utc_now)
 
-    __table_args__ = (
-        Index("ix_sim_results_run_date", "run_date", "rank"),
-    )
+    __table_args__ = (Index("ix_sim_results_run_date", "run_date", "rank"),)

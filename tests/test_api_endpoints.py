@@ -7,9 +7,9 @@ equity curve, and risk positions.
 
 All tests run without external services (Redis, Postgres, broker).
 """
+
 import os
 import time
-from typing import Optional
 
 import jwt
 import pytest
@@ -34,9 +34,10 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_token(
     sub: str = "testadmin",
-    roles: Optional[list] = None,
+    roles: list | None = None,
     token_type: str = "access",
     exp_delta: int = 1800,
 ) -> str:
@@ -58,6 +59,7 @@ def _make_token(
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def app():
@@ -81,6 +83,7 @@ def auth_headers() -> dict:
 # =========================================================================
 # 1. Broker status
 # =========================================================================
+
 
 class TestBrokerStatus:
     @pytest.mark.asyncio
@@ -106,6 +109,7 @@ class TestBrokerStatus:
 # 2. Broker configure with invalid creds
 # =========================================================================
 
+
 class TestBrokerConfigure:
     @pytest.mark.asyncio
     async def test_broker_configure_invalid_creds(self, client, auth_headers):
@@ -127,6 +131,7 @@ class TestBrokerConfigure:
 # =========================================================================
 # 3. Risk limits update
 # =========================================================================
+
 
 class TestRiskLimits:
     @pytest.mark.asyncio
@@ -179,6 +184,7 @@ class TestRiskLimits:
 # 4. Orders list
 # =========================================================================
 
+
 class TestOrdersList:
     @pytest.mark.asyncio
     async def test_orders_list(self, client, auth_headers):
@@ -205,6 +211,7 @@ class TestOrdersList:
 # =========================================================================
 # 5. Strategy toggle
 # =========================================================================
+
 
 class TestStrategyToggle:
     @pytest.mark.asyncio
@@ -266,6 +273,7 @@ class TestStrategyToggle:
 # 6. Performance summary
 # =========================================================================
 
+
 class TestPerformanceSummary:
     @pytest.mark.asyncio
     async def test_performance_summary(self, client, auth_headers):
@@ -294,6 +302,7 @@ class TestPerformanceSummary:
 # =========================================================================
 # 7. Market news
 # =========================================================================
+
 
 class TestMarketNews:
     @pytest.mark.asyncio
@@ -324,6 +333,7 @@ class TestMarketNews:
 # =========================================================================
 # 8. Audit logs
 # =========================================================================
+
 
 class TestAuditLogs:
     @pytest.mark.asyncio
@@ -356,6 +366,7 @@ class TestAuditLogs:
 # =========================================================================
 # 9. Equity curve
 # =========================================================================
+
 
 class TestEquityCurve:
     @pytest.mark.asyncio
@@ -398,6 +409,7 @@ class TestEquityCurve:
 # 10. Risk positions
 # =========================================================================
 
+
 class TestRiskPositions:
     @pytest.mark.asyncio
     async def test_risk_positions(self, client, auth_headers):
@@ -415,6 +427,7 @@ class TestRiskPositions:
 # =========================================================================
 # 11. Risk snapshot and VaR
 # =========================================================================
+
 
 class TestRiskSnapshot:
     @pytest.mark.asyncio
@@ -439,6 +452,7 @@ class TestRiskSnapshot:
 # =========================================================================
 # 12. Market data endpoints
 # =========================================================================
+
 
 class TestMarketData:
     @pytest.mark.asyncio
@@ -490,6 +504,7 @@ class TestMarketData:
 # 13. Drawdown and monthly returns
 # =========================================================================
 
+
 class TestPerformanceAdditional:
     @pytest.mark.asyncio
     async def test_drawdown(self, client, auth_headers):
@@ -525,6 +540,7 @@ class TestPerformanceAdditional:
 # =========================================================================
 # 14. Strategies listing and performance
 # =========================================================================
+
 
 class TestStrategiesListing:
     @pytest.mark.asyncio

@@ -4,13 +4,13 @@ Volatility-targeted portfolio construction.
 Targets constant portfolio volatility by scaling exposure inversely with realized vol.
 When vol is high → reduce position sizes. When vol is low → increase.
 """
+
 from __future__ import annotations
 
 import logging
 import math
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Optional
 
 import numpy as np
 
@@ -20,10 +20,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class VolTargetState:
     """Current vol-targeting state."""
-    target_vol_annual: float = 12.0      # target annualised vol (%)
-    realized_vol_annual: float = 12.0    # current realised vol (%)
+
+    target_vol_annual: float = 12.0  # target annualised vol (%)
+    realized_vol_annual: float = 12.0  # current realised vol (%)
     realized_vol_daily: float = 0.0
-    scale_factor: float = 1.0             # position size multiplier
+    scale_factor: float = 1.0  # position size multiplier
     min_scale: float = 0.25
     max_scale: float = 2.0
     n_observations: int = 0
@@ -66,8 +67,8 @@ class VolatilityTargeter:
         self.max_scale = max_scale
         self.min_observations = min_observations
 
-        self._daily_returns: Deque[float] = deque(maxlen=lookback * 2)
-        self._ewma_var: Optional[float] = None
+        self._daily_returns: deque[float] = deque(maxlen=lookback * 2)
+        self._ewma_var: float | None = None
         self._state = VolTargetState(
             target_vol_annual=target_vol_annual,
             min_scale=min_scale,
@@ -83,9 +84,9 @@ class VolatilityTargeter:
         self._daily_returns.append(daily_return)
         # Update EWMA variance
         if self._ewma_var is None:
-            self._ewma_var = daily_return ** 2
+            self._ewma_var = daily_return**2
         else:
-            self._ewma_var = self.ewma_lambda * self._ewma_var + (1 - self.ewma_lambda) * daily_return ** 2
+            self._ewma_var = self.ewma_lambda * self._ewma_var + (1 - self.ewma_lambda) * daily_return**2
         self._update_state()
 
     def _update_state(self) -> None:

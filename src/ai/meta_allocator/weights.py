@@ -1,10 +1,9 @@
 """Risk parity and Kelly-adjusted strategy weights."""
-from typing import Dict, List
 
 import numpy as np
 
 
-def compute_risk_parity_weights(returns_by_strategy: Dict[str, List[float]]) -> Dict[str, float]:
+def compute_risk_parity_weights(returns_by_strategy: dict[str, list[float]]) -> dict[str, float]:
     """
     Inverse volatility weighting (risk parity): weight_i ∝ 1/vol_i.
     """
@@ -23,9 +22,9 @@ def compute_risk_parity_weights(returns_by_strategy: Dict[str, List[float]]) -> 
 
 
 def compute_kelly_weights(
-    strategy_params: Dict[str, tuple],  # strategy_id -> (sharpe, win_rate)
+    strategy_params: dict[str, tuple],  # strategy_id -> (sharpe, win_rate)
     fraction: float = 0.25,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Kelly-adjusted weights from Sharpe and win rate. fraction = half-Kelly etc.
     Simplified: weight_i ∝ max(0, sharpe_i) * fraction, then normalize.

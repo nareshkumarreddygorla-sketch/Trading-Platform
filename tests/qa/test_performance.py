@@ -2,15 +2,16 @@
 QA Phase 8 — Performance.
 Target: loop < 200ms per tick (200 symbols, 1m bars, 10 strategies, signals).
 """
+
 import time
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 
-from src.core.events import Bar, Exchange, Signal, SignalSide
+from src.core.events import Bar, Exchange
 from src.execution.autonomous_loop import AutonomousLoop
 from src.execution.order_entry.request import OrderEntryResult
-from datetime import datetime, timezone
 
 
 @pytest.mark.asyncio
@@ -25,9 +26,21 @@ async def test_autonomous_loop_tick_latency_under_200ms():
         return OrderEntryResult(True, order_id="perf_1", latency_ms=0.1)
 
     symbols = [(f"SYM{i}", Exchange.NSE) for i in range(n_symbols)]
+
     def get_bars(symbol, exchange, interval, n):
         return [
-            Bar(symbol=symbol, exchange=exchange, interval="1m", open=100, high=101, low=99, close=100, volume=1000, ts=datetime.now(timezone.utc), source="test")
+            Bar(
+                symbol=symbol,
+                exchange=exchange,
+                interval="1m",
+                open=100,
+                high=101,
+                low=99,
+                close=100,
+                volume=1000,
+                ts=datetime.now(UTC),
+                source="test",
+            )
             for _ in range(20)
         ]
 
@@ -35,6 +48,7 @@ async def test_autonomous_loop_tick_latency_under_200ms():
         return symbols
 
     signals_out = []
+
     def run_strategy(state):
         return []
 
@@ -46,7 +60,13 @@ async def test_autonomous_loop_tick_latency_under_200ms():
         get_symbols=get_symbols,
         strategy_runner=MagicMock(run=run_strategy),
         allocator=MagicMock(allocate=lambda *a, **k: []),
-        get_risk_state=lambda: {"equity": 100_000, "exposure_multiplier": 1.0, "max_position_pct": 5.0, "drawdown_scale": 1.0, "regime_scale": 1.0},
+        get_risk_state=lambda: {
+            "equity": 100_000,
+            "exposure_multiplier": 1.0,
+            "max_position_pct": 5.0,
+            "drawdown_scale": 1.0,
+            "regime_scale": 1.0,
+        },
         get_positions=lambda: [],
         poll_interval_seconds=999,
     )
@@ -65,7 +85,18 @@ async def test_autonomous_loop_tick_latency_with_features_and_regime():
     n_symbols = 50
     bar_ts = "2025-02-01T10:00:00Z"
     bars_cache = [
-        Bar(symbol="S", exchange=Exchange.NSE, interval="1m", open=100, high=101, low=99, close=100, volume=1000, ts=datetime.now(timezone.utc), source="test")
+        Bar(
+            symbol="S",
+            exchange=Exchange.NSE,
+            interval="1m",
+            open=100,
+            high=101,
+            low=99,
+            close=100,
+            volume=1000,
+            ts=datetime.now(UTC),
+            source="test",
+        )
         for _ in range(25)
     ]
 

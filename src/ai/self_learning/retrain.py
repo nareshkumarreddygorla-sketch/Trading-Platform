@@ -6,19 +6,21 @@ Auto-promotion: if new model passes stability check AND Sharpe improvement > thr
 auto-swap model file (rename current -> backup, new -> current), hot-load in ensemble,
 fire alert.
 """
+
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 from src.ai.models.registry import ModelRegistry
 
 logger = logging.getLogger(__name__)
 
 try:
-    from src.ai.walk_forward import stability_score, replacement_rule, WalkForwardConfig
+    from src.ai.walk_forward import WalkForwardConfig, replacement_rule, stability_score
 except ImportError:
     stability_score = replacement_rule = WalkForwardConfig = None
 
@@ -50,12 +52,10 @@ class RetrainPipeline:
         registry: ModelRegistry,
         config: RetrainConfig,
         train_fn: Callable[[], Any],  # returns (model, metrics)
-        backtest_fn: Callable[[Any], Dict[str, float]],  # model -> metrics
-        walk_forward_backtest_fn: Optional[
-            Callable[[Any], Tuple[float, float, List[float], List[float]]]
-        ] = None,
+        backtest_fn: Callable[[Any], dict[str, float]],  # model -> metrics
+        walk_forward_backtest_fn: Callable[[Any], tuple[float, float, list[float], list[float]]] | None = None,
         # walk_forward_backtest_fn(model) -> (mean_sharpe, mean_dd, sharpes_per_window, max_dds_per_window)
-        on_promote: Optional[Callable[[str, str, Dict[str, float]], None]] = None,
+        on_promote: Callable[[str, str, dict[str, float]], None] | None = None,
         # on_promote(model_id, version, metrics) — callback when model auto-promoted
     ):
         self.registry = registry
@@ -74,22 +74,29 @@ class RetrainPipeline:
             model, train_metrics = self.train_fn()
         except Exception as e:
             logger.exception("Retrain train_fn failed: %s", e)
-            self._log.append({"ts": datetime.now(timezone.utc).isoformat(), "stage": "train", "error": str(e)})
+            self._log.append({"ts": datetime.now(UTC).isoformat(), "stage": "train", "error": str(e)})
             return False
 
         try:
             backtest_metrics = self.backtest_fn(model)
         except Exception as e:
             logger.exception("Retrain backtest_fn failed: %s", e)
-            self._log.append({"ts": datetime.now(timezone.utc).isoformat(), "stage": "backtest", "error": str(e)})
+            self._log.append({"ts": datetime.now(UTC).isoformat(), "stage": "backtest", "error": str(e)})
             return False
 
         if backtest_metrics.get("num_trades", 0) < self.config.backtest_min_trades:
-            self._log.append({"ts": datetime.now(timezone.utc).isoformat(), "stage": "backtest", "reason": "insufficient_trades"})
+            self._log.append(
+                {"ts": datetime.now(UTC).isoformat(), "stage": "backtest", "reason": "insufficient_trades"}
+            )
             return False
 
         replaced = False
-        if self.config.use_walk_forward and self.walk_forward_backtest_fn is not None and stability_score is not None and replacement_rule is not None:
+        if (
+            self.config.use_walk_forward
+            and self.walk_forward_backtest_fn is not None
+            and stability_score is not None
+            and replacement_rule is not None
+        ):
             try:
                 cand_sharpe, cand_dd, sharpes_w, max_dds_w = self.walk_forward_backtest_fn(model)
                 stability = stability_score(
@@ -114,26 +121,35 @@ class RetrainPipeline:
                     candidate_dd_pct=cand_dd,
                     candidate_stability=stability,
                     candidate_consecutive_positive=consecutive,
-                    config=WalkForwardConfig(stability_min=self.config.stability_min, min_consecutive_positive_windows=self.config.min_consecutive_positive_windows) if WalkForwardConfig else None,
+                    config=WalkForwardConfig(
+                        stability_min=self.config.stability_min,
+                        min_consecutive_positive_windows=self.config.min_consecutive_positive_windows,
+                    )
+                    if WalkForwardConfig
+                    else None,
                 ):
                     backtest_metrics["sharpe"] = cand_sharpe
                     backtest_metrics["max_drawdown_pct"] = cand_dd
                     replaced = self.registry.replace_if_better(
-                        self.config.model_id, model, backtest_metrics,
+                        self.config.model_id,
+                        model,
+                        backtest_metrics,
                         compare_metric=self.config.compare_metric,
                         higher_is_better=self.config.higher_is_better,
                     )
-                self._log.append({
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "stage": "walk_forward_replace",
-                    "replaced": replaced,
-                    "stability": stability,
-                    "candidate_sharpe": cand_sharpe,
-                    "candidate_dd": cand_dd,
-                })
+                self._log.append(
+                    {
+                        "ts": datetime.now(UTC).isoformat(),
+                        "stage": "walk_forward_replace",
+                        "replaced": replaced,
+                        "stability": stability,
+                        "candidate_sharpe": cand_sharpe,
+                        "candidate_dd": cand_dd,
+                    }
+                )
             except Exception as e:
                 logger.exception("Walk-forward replace failed: %s", e)
-                self._log.append({"ts": datetime.now(timezone.utc).isoformat(), "stage": "walk_forward", "error": str(e)})
+                self._log.append({"ts": datetime.now(UTC).isoformat(), "stage": "walk_forward", "error": str(e)})
         else:
             replaced = self.registry.replace_if_better(
                 self.config.model_id,
@@ -142,12 +158,14 @@ class RetrainPipeline:
                 compare_metric=self.config.compare_metric,
                 higher_is_better=self.config.higher_is_better,
             )
-        self._log.append({
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "stage": "replace",
-            "replaced": replaced,
-            "metrics": backtest_metrics,
-        })
+        self._log.append(
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "replace",
+                "replaced": replaced,
+                "metrics": backtest_metrics,
+            }
+        )
 
         # Auto-promotion: if replaced AND Sharpe improvement > threshold
         if replaced and self.config.auto_promote:
@@ -155,15 +173,17 @@ class RetrainPipeline:
                 self._auto_promote(model, backtest_metrics)
             except Exception as e:
                 logger.exception("Auto-promote failed for %s: %s", self.config.model_id, e)
-                self._log.append({
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "stage": "auto_promote",
-                    "error": str(e),
-                })
+                self._log.append(
+                    {
+                        "ts": datetime.now(UTC).isoformat(),
+                        "stage": "auto_promote",
+                        "error": str(e),
+                    }
+                )
 
         return replaced
 
-    def _auto_promote(self, model: Any, metrics: Dict[str, float]) -> None:
+    def _auto_promote(self, model: Any, metrics: dict[str, float]) -> None:
         """
         Auto-promote model if Sharpe improvement exceeds threshold.
 
@@ -197,12 +217,14 @@ class RetrainPipeline:
                 improvement_pct,
                 self.config.auto_promote_sharpe_improvement_pct,
             )
-            self._log.append({
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "stage": "auto_promote",
-                "action": "skipped",
-                "sharpe_improvement_pct": improvement_pct,
-            })
+            self._log.append(
+                {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "stage": "auto_promote",
+                    "action": "skipped",
+                    "sharpe_improvement_pct": improvement_pct,
+                }
+            )
             return
 
         # File-level swap if model_dir configured
@@ -220,6 +242,7 @@ class RetrainPipeline:
             # Save new model
             try:
                 import joblib
+
                 joblib.dump(model, model_file)
                 logger.info("New model saved: %s", model_file)
             except ImportError:
@@ -247,16 +270,18 @@ class RetrainPipeline:
             improvement_pct,
         )
 
-        self._log.append({
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "stage": "auto_promote",
-            "action": "promoted",
-            "model_id": self.config.model_id,
-            "old_sharpe": current_sharpe,
-            "new_sharpe": new_sharpe,
-            "improvement_pct": improvement_pct,
-            "new_version": new_version,
-        })
+        self._log.append(
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "auto_promote",
+                "action": "promoted",
+                "model_id": self.config.model_id,
+                "old_sharpe": current_sharpe,
+                "new_sharpe": new_sharpe,
+                "improvement_pct": improvement_pct,
+                "new_version": new_version,
+            }
+        )
 
         # Fire callback for hot-load + alerts
         if self.on_promote:

@@ -3,14 +3,14 @@ Strategy Capital Allocation Engine: per-strategy Sharpe, win rate, drawdown;
 decay detection; dynamic allocation via risk parity / Kelly / confidence.
 Automatically disables weak strategies.
 """
+
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import numpy as np
 
 from .decay import DecayDetector
-from .weights import compute_risk_parity_weights, compute_kelly_weights
+from .weights import compute_kelly_weights, compute_risk_parity_weights
 
 try:
     from ..position_sizing import dynamic_position_fraction
@@ -57,8 +57,8 @@ class MetaAllocator:
         self.max_drawdown_pct = max_drawdown_pct
         self.decay_lookback = decay_lookback
         self.allocation_method = allocation_method
-        self._stats: Dict[str, StrategyStats] = {}
-        self._returns: Dict[str, List[float]] = {}
+        self._stats: dict[str, StrategyStats] = {}
+        self._returns: dict[str, list[float]] = {}
         self._decay_detector = DecayDetector(lookback=decay_lookback)
 
     def update_returns(self, strategy_id: str, period_return: float) -> None:
@@ -94,22 +94,22 @@ class MetaAllocator:
 
     def allocate(
         self,
-        strategy_ids: List[str],
+        strategy_ids: list[str],
         equity: float,
         current_drawdown_pct: float = 0.0,
         regime_multiplier: float = 1.0,
         meta_alpha_scale: float = 1.0,
-        alpha_decay_multipliers: Optional[Dict[str, float]] = None,
-    ) -> List[StrategyAllocation]:
+        alpha_decay_multipliers: dict[str, float] | None = None,
+    ) -> list[StrategyAllocation]:
         """
         Compute weights for each strategy. Disable if decayed or below min Sharpe/win rate.
         Optional: scale by dynamic position sizing (confidence × drawdown × regime), meta_alpha,
         and alpha_decay_multipliers (from DecayMonitor: Phase H meta-alpha feedback).
         """
         alpha_decay_multipliers = alpha_decay_multipliers or {}
-        allocations: List[StrategyAllocation] = []
+        allocations: list[StrategyAllocation] = []
         active = []
-        raw_returns: Dict[str, List[float]] = {}
+        raw_returns: dict[str, list[float]] = {}
 
         for sid in strategy_ids:
             stats = self._stats.get(sid)
@@ -140,9 +140,7 @@ class MetaAllocator:
             return allocations
 
         if self.allocation_method == "risk_parity":
-            weights = compute_risk_parity_weights(
-                {sid: self._returns.get(sid, []) for sid in active}
-            )
+            weights = compute_risk_parity_weights({sid: self._returns.get(sid, []) for sid in active})
         elif self.allocation_method == "kelly":
             weights = compute_kelly_weights(
                 {sid: (self._stats[sid].sharpe, self._stats[sid].rolling_win_rate) for sid in active}

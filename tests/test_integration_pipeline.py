@@ -13,21 +13,23 @@ Tests the actual code paths that matter:
 Run:
     PYTHONPATH=. pytest tests/test_integration_pipeline.py -v --tb=short
 """
+
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timezone, timedelta
 
 from src.core.events import Bar, Exchange, Signal, SignalSide
-
 
 # ────────────────────────────────────────────────────────
 # Fixtures
 # ────────────────────────────────────────────────────────
 
+
 def _make_bars(n=200, symbol="RELIANCE", trend="up"):
     """Generate realistic synthetic bars with trend."""
     bars = []
     base = 2500.0
-    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    ts = datetime(2024, 1, 1, tzinfo=UTC)
     for i in range(n):
         if trend == "up":
             drift = 0.0003
@@ -37,22 +39,24 @@ def _make_bars(n=200, symbol="RELIANCE", trend="up"):
             drift = 0.0
         noise = ((i * 7 + 13) % 11 - 5) * 0.001
         ret = drift + noise
-        base *= (1 + ret)
+        base *= 1 + ret
         o = base * (1 + ((i * 3) % 7 - 3) * 0.001)
         h = max(o, base) * (1 + abs(noise) * 0.5)
         l = min(o, base) * (1 - abs(noise) * 0.5)
         vol = 500_000 + ((i * 17) % 100) * 10_000
-        bars.append(Bar(
-            symbol=symbol,
-            exchange=Exchange.NSE,
-            interval="1d",
-            open=round(o, 2),
-            high=round(h, 2),
-            low=round(l, 2),
-            close=round(base, 2),
-            volume=vol,
-            ts=ts + timedelta(days=i),
-        ))
+        bars.append(
+            Bar(
+                symbol=symbol,
+                exchange=Exchange.NSE,
+                interval="1d",
+                open=round(o, 2),
+                high=round(h, 2),
+                low=round(l, 2),
+                close=round(base, 2),
+                volume=vol,
+                ts=ts + timedelta(days=i),
+            )
+        )
     return bars
 
 
@@ -75,22 +79,26 @@ def sideways_bars():
 # 1. Strategy signal generation
 # ────────────────────────────────────────────────────────
 
+
 class TestStrategySignals:
     """Prove each strategy generates valid signals from bars."""
 
     def test_ema_crossover_generates_signals(self, up_bars):
-        from src.strategy_engine.classical import EMACrossoverStrategy
         from src.strategy_engine.base import MarketState
+        from src.strategy_engine.classical import EMACrossoverStrategy
 
         strategy = EMACrossoverStrategy(fast=9, slow=21)
         signals = []
         for i in range(len(up_bars)):
-            window = up_bars[max(0, i - 100): i + 1]
+            window = up_bars[max(0, i - 100) : i + 1]
             if len(window) < 25:
                 continue
             state = MarketState(
-                symbol="RELIANCE", exchange=Exchange.NSE,
-                bars=window, latest_price=window[-1].close, volume=window[-1].volume,
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                bars=window,
+                latest_price=window[-1].close,
+                volume=window[-1].volume,
             )
             if strategy.warm(state):
                 sigs = strategy.generate_signals(state)
@@ -103,18 +111,21 @@ class TestStrategySignals:
             assert 0 < sig.price < 100_000
 
     def test_macd_generates_signals(self, up_bars):
-        from src.strategy_engine.classical import MACDStrategy
         from src.strategy_engine.base import MarketState
+        from src.strategy_engine.classical import MACDStrategy
 
         strategy = MACDStrategy()
         signals = []
         for i in range(len(up_bars)):
-            window = up_bars[max(0, i - 100): i + 1]
+            window = up_bars[max(0, i - 100) : i + 1]
             if len(window) < 30:
                 continue
             state = MarketState(
-                symbol="RELIANCE", exchange=Exchange.NSE,
-                bars=window, latest_price=window[-1].close, volume=window[-1].volume,
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                bars=window,
+                latest_price=window[-1].close,
+                volume=window[-1].volume,
             )
             if strategy.warm(state):
                 sigs = strategy.generate_signals(state)
@@ -122,18 +133,21 @@ class TestStrategySignals:
         assert len(signals) > 0, "MACD should generate signals"
 
     def test_rsi_generates_signals(self, up_bars):
-        from src.strategy_engine.classical import RSIStrategy
         from src.strategy_engine.base import MarketState
+        from src.strategy_engine.classical import RSIStrategy
 
         strategy = RSIStrategy(period=14, oversold=30.0, overbought=70.0)
         signals = []
         for i in range(len(up_bars)):
-            window = up_bars[max(0, i - 100): i + 1]
+            window = up_bars[max(0, i - 100) : i + 1]
             if len(window) < 20:
                 continue
             state = MarketState(
-                symbol="RELIANCE", exchange=Exchange.NSE,
-                bars=window, latest_price=window[-1].close, volume=window[-1].volume,
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                bars=window,
+                latest_price=window[-1].close,
+                volume=window[-1].volume,
             )
             if strategy.warm(state):
                 sigs = strategy.generate_signals(state)
@@ -142,18 +156,21 @@ class TestStrategySignals:
         assert isinstance(signals, list)
 
     def test_momentum_breakout(self, up_bars):
-        from src.strategy_engine.momentum_breakout import MomentumBreakoutStrategy
         from src.strategy_engine.base import MarketState
+        from src.strategy_engine.momentum_breakout import MomentumBreakoutStrategy
 
         strategy = MomentumBreakoutStrategy()
         signals = []
         for i in range(len(up_bars)):
-            window = up_bars[max(0, i - 100): i + 1]
+            window = up_bars[max(0, i - 100) : i + 1]
             if len(window) < 25:
                 continue
             state = MarketState(
-                symbol="RELIANCE", exchange=Exchange.NSE,
-                bars=window, latest_price=window[-1].close, volume=window[-1].volume,
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                bars=window,
+                latest_price=window[-1].close,
+                volume=window[-1].volume,
             )
             if strategy.warm(state):
                 sigs = strategy.generate_signals(state)
@@ -161,18 +178,21 @@ class TestStrategySignals:
         assert isinstance(signals, list)
 
     def test_mean_reversion(self, sideways_bars):
-        from src.strategy_engine.mean_reversion import MeanReversionStrategy
         from src.strategy_engine.base import MarketState
+        from src.strategy_engine.mean_reversion import MeanReversionStrategy
 
         strategy = MeanReversionStrategy()
         signals = []
         for i in range(len(sideways_bars)):
-            window = sideways_bars[max(0, i - 100): i + 1]
+            window = sideways_bars[max(0, i - 100) : i + 1]
             if len(window) < 25:
                 continue
             state = MarketState(
-                symbol="RELIANCE", exchange=Exchange.NSE,
-                bars=window, latest_price=window[-1].close, volume=window[-1].volume,
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                bars=window,
+                latest_price=window[-1].close,
+                volume=window[-1].volume,
             )
             if strategy.warm(state):
                 sigs = strategy.generate_signals(state)
@@ -184,12 +204,13 @@ class TestStrategySignals:
 # 2. Strategy runner (multi-strategy + regime)
 # ────────────────────────────────────────────────────────
 
+
 class TestStrategyRunner:
     def test_runner_aggregates_multiple_strategies(self, up_bars):
-        from src.strategy_engine.runner import StrategyRunner
-        from src.strategy_engine.registry import StrategyRegistry
-        from src.strategy_engine.classical import EMACrossoverStrategy, MACDStrategy
         from src.strategy_engine.base import MarketState
+        from src.strategy_engine.classical import EMACrossoverStrategy, MACDStrategy
+        from src.strategy_engine.registry import StrategyRegistry
+        from src.strategy_engine.runner import StrategyRunner
 
         registry = StrategyRegistry()
         registry.register(EMACrossoverStrategy(fast=9, slow=21))
@@ -198,12 +219,15 @@ class TestStrategyRunner:
 
         all_signals = []
         for i in range(len(up_bars)):
-            window = up_bars[max(0, i - 100): i + 1]
+            window = up_bars[max(0, i - 100) : i + 1]
             if len(window) < 30:
                 continue
             state = MarketState(
-                symbol="RELIANCE", exchange=Exchange.NSE,
-                bars=window, latest_price=window[-1].close, volume=window[-1].volume,
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                bars=window,
+                latest_price=window[-1].close,
+                volume=window[-1].volume,
             )
             sigs = runner.run(state)
             all_signals.extend(sigs)
@@ -217,23 +241,34 @@ class TestStrategyRunner:
 # 3. Portfolio allocator
 # ────────────────────────────────────────────────────────
 
+
 class TestAllocator:
     def test_allocator_sizes_positions(self):
-        from src.strategy_engine.allocator import PortfolioAllocator, AllocatorConfig
+        from src.strategy_engine.allocator import AllocatorConfig, PortfolioAllocator
 
-        allocator = PortfolioAllocator(AllocatorConfig(
-            max_active_signals=5,
-            max_capital_pct_per_signal=10.0,
-        ))
+        allocator = PortfolioAllocator(
+            AllocatorConfig(
+                max_active_signals=5,
+                max_capital_pct_per_signal=10.0,
+            )
+        )
         signals = [
             Signal(
-                symbol="RELIANCE", exchange=Exchange.NSE,
-                side=SignalSide.BUY, price=2500.0, score=0.75, portfolio_weight=1.0,
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                side=SignalSide.BUY,
+                price=2500.0,
+                score=0.75,
+                portfolio_weight=1.0,
                 strategy_id="ema_crossover",
             ),
             Signal(
-                symbol="TCS", exchange=Exchange.NSE,
-                side=SignalSide.BUY, price=3800.0, score=0.60, portfolio_weight=1.0,
+                symbol="TCS",
+                exchange=Exchange.NSE,
+                side=SignalSide.BUY,
+                price=3800.0,
+                score=0.60,
+                portfolio_weight=1.0,
                 strategy_id="macd",
             ),
         ]
@@ -254,9 +289,10 @@ class TestAllocator:
 # 4. Backtesting engine
 # ────────────────────────────────────────────────────────
 
+
 class TestBacktestEngine:
     def test_backtest_produces_equity_curve(self, up_bars):
-        from src.backtesting.engine import BacktestEngine, BacktestConfig
+        from src.backtesting.engine import BacktestConfig, BacktestEngine
         from src.strategy_engine.classical import EMACrossoverStrategy
 
         config = BacktestConfig(
@@ -276,7 +312,7 @@ class TestBacktestEngine:
         assert result.equity_curve[0] == 100_000.0
 
     def test_backtest_metrics_valid(self, up_bars):
-        from src.backtesting.engine import BacktestEngine, BacktestConfig
+        from src.backtesting.engine import BacktestConfig, BacktestEngine
         from src.strategy_engine.classical import MACDStrategy
 
         engine = BacktestEngine(BacktestConfig(initial_capital=100_000.0))
@@ -290,7 +326,7 @@ class TestBacktestEngine:
         assert hasattr(m, "total_return_pct")
 
     def test_backtest_with_empty_bars(self):
-        from src.backtesting.engine import BacktestEngine, BacktestConfig
+        from src.backtesting.engine import BacktestConfig, BacktestEngine
         from src.strategy_engine.classical import RSIStrategy
 
         engine = BacktestEngine(BacktestConfig())
@@ -302,6 +338,7 @@ class TestBacktestEngine:
 # ────────────────────────────────────────────────────────
 # 5. AI model predictions (graceful degradation)
 # ────────────────────────────────────────────────────────
+
 
 class TestAIModels:
     def test_alpha_model_predict_without_trained_model(self):
@@ -323,6 +360,7 @@ class TestAIModels:
     def test_lstm_predictor_no_model(self):
         """LSTM should return neutral prediction when model file missing."""
         from src.ai.models.lstm_predictor import LSTMPredictor
+
         pred = LSTMPredictor(model_path="/nonexistent/lstm.pt")
         assert pred._loaded is False
         result = pred.predict(features=None)
@@ -332,6 +370,7 @@ class TestAIModels:
     def test_transformer_predictor_no_model(self):
         """Transformer should return neutral prediction when model file missing."""
         from src.ai.models.transformer_predictor import TransformerPredictor
+
         pred = TransformerPredictor(model_path="/nonexistent/transformer.pt")
         assert pred._loaded is False
         result = pred.predict(features=None)
@@ -341,6 +380,7 @@ class TestAIModels:
     def test_rl_predictor_no_model(self):
         """RL should return neutral prediction when model file missing."""
         from src.ai.models.rl_agent import RLPredictor
+
         pred = RLPredictor(model_path="/nonexistent/rl.zip")
         assert pred._loaded is False
         result = pred.predict(features=None)
@@ -351,6 +391,7 @@ class TestAIModels:
     def test_sentiment_predictor_no_headlines(self):
         """Sentiment should return approximately neutral when no headlines available."""
         from src.ai.models.sentiment_predictor import SentimentPredictor
+
         pred = SentimentPredictor()
         result = pred.predict(features=None)
         # FinBERT neutral output varies by hardware (CPU vs MPS vs CUDA)
@@ -358,8 +399,9 @@ class TestAIModels:
 
     def test_ensemble_with_no_models(self):
         """Ensemble should return neutral when no models are loaded."""
-        from src.ai.models.registry import ModelRegistry
         from src.ai.models.ensemble import EnsembleEngine
+        from src.ai.models.registry import ModelRegistry
+
         registry = ModelRegistry()
         ensemble = EnsembleEngine(
             registry=registry,
@@ -373,6 +415,7 @@ class TestAIModels:
 # ────────────────────────────────────────────────────────
 # 6. Risk management
 # ────────────────────────────────────────────────────────
+
 
 class TestRiskManagement:
     def test_risk_manager_limits(self):
@@ -389,8 +432,12 @@ class TestRiskManagement:
 
         # Order within limits should pass
         signal = Signal(
-            symbol="RELIANCE", exchange=Exchange.NSE,
-            side=SignalSide.BUY, price=2500.0, score=0.7, portfolio_weight=1.0,
+            symbol="RELIANCE",
+            exchange=Exchange.NSE,
+            side=SignalSide.BUY,
+            price=2500.0,
+            score=0.7,
+            portfolio_weight=1.0,
             strategy_id="test",
         )
         # 2 shares * 2500 = 5K = 5% of 100K, exactly at limit
@@ -409,8 +456,12 @@ class TestRiskManagement:
 
         # Oversized order: 50% of equity in one position
         signal = Signal(
-            symbol="RELIANCE", exchange=Exchange.NSE,
-            side=SignalSide.BUY, price=2500.0, score=0.7, portfolio_weight=1.0,
+            symbol="RELIANCE",
+            exchange=Exchange.NSE,
+            side=SignalSide.BUY,
+            price=2500.0,
+            score=0.7,
+            portfolio_weight=1.0,
             strategy_id="test",
         )
         result = rm.can_place_order(signal, quantity=200, price=2500.0)
@@ -419,8 +470,8 @@ class TestRiskManagement:
 
     def test_circuit_breaker_trips_on_drawdown(self):
         from src.risk_engine import RiskManager
-        from src.risk_engine.limits import RiskLimits
         from src.risk_engine.circuit_breaker import CircuitBreaker
+        from src.risk_engine.limits import RiskLimits
 
         limits = RiskLimits(circuit_breaker_drawdown_pct=5.0)
         rm = RiskManager(equity=100_000.0, limits=limits, load_persisted_state=False)
@@ -439,6 +490,7 @@ class TestRiskManagement:
 # 7. Feature engineering
 # ────────────────────────────────────────────────────────
 
+
 class TestFeatureEngine:
     def test_feature_computation(self, up_bars):
         from src.ai.feature_engine import FeatureEngine
@@ -451,6 +503,7 @@ class TestFeatureEngine:
         assert len(features) > 10, f"Should compute 10+ features, got {len(features)}"
         # Verify no NaN/Inf
         import math
+
         for k, v in features.items():
             assert not math.isnan(v), f"Feature {k} is NaN"
             assert not math.isinf(v), f"Feature {k} is Inf"
@@ -460,10 +513,12 @@ class TestFeatureEngine:
 # 8. Regime classifier
 # ────────────────────────────────────────────────────────
 
+
 class TestRegimeClassifier:
     def test_regime_detection(self):
-        from src.ai.regime.classifier import RegimeClassifier
         import numpy as np
+
+        from src.ai.regime.classifier import RegimeClassifier
 
         clf = RegimeClassifier()
 
@@ -474,8 +529,9 @@ class TestRegimeClassifier:
         assert result.label is not None
 
     def test_crisis_regime(self):
-        from src.ai.regime.classifier import RegimeClassifier
         import numpy as np
+
+        from src.ai.regime.classifier import RegimeClassifier
 
         clf = RegimeClassifier()
         # Extreme negative returns
@@ -489,14 +545,15 @@ class TestRegimeClassifier:
 # 9. Full pipeline: bars → strategy → allocator → order
 # ────────────────────────────────────────────────────────
 
+
 class TestFullPipeline:
     def test_bars_to_allocation_pipeline(self, up_bars):
         """Prove the complete: bars → signals → allocation pipeline works."""
-        from src.strategy_engine.runner import StrategyRunner
-        from src.strategy_engine.registry import StrategyRegistry
-        from src.strategy_engine.classical import EMACrossoverStrategy, MACDStrategy, RSIStrategy
-        from src.strategy_engine.allocator import PortfolioAllocator, AllocatorConfig
+        from src.strategy_engine.allocator import AllocatorConfig, PortfolioAllocator
         from src.strategy_engine.base import MarketState
+        from src.strategy_engine.classical import EMACrossoverStrategy, MACDStrategy, RSIStrategy
+        from src.strategy_engine.registry import StrategyRegistry
+        from src.strategy_engine.runner import StrategyRunner
 
         # Setup
         registry = StrategyRegistry()
@@ -504,21 +561,26 @@ class TestFullPipeline:
         registry.register(MACDStrategy())
         registry.register(RSIStrategy())
         runner = StrategyRunner(registry)
-        allocator = PortfolioAllocator(AllocatorConfig(
-            max_active_signals=5,
-            max_capital_pct_per_signal=10.0,
-            min_confidence=0.1,  # Classical strategies score ~0.3
-        ))
+        allocator = PortfolioAllocator(
+            AllocatorConfig(
+                max_active_signals=5,
+                max_capital_pct_per_signal=10.0,
+                min_confidence=0.1,  # Classical strategies score ~0.3
+            )
+        )
 
         # Run pipeline over all bars
         total_allocations = 0
         for i in range(len(up_bars)):
-            window = up_bars[max(0, i - 100): i + 1]
+            window = up_bars[max(0, i - 100) : i + 1]
             if len(window) < 30:
                 continue
             state = MarketState(
-                symbol="RELIANCE", exchange=Exchange.NSE,
-                bars=window, latest_price=window[-1].close, volume=window[-1].volume,
+                symbol="RELIANCE",
+                exchange=Exchange.NSE,
+                bars=window,
+                latest_price=window[-1].close,
+                volume=window[-1].volume,
             )
             signals = runner.run(state)
             if signals:
@@ -533,7 +595,7 @@ class TestFullPipeline:
 
     def test_backtest_all_strategies(self, up_bars):
         """Backtest every strategy and verify all produce valid results."""
-        from src.backtesting.engine import BacktestEngine, BacktestConfig
+        from src.backtesting.engine import BacktestConfig, BacktestEngine
         from src.strategy_engine.classical import EMACrossoverStrategy, MACDStrategy, RSIStrategy
 
         engine = BacktestEngine(BacktestConfig(initial_capital=100_000.0))

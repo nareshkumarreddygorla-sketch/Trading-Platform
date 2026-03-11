@@ -5,11 +5,12 @@ adjust exposure multiplier. Integrates via FillHandler callback. Does not modify
 Cost-adjusted: deducts India transaction costs from PnL before recording.
 Sharpe is annualized (sqrt(252)) for daily trading.
 """
+
 import logging
 import math
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class StrategyStats:
         if len(self.pnls) < 2:
             return 0.0
         import numpy as np
+
         arr = np.array(self.pnls[-self.max_pnl_window :])
         mean_pnl = np.mean(arr)
         std_pnl = np.std(arr)
@@ -48,9 +50,10 @@ class StrategyStats:
         if len(self.pnls) < 2:
             return 0.0
         import numpy as np
+
         cum = np.cumsum(self.pnls[-self.max_pnl_window :])
         peak = np.maximum.accumulate(cum)
-        dd = (peak - cum)
+        dd = peak - cum
         return float(100.0 * np.max(dd) / (peak[-1] + 1e-12)) if peak[-1] > 0 else 0.0
 
 
@@ -65,8 +68,8 @@ class PerformanceTracker:
         max_consecutive_losses_disable: int = 5,
         min_win_rate_disable: float = 0.35,
         max_drawdown_pct_disable: float = 15.0,
-        on_strategy_disabled: Optional[Callable[[str, str], None]] = None,
-        on_exposure_multiplier_changed: Optional[Callable[[str, float], None]] = None,
+        on_strategy_disabled: Callable[[str, str], None] | None = None,
+        on_exposure_multiplier_changed: Callable[[str, float], None] | None = None,
         cost_calculator=None,
     ):
         self.max_consecutive_losses_disable = max_consecutive_losses_disable
@@ -74,12 +77,13 @@ class PerformanceTracker:
         self.max_drawdown_pct_disable = max_drawdown_pct_disable
         self.on_strategy_disabled = on_strategy_disabled
         self.on_exposure_multiplier_changed = on_exposure_multiplier_changed
-        self._stats: Dict[str, StrategyStats] = defaultdict(StrategyStats)
+        self._stats: dict[str, StrategyStats] = defaultdict(StrategyStats)
 
         # India transaction cost calculator for cost-adjusted Sharpe
         if cost_calculator is None:
             try:
                 from src.costs.india_costs import IndiaCostCalculator
+
                 self._cost_calc = IndiaCostCalculator()
             except ImportError:
                 self._cost_calc = None
@@ -89,7 +93,7 @@ class PerformanceTracker:
     def get_stats(self, strategy_id: str) -> StrategyStats:
         return self._stats[strategy_id]
 
-    def get_all_stats(self) -> Dict[str, StrategyStats]:
+    def get_all_stats(self) -> dict[str, StrategyStats]:
         """Return stats for all tracked strategies."""
         return dict(self._stats)
 
@@ -106,6 +110,7 @@ class PerformanceTracker:
         avg_pnl = total_pnl / total_trades if total_trades else 0.0
 
         import numpy as np
+
         sharpe = 0.0
         if len(all_pnls) >= 2:
             arr = np.array(all_pnls)
@@ -126,9 +131,13 @@ class PerformanceTracker:
             "max_drawdown_pct": max_dd,
             "strategies": {
                 sid: {
-                    "wins": s.wins, "losses": s.losses, "win_rate": s.win_rate,
-                    "pnl": sum(s.pnls), "sharpe": s.rolling_sharpe,
-                    "drawdown_pct": s.rolling_drawdown_pct, "disabled": s.disabled,
+                    "wins": s.wins,
+                    "losses": s.losses,
+                    "win_rate": s.win_rate,
+                    "pnl": sum(s.pnls),
+                    "sharpe": s.rolling_sharpe,
+                    "drawdown_pct": s.rolling_drawdown_pct,
+                    "disabled": s.disabled,
                 }
                 for sid, s in self._stats.items()
             },
@@ -198,7 +207,11 @@ class PerformanceTracker:
             recent_wins = sum(1 for p in recent_pnls if p > 0)
             if recent_wins / len(recent_pnls) > 0.50 and s.consecutive_losses < 3:
                 s.disabled = False
-                logger.info("Strategy %s auto-RE-ENABLED: recent_win_rate=%.0f%%", strategy_id, 100 * recent_wins / len(recent_pnls))
+                logger.info(
+                    "Strategy %s auto-RE-ENABLED: recent_win_rate=%.0f%%",
+                    strategy_id,
+                    100 * recent_wins / len(recent_pnls),
+                )
                 if self.on_strategy_disabled:
                     try:
                         self.on_strategy_disabled(strategy_id, "re_enabled")

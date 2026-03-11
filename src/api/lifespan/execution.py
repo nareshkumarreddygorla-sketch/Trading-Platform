@@ -3,10 +3,10 @@ Lifespan: OrderEntryService, OrderRouter, gateways, fill handler, circuit breake
 kill switch, periodic risk snapshot, gap risk pre-market check, reconciliation,
 broker heartbeat, capital gate.
 """
+
 import asyncio
 import logging
 import os
-import sys
 import time
 
 from fastapi import FastAPI
@@ -32,15 +32,16 @@ async def init_execution(app: FastAPI) -> None:
     position_repo = getattr(app.state, "position_repo", None)
 
     try:
+        from src.core.config import get_settings
+        from src.core.events import OrderStatus
+        from src.execution import AngelOneExecutionGateway, OrderLifecycle, OrderRouter
+        from src.execution.order_entry import ExposureReservation, IdempotencyStore, KillSwitch, OrderEntryService
+        from src.execution.order_entry.redis_cluster_reservation import RedisClusterReservation
+        from src.execution.order_entry.redis_distributed_lock import RedisDistributedLock
         from src.risk_engine import RiskManager
         from src.risk_engine.circuit_breaker import CircuitBreaker
-        from src.execution import OrderRouter, OrderLifecycle, AngelOneExecutionGateway
-        from src.execution.order_entry import OrderEntryService, IdempotencyStore, KillSwitch, ExposureReservation
-        from src.execution.order_entry.redis_distributed_lock import RedisDistributedLock
-        from src.execution.order_entry.redis_cluster_reservation import RedisClusterReservation
-        from src.core.events import OrderStatus
-        from src.core.config import get_settings
         from src.risk_engine.limits import RiskLimits
+
         _settings = get_settings()
         _exec = _settings.execution
         _risk_cfg = _settings.risk
@@ -97,8 +98,9 @@ async def init_execution(app: FastAPI) -> None:
         # Cold start recovery: load DB state and reconcile with broker before allowing trading
         if order_repo is not None and position_repo is not None:
             from src.startup.recovery import run_cold_start_recovery
+
             is_live = not getattr(gateway, "paper", True)
-            get_risk_snapshot = (persistence_service.get_risk_snapshot_sync if persistence_service else None)
+            get_risk_snapshot = persistence_service.get_risk_snapshot_sync if persistence_service else None
             safe_mode, _ = await run_cold_start_recovery(
                 order_repo,
                 position_repo,
@@ -126,6 +128,7 @@ async def init_execution(app: FastAPI) -> None:
         def reject_order_submitting_sync(oid):
             if persistence_service:
                 from src.core.events import OrderStatus as OS
+
                 persistence_service.update_order_status_sync(oid, OS.REJECTED)
 
         def _on_risk_rejected():
@@ -139,21 +142,25 @@ async def init_execution(app: FastAPI) -> None:
 
         async def _broadcast_order_created(o):
             from src.api.ws_manager import get_ws_manager
+
             mgr = get_ws_manager()
             if mgr:
-                await mgr.broadcast({
-                    "type": "order_created",
-                    "order_id": getattr(o, "order_id", None),
-                    "broker_order_id": getattr(o, "broker_order_id", None),
-                    "symbol": getattr(o, "symbol", ""),
-                    "exchange": getattr(getattr(o, "exchange", None), "value", str(getattr(o, "exchange", ""))),
-                    "side": getattr(o, "side", ""),
-                    "quantity": getattr(o, "quantity", 0),
-                    "status": getattr(getattr(o, "status", None), "value", str(getattr(o, "status", ""))),
-                })
+                await mgr.broadcast(
+                    {
+                        "type": "order_created",
+                        "order_id": getattr(o, "order_id", None),
+                        "broker_order_id": getattr(o, "broker_order_id", None),
+                        "symbol": getattr(o, "symbol", ""),
+                        "exchange": getattr(getattr(o, "exchange", None), "value", str(getattr(o, "exchange", ""))),
+                        "side": getattr(o, "side", ""),
+                        "quantity": getattr(o, "quantity", 0),
+                        "status": getattr(getattr(o, "status", None), "value", str(getattr(o, "status", ""))),
+                    }
+                )
 
         # GAP-18: Create rate limiter for order flood protection
         from src.execution.order_entry.rate_limiter import OrderRateLimiter, RateLimitConfig
+
         _rate_limiter = OrderRateLimiter(RateLimitConfig(max_orders_per_minute=60))
 
         # GAP-17: Wire Kafka publisher when KAFKA_BROKER_URL is configured
@@ -161,8 +168,10 @@ async def init_execution(app: FastAPI) -> None:
         _kafka_broker_url = os.environ.get("KAFKA_BROKER_URL") or os.environ.get("MD_KAFKA_BROKERS")
         if _kafka_broker_url:
             try:
-                from aiokafka import AIOKafkaProducer
                 import json as _json
+
+                from aiokafka import AIOKafkaProducer
+
                 _kafka_producer = AIOKafkaProducer(
                     bootstrap_servers=_kafka_broker_url,
                     value_serializer=lambda v: _json.dumps(v, default=str).encode("utf-8"),
@@ -218,6 +227,7 @@ async def init_execution(app: FastAPI) -> None:
         # P2-2: Wire OTR monitor into OrderEntryService for NSE 10:1 enforcement
         try:
             from src.compliance.otr_monitor import OTRMonitor
+
             _otr_monitor = OTRMonitor()
             app.state.order_entry_service.set_otr_monitor(_otr_monitor)
             app.state.otr_monitor = _otr_monitor
@@ -228,6 +238,7 @@ async def init_execution(app: FastAPI) -> None:
         # Wire SurveillanceEngine for post-trade manipulation detection (audit API)
         try:
             from src.compliance.surveillance import SurveillanceEngine
+
             _surveillance = SurveillanceEngine()
             app.state.surveillance_engine = _surveillance
             logger.info("SurveillanceEngine initialized (layering/spoofing/wash detection)")
@@ -235,6 +246,7 @@ async def init_execution(app: FastAPI) -> None:
             logger.debug("SurveillanceEngine not initialized: %s", _surv_err)
 
         from src.execution.order_entry.circuit_and_kill import CircuitAndKillController, CircuitKillConfig
+
         circuit_kill_config = CircuitKillConfig(
             max_daily_loss_pct=_risk_cfg.max_daily_loss_pct,
             max_drawdown_pct=_risk_cfg.circuit_breaker_drawdown_pct,
@@ -250,10 +262,15 @@ async def init_execution(app: FastAPI) -> None:
 
         async def on_fill_persist(event):
             if persistence_service:
-                status = OrderStatus.REJECTED if event.fill_type == FillType.REJECT else (
-                    OrderStatus.CANCELLED if event.fill_type == FillType.CANCEL else (
-                        OrderStatus.FILLED if event.fill_type == FillType.FILL else OrderStatus.PARTIALLY_FILLED
-                    ))
+                status = (
+                    OrderStatus.REJECTED
+                    if event.fill_type == FillType.REJECT
+                    else (
+                        OrderStatus.CANCELLED
+                        if event.fill_type == FillType.CANCEL
+                        else (OrderStatus.FILLED if event.fill_type == FillType.FILL else OrderStatus.PARTIALLY_FILLED)
+                    )
+                )
                 await persistence_service.persist_fill(
                     order_id=event.order_id,
                     status=status,
@@ -265,25 +282,38 @@ async def init_execution(app: FastAPI) -> None:
                     strategy_id=event.strategy_id or None,
                 )
             from src.api.ws_manager import get_ws_manager
+
             mgr = get_ws_manager()
             if mgr:
-                await mgr.broadcast({
-                    "type": "order_filled",
-                    "order_id": event.order_id,
-                    "symbol": event.symbol,
-                    "side": event.side,
-                    "filled_qty": event.filled_qty,
-                    "avg_price": event.avg_price,
-                    "fill_type": getattr(event.fill_type, "value", str(event.fill_type)),
-                })
+                await mgr.broadcast(
+                    {
+                        "type": "order_filled",
+                        "order_id": event.order_id,
+                        "symbol": event.symbol,
+                        "side": event.side,
+                        "filled_qty": event.filled_qty,
+                        "avg_price": event.avg_price,
+                        "fill_type": getattr(event.fill_type, "value", str(event.fill_type)),
+                    }
+                )
                 rm = getattr(app.state, "risk_manager", None)
                 if rm:
-                    positions = [{"symbol": p.symbol, "exchange": getattr(p.exchange, "value", str(p.exchange)), "side": getattr(p.side, "value", str(p.side)), "quantity": p.quantity, "avg_price": getattr(p, "avg_price", 0.0)} for p in rm.positions]
+                    positions = [
+                        {
+                            "symbol": p.symbol,
+                            "exchange": getattr(p.exchange, "value", str(p.exchange)),
+                            "side": getattr(p.side, "value", str(p.side)),
+                            "quantity": p.quantity,
+                            "avg_price": getattr(p, "avg_price", 0.0),
+                        }
+                        for p in rm.positions
+                    ]
                     await mgr.broadcast({"type": "position_updated", "positions": positions})
                     await mgr.broadcast({"type": "equity_updated", "equity": rm.equity, "daily_pnl": rm.daily_pnl})
 
         from src.ai.performance_tracker import PerformanceTracker
         from src.api.ws_manager import get_ws_manager
+
         def _broadcast_strategy_disabled(sid: str, reason: str):
             mgr = get_ws_manager()
             if mgr:
@@ -292,19 +322,28 @@ async def init_execution(app: FastAPI) -> None:
                     loop.create_task(mgr.broadcast({"type": "strategy_disabled", "strategy_id": sid, "reason": reason}))
                 except RuntimeError:
                     logger.warning("No running event loop for strategy_disabled broadcast")
+
         def _broadcast_exposure_multiplier(sid: str, mult: float):
             mgr = get_ws_manager()
             if mgr:
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(mgr.broadcast({"type": "exposure_multiplier_changed", "strategy_id": sid, "multiplier": mult}))
+                    loop.create_task(
+                        mgr.broadcast({"type": "exposure_multiplier_changed", "strategy_id": sid, "multiplier": mult})
+                    )
                 except RuntimeError:
                     logger.warning("No running event loop for exposure_multiplier broadcast")
-        performance_tracker = PerformanceTracker(on_strategy_disabled=_broadcast_strategy_disabled, on_exposure_multiplier_changed=_broadcast_exposure_multiplier)
+
+        performance_tracker = PerformanceTracker(
+            on_strategy_disabled=_broadcast_strategy_disabled,
+            on_exposure_multiplier_changed=_broadcast_exposure_multiplier,
+        )
         app.state.performance_tracker = performance_tracker
+
         def _on_fill_callback(ev):
             pnl = getattr(ev, "realized_pnl", None) or getattr(ev, "pnl", None) or 0.0
             performance_tracker.record_fill(ev.strategy_id or "unknown", pnl)
+
         app.state.fill_handler = FillHandler(
             risk_manager=risk_manager,
             lifecycle=lifecycle,
@@ -313,6 +352,7 @@ async def init_execution(app: FastAPI) -> None:
             on_fill_callback=_on_fill_callback,
         )
         from src.execution.fill_handler import FillListener, PaperFillSimulator
+
         app.state.fill_listener = None
         app.state.paper_fill_simulator = None
         if not getattr(gateway, "paper", True):
@@ -351,7 +391,9 @@ async def init_execution(app: FastAPI) -> None:
                     ps = getattr(app.state, "persistence_service", None)
                     if rm and ps:
                         _rm, _ps = rm, ps
-                        await _loop.run_in_executor(None, lambda: _ps.save_risk_snapshot_sync(_rm.equity, _rm.daily_pnl))
+                        await _loop.run_in_executor(
+                            None, lambda: _ps.save_risk_snapshot_sync(_rm.equity, _rm.daily_pnl)
+                        )
                     if _cb and rm:
                         _cb.update_equity(rm.equity)
                     # Auto circuit/kill on daily loss or drawdown
@@ -366,22 +408,35 @@ async def init_execution(app: FastAPI) -> None:
                     if _trp and rm:
                         try:
                             _trp.record_equity(rm.equity)
-                            _vix_lvl = getattr(getattr(_trp, 'state', None), 'vix_level', None)
-                            if _vix_lvl and hasattr(_vix_lvl, 'value'):
+                            _vix_lvl = getattr(getattr(_trp, "state", None), "vix_level", None)
+                            if _vix_lvl and hasattr(_vix_lvl, "value"):
                                 if _vix_lvl.value == "EXTREME":
                                     ks = getattr(app.state, "kill_switch", None)
                                     if ks:
                                         from src.execution.order_entry.kill_switch import KillReason
+
                                         await ks.arm(KillReason.INDIA_VIX_SPIKE, "India VIX EXTREME (>35)")
                                     _an = getattr(app.state, "alert_notifier", None)
                                     if _an:
                                         from src.alerts.notifier import AlertSeverity
-                                        await _an.send(AlertSeverity.CRITICAL, "India VIX Extreme", "VIX > 35 — kill switch armed", source="tail_risk")
+
+                                        await _an.send(
+                                            AlertSeverity.CRITICAL,
+                                            "India VIX Extreme",
+                                            "VIX > 35 — kill switch armed",
+                                            source="tail_risk",
+                                        )
                                 elif _vix_lvl.value == "HIGH":
                                     _an = getattr(app.state, "alert_notifier", None)
                                     if _an:
                                         from src.alerts.notifier import AlertSeverity
-                                        await _an.send(AlertSeverity.WARNING, "India VIX High", "VIX 25-35 — exposure halved", source="tail_risk")
+
+                                        await _an.send(
+                                            AlertSeverity.WARNING,
+                                            "India VIX High",
+                                            "VIX 25-35 — exposure halved",
+                                            source="tail_risk",
+                                        )
                         except Exception as e:
                             logger.debug("Tail risk check: %s", e)
 
@@ -389,7 +444,10 @@ async def init_execution(app: FastAPI) -> None:
                     _pvar = getattr(app.state, "portfolio_var", None)
                     if _pvar and rm:
                         try:
-                            positions = [{"symbol": p.symbol, "notional": abs(getattr(p, "avg_price", 0) * p.quantity)} for p in rm.positions]
+                            positions = [
+                                {"symbol": p.symbol, "notional": abs(getattr(p, "avg_price", 0) * p.quantity)}
+                                for p in rm.positions
+                            ]
                             var_result = _pvar.compute(positions, rm.equity)
                             app.state._last_var = var_result
                         except Exception as e:
@@ -407,6 +465,7 @@ async def init_execution(app: FastAPI) -> None:
                     # ── Cross-asset data refresh (VIX, USDINR) ──
                     try:
                         import yfinance as _yf
+
                         _trp_ca = getattr(app.state, "tail_risk_protector", None)
                         # India VIX (run blocking yfinance call in executor)
                         _vix_data = await _loop.run_in_executor(
@@ -456,7 +515,10 @@ async def init_execution(app: FastAPI) -> None:
                             _cool_down = time.time() - _safe_since if _safe_since else 999
                             if _cool_down > 300:  # 5 min minimum cool-down
                                 app.state.safe_mode = False
-                                logger.info("Safe mode AUTO-CLEARED after %.0fs (broker OK, feed OK, circuit closed)", _cool_down)
+                                logger.info(
+                                    "Safe mode AUTO-CLEARED after %.0fs (broker OK, feed OK, circuit closed)",
+                                    _cool_down,
+                                )
 
                     # ── P1-2: Stale order sweep (phantom order protection) ──
                     _lifecycle = getattr(getattr(app.state, "order_entry_service", None), "lifecycle", None)
@@ -470,21 +532,32 @@ async def init_execution(app: FastAPI) -> None:
 
                     # ── P2-3: Overnight gap risk check (15:00 IST — flag large positions) ──
                     try:
-                        from datetime import datetime as _dt_ovn, timezone as _tz_ovn, timedelta as _td_ovn
+                        from datetime import datetime as _dt_ovn
+                        from datetime import timedelta as _td_ovn
+                        from datetime import timezone as _tz_ovn
+
                         _IST_ovn = _tz_ovn(_td_ovn(hours=5, minutes=30))
                         _now_ist_ovn = _dt_ovn.now(_IST_ovn)
-                        if _now_ist_ovn.hour == 15 and _now_ist_ovn.minute < 5 and rm and hasattr(rm, 'check_overnight_risk'):
+                        if (
+                            _now_ist_ovn.hour == 15
+                            and _now_ist_ovn.minute < 5
+                            and rm
+                            and hasattr(rm, "check_overnight_risk")
+                        ):
                             flagged = rm.check_overnight_risk(max_overnight_pct=3.0)
                             if flagged:
                                 logger.warning(
                                     "OVERNIGHT RISK: %d positions exceed 3%% equity — reduce before close: %s",
-                                    len(flagged), flagged[:5],
+                                    len(flagged),
+                                    flagged[:5],
                                 )
                                 _an_ovn = getattr(app.state, "alert_notifier", None)
                                 if _an_ovn:
                                     from src.alerts.notifier import AlertSeverity
+
                                     await _an_ovn.send(
-                                        AlertSeverity.WARNING, "Overnight Risk",
+                                        AlertSeverity.WARNING,
+                                        "Overnight Risk",
                                         f"{len(flagged)} positions exceed 3% equity: {flagged[:3]}",
                                         source="overnight_risk",
                                     )
@@ -499,9 +572,16 @@ async def init_execution(app: FastAPI) -> None:
                     _an = getattr(app.state, "alert_notifier", None)
                     if _an and rm and rm.is_circuit_open():
                         from src.alerts.notifier import AlertSeverity
-                        await _an.send(AlertSeverity.CRITICAL, "Circuit Breaker Open", f"Daily PnL: {rm.daily_pnl:.2f}, Equity: {rm.equity:.2f}", source="risk_heartbeat")
+
+                        await _an.send(
+                            AlertSeverity.CRITICAL,
+                            "Circuit Breaker Open",
+                            f"Daily PnL: {rm.daily_pnl:.2f}, Equity: {rm.equity:.2f}",
+                            source="risk_heartbeat",
+                        )
 
                     from src.api.ws_manager import get_ws_manager
+
                     mgr = get_ws_manager()
                     if mgr:
                         _risk_update = {
@@ -523,9 +603,11 @@ async def init_execution(app: FastAPI) -> None:
                             _risk_update["realized_vol"] = _vt2.state.realized_vol_annual
                         # Append tail risk
                         _trp2 = getattr(app.state, "tail_risk_protector", None)
-                        if _trp2 and hasattr(_trp2, 'state'):
-                            _risk_update["vix_level"] = getattr(getattr(_trp2.state, 'vix_level', None), 'value', 'UNKNOWN')
-                            _risk_update["tail_risk_exposure_scale"] = getattr(_trp2.state, 'exposure_scale', 1.0)
+                        if _trp2 and hasattr(_trp2, "state"):
+                            _risk_update["vix_level"] = getattr(
+                                getattr(_trp2.state, "vix_level", None), "value", "UNKNOWN"
+                            )
+                            _risk_update["tail_risk_exposure_scale"] = getattr(_trp2.state, "exposure_scale", 1.0)
                         await mgr.broadcast(_risk_update)
 
                         if rm.is_circuit_open():
@@ -534,26 +616,36 @@ async def init_execution(app: FastAPI) -> None:
                         if ks:
                             state = await ks.get_state()
                             if state.armed:
-                                await mgr.broadcast({"type": "kill_switch_armed", "reason": str(state.reason) if state.reason else "", "detail": state.detail or ""})
+                                await mgr.broadcast(
+                                    {
+                                        "type": "kill_switch_armed",
+                                        "reason": str(state.reason) if state.reason else "",
+                                        "detail": state.detail or "",
+                                    }
+                                )
                         # Market data feed status
                         _mds = getattr(app.state, "market_data_service", None)
                         if _mds:
                             st = _mds.get_status()
-                            await mgr.broadcast({
-                                "type": "market_status_updated",
-                                "connected": st.get("connected", False),
-                                "healthy": st.get("healthy", False),
-                                "last_tick_ts": st.get("last_tick_ts"),
-                            })
+                            await mgr.broadcast(
+                                {
+                                    "type": "market_status_updated",
+                                    "connected": st.get("connected", False),
+                                    "healthy": st.get("healthy", False),
+                                    "last_tick_ts": st.get("last_tick_ts"),
+                                }
+                            )
                         elif getattr(app.state, "yf_feeder", None):
                             _yff = app.state.yf_feeder
                             _yf_healthy = getattr(_yff, "_running", False)
-                            await mgr.broadcast({
-                                "type": "market_status_updated",
-                                "connected": _yf_healthy,
-                                "healthy": _yf_healthy,
-                                "last_tick_ts": None,
-                            })
+                            await mgr.broadcast(
+                                {
+                                    "type": "market_status_updated",
+                                    "connected": _yf_healthy,
+                                    "healthy": _yf_healthy,
+                                    "last_tick_ts": None,
+                                }
+                            )
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
@@ -564,8 +656,12 @@ async def init_execution(app: FastAPI) -> None:
     # ── Nightly archival task (Sprint 10.13) ──
     _archival_mgr = getattr(app.state, "archival_manager", None)
     if _archival_mgr is not None and getattr(app.state, "persistence_service", None):
+
         async def _nightly_archival():
-            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
+            from datetime import timezone as _tz
+
             _IST = _tz(_td(hours=5, minutes=30))
             _last_archival_date = None
             while True:
@@ -581,8 +677,9 @@ async def init_execution(app: FastAPI) -> None:
                     _last_archival_date = today
                     logger.info("Starting nightly data archival...")
                     ps = getattr(app.state, "persistence_service", None)
-                    if ps and hasattr(ps, '_engine'):
+                    if ps and hasattr(ps, "_engine"):
                         from sqlalchemy.orm import Session
+
                         with Session(ps._engine) as session:
                             results = _archival_mgr.run_full_archival(session)
                             logger.info("Nightly archival complete: %d operations", len(results))
@@ -599,8 +696,12 @@ async def init_execution(app: FastAPI) -> None:
     _gap_risk_task = None
     _grm = getattr(app.state, "gap_risk_manager", None)
     if _grm is not None:
+
         async def _pre_market_gap_check():
-            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
+            from datetime import timezone as _tz
+
             _IST_gap = _tz(_td(hours=5, minutes=30))
             _last_gap_date = None
             while True:
@@ -701,8 +802,11 @@ async def init_execution(app: FastAPI) -> None:
             return []
 
         def _on_discrepancy(report):
-            logger.critical("BROKER RECONCILIATION DISCREPANCY: status=%s, impact=₹%.0f",
-                          report.status, report.total_notional_impact)
+            logger.critical(
+                "BROKER RECONCILIATION DISCREPANCY: status=%s, impact=₹%.0f",
+                report.status,
+                report.total_notional_impact,
+            )
             if report.status == "critical":
                 rm = getattr(app.state, "risk_manager", None)
                 if rm:
@@ -723,31 +827,37 @@ async def init_execution(app: FastAPI) -> None:
     # Capital deployment gate
     try:
         from src.api.capital_gate import CapitalGate
+
         async def _check_redis():
             try:
                 from src.core.config import get_settings
+
                 url = get_settings().market_data.redis_url
             except Exception:
                 url = "redis://localhost:6379/0"
             try:
                 import redis.asyncio as redis
+
                 r = redis.from_url(url, decode_responses=True)
                 await r.ping()
                 await r.aclose()
                 return True
             except Exception:
                 return False
+
         def _check_broker():
             oes = getattr(app.state, "order_entry_service", None)
             if not oes or not getattr(oes, "order_router", None):
                 return True
             gw = getattr(oes.order_router, "default_gateway", None)
             return gw is not None
+
         def _check_market_data():
             svc = getattr(app.state, "market_data_service", None)
             if svc is None:
                 return True
             return svc.is_healthy()
+
         app.state.capital_gate = CapitalGate(
             check_redis=_check_redis,
             check_broker=_check_broker,
@@ -798,18 +908,19 @@ async def init_execution(app: FastAPI) -> None:
     try:
         from src.ai.alpha_research import (
             AlphaHypothesisGenerator,
-            StatisticalValidator,
             AlphaQualityScorer,
-            SignalClustering,
             CapacityModel,
             DecayMonitor,
             EdgePreservationRules,
-            ResearchPipeline,
             PipelineConfig,
+            ResearchPipeline,
+            SignalClustering,
+            StatisticalValidator,
         )
-        from src.ai.alpha_research.scoring import AlphaQualityScoreConfig
         from src.ai.alpha_research.clustering import ClusterConfig
         from src.ai.alpha_research.decay import DecayConfig
+        from src.ai.alpha_research.scoring import AlphaQualityScoreConfig
+
         gen = AlphaHypothesisGenerator(min_univariate_ic=0.005, max_total_candidates=80)
         val = StatisticalValidator(min_sample_size=200, min_wf_positive_cycles=2, fdr_alpha=0.10)
         sco = AlphaQualityScorer(AlphaQualityScoreConfig(top_decile=True))
@@ -883,8 +994,8 @@ async def shutdown_execution(app: FastAPI) -> None:
 
     # ── Disconnect broker gateway ──
     try:
-        _gw = getattr(app.state, 'gateway', None)
-        if _gw and hasattr(_gw, 'disconnect'):
+        _gw = getattr(app.state, "gateway", None)
+        if _gw and hasattr(_gw, "disconnect"):
             await _gw.disconnect()
             logger.info("Broker gateway disconnected")
     except Exception as e:

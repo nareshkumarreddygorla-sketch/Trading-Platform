@@ -1,8 +1,9 @@
 """
 Self-learning orchestrator: schedule drift check, trigger retrain, run backtest, replace.
 """
+
 import logging
-from typing import Callable, List, Optional
+from collections.abc import Callable
 
 from .drift import ConceptDriftDetector, DataDistributionMonitor
 from .retrain import RetrainPipeline
@@ -20,8 +21,8 @@ class SelfLearningOrchestrator:
         self,
         drift_detector: ConceptDriftDetector,
         distribution_monitor: DataDistributionMonitor,
-        retrain_pipelines: List[RetrainPipeline],
-        on_retrain_complete: Optional[Callable[[str, bool], None]] = None,
+        retrain_pipelines: list[RetrainPipeline],
+        on_retrain_complete: Callable[[str, bool], None] | None = None,
     ):
         self.drift_detector = drift_detector
         self.distribution_monitor = distribution_monitor
@@ -57,6 +58,7 @@ class SelfLearningOrchestrator:
         self.distribution_monitor.add(current_features)
         if self.check_drift(current_features):
             import asyncio
+
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, self.run_retrain_all)
         return {}

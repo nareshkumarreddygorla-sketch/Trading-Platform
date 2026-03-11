@@ -1,10 +1,10 @@
 """
 Phase 13: Order flood protection — max N orders per minute; reject beyond that.
 """
+
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque
 
 
 @dataclass
@@ -20,7 +20,7 @@ class OrderRateLimiter:
 
     def __init__(self, config: RateLimitConfig = None):
         self.config = config or RateLimitConfig()
-        self._timestamps: Deque[float] = deque()
+        self._timestamps: deque[float] = deque()
 
     def allow(self) -> bool:
         """Return True if order allowed; else False (flood)."""

@@ -9,6 +9,7 @@ Structured logging configuration.
 - Trading-critical events (order placed, fill received, circuit breaker) include
   correlation_id when set via CorrelationContext.
 """
+
 import contextvars
 import json
 import logging
@@ -16,25 +17,24 @@ import os
 import re
 import sys
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 # ── Sensitive data redaction ──
 # Patterns that match common sensitive data in log messages.
 # These are applied to every log message to prevent credential leaks.
 _SENSITIVE_PATTERNS = [
     # password=..., password: ..., "password": "..."
-    (re.compile(r'(?i)(password|passwd|pwd)\s*[=:]\s*\S+'), r'\1=***REDACTED***'),
+    (re.compile(r"(?i)(password|passwd|pwd)\s*[=:]\s*\S+"), r"\1=***REDACTED***"),
     # token=..., access_token=..., refresh_token=..., bearer ...
-    (re.compile(r'(?i)((?:access_|refresh_|auth_|bearer\s*)?token)\s*[=:]\s*\S+'), r'\1=***REDACTED***'),
+    (re.compile(r"(?i)((?:access_|refresh_|auth_|bearer\s*)?token)\s*[=:]\s*\S+"), r"\1=***REDACTED***"),
     # api_key=..., apikey=..., secret_key=..., api_secret=...
-    (re.compile(r'(?i)(api[_-]?key|api[_-]?secret|secret[_-]?key)\s*[=:]\s*\S+'), r'\1=***REDACTED***'),
+    (re.compile(r"(?i)(api[_-]?key|api[_-]?secret|secret[_-]?key)\s*[=:]\s*\S+"), r"\1=***REDACTED***"),
     # Authorization: Bearer eyJ...
-    (re.compile(r'(?i)(Authorization)\s*[=:]\s*\S+'), r'\1=***REDACTED***'),
+    (re.compile(r"(?i)(Authorization)\s*[=:]\s*\S+"), r"\1=***REDACTED***"),
     # JWT tokens (eyJ...)
-    (re.compile(r'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'), '***JWT_REDACTED***'),
+    (re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), "***JWT_REDACTED***"),
     # TOTP secrets / OTP codes
-    (re.compile(r'(?i)(totp[_-]?secret|otp)\s*[=:]\s*\S+'), r'\1=***REDACTED***'),
+    (re.compile(r"(?i)(totp[_-]?secret|otp)\s*[=:]\s*\S+"), r"\1=***REDACTED***"),
 ]
 
 
@@ -49,15 +49,9 @@ class SensitiveDataFilter(logging.Filter):
             record.msg = self._redact(record.msg)
         if record.args:
             if isinstance(record.args, dict):
-                record.args = {
-                    k: self._redact(str(v)) if isinstance(v, str) else v
-                    for k, v in record.args.items()
-                }
+                record.args = {k: self._redact(str(v)) if isinstance(v, str) else v for k, v in record.args.items()}
             elif isinstance(record.args, tuple):
-                record.args = tuple(
-                    self._redact(str(a)) if isinstance(a, str) else a
-                    for a in record.args
-                )
+                record.args = tuple(self._redact(str(a)) if isinstance(a, str) else a for a in record.args)
         return True
 
     @staticmethod
@@ -70,17 +64,15 @@ class SensitiveDataFilter(logging.Filter):
 # ── Correlation ID context ──
 # Set this in request middleware or at the start of a trading operation
 # so every log line in that call-chain carries the same correlation_id.
-correlation_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    "correlation_id", default=None
-)
+correlation_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("correlation_id", default=None)
 
 
-def get_correlation_id() -> Optional[str]:
+def get_correlation_id() -> str | None:
     """Return the current correlation ID, or None if not set."""
     return correlation_id_var.get()
 
 
-def set_correlation_id(cid: Optional[str] = None) -> str:
+def set_correlation_id(cid: str | None = None) -> str:
     """Set (or generate) a correlation ID for the current async/thread context."""
     if cid is None:
         cid = uuid.uuid4().hex[:16]
@@ -97,7 +89,7 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_obj: dict = {
-            "timestamp_iso": datetime.now(timezone.utc).isoformat(),
+            "timestamp_iso": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger_name": record.name,
             "message": record.getMessage(),
@@ -124,9 +116,7 @@ class HumanReadableFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         cid = correlation_id_var.get() or getattr(record, "correlation_id", None)
         if cid:
-            self._fmt = (
-                "%(asctime)s %(levelname)-8s [%(correlation_id)s] %(name)s: %(message)s"
-            )
+            self._fmt = "%(asctime)s %(levelname)-8s [%(correlation_id)s] %(name)s: %(message)s"
             record.correlation_id = cid  # type: ignore[attr-defined]
         else:
             self._fmt = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
@@ -170,6 +160,7 @@ def configure_logging() -> None:
     if os.path.isdir(_log_dir):
         try:
             from logging.handlers import RotatingFileHandler
+
             _log_file = os.path.join(_log_dir, "trading.log")
             file_handler = RotatingFileHandler(
                 _log_file,

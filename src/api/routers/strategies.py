@@ -1,8 +1,9 @@
 """Strategies API: list, toggle, update capital, and performance data."""
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from src.api.auth import get_current_user, require_roles
-from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -17,17 +18,18 @@ def get_registry():
     global _registry
     if _registry is None:
         from src.strategy_engine import (
-            StrategyRegistry,
+            BollingerSqueezeStrategy,
             EMACrossoverStrategy,
             MACDStrategy,
-            RSIStrategy,
             MultiConfluenceTrendStrategy,
-            VWAPMeanReversionStrategy,
             OpeningRangeBreakoutStrategy,
-            SuperTrendADXStrategy,
             RSIDivergenceStrategy,
-            BollingerSqueezeStrategy,
+            RSIStrategy,
+            StrategyRegistry,
+            SuperTrendADXStrategy,
+            VWAPMeanReversionStrategy,
         )
+
         _registry = StrategyRegistry()
         # Classical strategies
         _registry.register(EMACrossoverStrategy())
@@ -50,23 +52,79 @@ def _get_perf_tracker(request: Request):
 # Map strategy IDs to display names and capital defaults
 STRATEGY_DISPLAY = {
     # Classical strategies
-    "ema_crossover":           {"name": "EMA Crossover", "description": "EMA fast/slow crossover momentum strategy", "default_capital": 25000.0},
-    "macd":                    {"name": "MACD Crossover", "description": "MACD line/signal crossover momentum strategy", "default_capital": 20000.0},
-    "rsi":                     {"name": "RSI Mean Reversion", "description": "RSI oversold/overbought mean reversion strategy", "default_capital": 15000.0},
+    "ema_crossover": {
+        "name": "EMA Crossover",
+        "description": "EMA fast/slow crossover momentum strategy",
+        "default_capital": 25000.0,
+    },
+    "macd": {
+        "name": "MACD Crossover",
+        "description": "MACD line/signal crossover momentum strategy",
+        "default_capital": 20000.0,
+    },
+    "rsi": {
+        "name": "RSI Mean Reversion",
+        "description": "RSI oversold/overbought mean reversion strategy",
+        "default_capital": 15000.0,
+    },
     # High win-rate professional strategies (primary)
-    "multi_confluence_trend":  {"name": "Multi-Confluence Trend", "description": "5-filter confluence trend follower (EMA+RSI+MACD+Vol+ADX)", "default_capital": 60000.0},
-    "vwap_mean_reversion":     {"name": "VWAP Mean Reversion", "description": "Institutional VWAP band reversal with rejection wicks", "default_capital": 50000.0},
-    "opening_range_breakout":  {"name": "Opening Range Breakout", "description": "NSE 15-min ORB with volume + ADX filters", "default_capital": 45000.0},
-    "supertrend_adx":          {"name": "SuperTrend + ADX", "description": "SuperTrend reversal with ADX + EMA confirmation", "default_capital": 40000.0},
-    "rsi_divergence":          {"name": "RSI Divergence", "description": "Multi-TF RSI divergence + engulfing candle pattern", "default_capital": 35000.0},
-    "bollinger_squeeze":       {"name": "Bollinger Squeeze", "description": "Volatility squeeze breakout with Keltner confirmation", "default_capital": 30000.0},
+    "multi_confluence_trend": {
+        "name": "Multi-Confluence Trend",
+        "description": "5-filter confluence trend follower (EMA+RSI+MACD+Vol+ADX)",
+        "default_capital": 60000.0,
+    },
+    "vwap_mean_reversion": {
+        "name": "VWAP Mean Reversion",
+        "description": "Institutional VWAP band reversal with rejection wicks",
+        "default_capital": 50000.0,
+    },
+    "opening_range_breakout": {
+        "name": "Opening Range Breakout",
+        "description": "NSE 15-min ORB with volume + ADX filters",
+        "default_capital": 45000.0,
+    },
+    "supertrend_adx": {
+        "name": "SuperTrend + ADX",
+        "description": "SuperTrend reversal with ADX + EMA confirmation",
+        "default_capital": 40000.0,
+    },
+    "rsi_divergence": {
+        "name": "RSI Divergence",
+        "description": "Multi-TF RSI divergence + engulfing candle pattern",
+        "default_capital": 35000.0,
+    },
+    "bollinger_squeeze": {
+        "name": "Bollinger Squeeze",
+        "description": "Volatility squeeze breakout with Keltner confirmation",
+        "default_capital": 30000.0,
+    },
     # Legacy (if still registered by app boot)
-    "ai_alpha":                {"name": "AI Alpha Engine", "description": "ML-driven alpha signal with ensemble models", "default_capital": 40000.0},
-    "momentum_breakout":       {"name": "Momentum Breakout", "description": "Volume breakout with ADX trend confirmation", "default_capital": 25000.0},
-    "mean_reversion":          {"name": "Mean Reversion", "description": "Bollinger Band + RSI mean reversion", "default_capital": 15000.0},
+    "ai_alpha": {
+        "name": "AI Alpha Engine",
+        "description": "ML-driven alpha signal with ensemble models",
+        "default_capital": 40000.0,
+    },
+    "momentum_breakout": {
+        "name": "Momentum Breakout",
+        "description": "Volume breakout with ADX trend confirmation",
+        "default_capital": 25000.0,
+    },
+    "mean_reversion": {
+        "name": "Mean Reversion",
+        "description": "Bollinger Band + RSI mean reversion",
+        "default_capital": 15000.0,
+    },
     # ML/AI strategies
-    "ml_predictor":            {"name": "ML Ensemble Predictor", "description": "LSTM + Transformer + XGBoost ensemble direction predictor", "default_capital": 40000.0},
-    "rl_agent":                {"name": "RL Trading Agent", "description": "PPO reinforcement learning dynamic entry/exit agent", "default_capital": 30000.0},
+    "ml_predictor": {
+        "name": "ML Ensemble Predictor",
+        "description": "LSTM + Transformer + XGBoost ensemble direction predictor",
+        "default_capital": 40000.0,
+    },
+    "rl_agent": {
+        "name": "RL Trading Agent",
+        "description": "PPO reinforcement learning dynamic entry/exit agent",
+        "default_capital": 30000.0,
+    },
 }
 
 # In-memory capital store (persists across requests while server runs)
@@ -76,7 +134,7 @@ _capital_store: dict = {}
 def _strategy_to_dict(strategy_id: str, is_enabled: bool, perf_tracker=None) -> dict:
     """Convert a strategy_id to a full response dict."""
     reg = get_registry()
-    strategy_obj = reg.get(strategy_id)
+    _strategy_obj = reg.get(strategy_id)
 
     display = STRATEGY_DISPLAY.get(strategy_id, {})
     name = display.get("name", strategy_id)
@@ -129,8 +187,8 @@ def _strategy_to_dict(strategy_id: str, is_enabled: bool, perf_tracker=None) -> 
 async def list_strategies(request: Request, current_user: dict = Depends(get_current_user)):
     reg = get_registry()
     perf = _get_perf_tracker(request)
-    all_ids = reg.list_all()        # Returns List[str] of strategy IDs
-    enabled_ids = reg.list_enabled() # Returns List[str] of enabled IDs
+    all_ids = reg.list_all()  # Returns List[str] of strategy IDs
+    enabled_ids = reg.list_enabled()  # Returns List[str] of enabled IDs
     strategies = [_strategy_to_dict(sid, sid in enabled_ids, perf) for sid in all_ids]
     return {"strategies": strategies}
 

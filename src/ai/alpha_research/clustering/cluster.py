@@ -2,8 +2,8 @@
 Phase D: Signal clustering & diversification.
 Correlation matrix / distance → hierarchical clustering → one strongest per cluster.
 """
+
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -15,7 +15,7 @@ class ClusterConfig:
     method: str = "average"  # linkage: average, single, complete
 
 
-def _hierarchical_clusters(corr_matrix: np.ndarray, threshold: float) -> List[List[int]]:
+def _hierarchical_clusters(corr_matrix: np.ndarray, threshold: float) -> list[list[int]]:
     """Cluster indices by correlation; merge if correlation > threshold (1 - distance)."""
     n = corr_matrix.shape[0]
     if n <= 1:
@@ -23,6 +23,7 @@ def _hierarchical_clusters(corr_matrix: np.ndarray, threshold: float) -> List[Li
     try:
         from scipy.cluster.hierarchy import fcluster, linkage
         from scipy.spatial.distance import squareform
+
         # distance = 1 - |corr|; so high corr -> low distance
         dist = 1.0 - np.abs(np.clip(corr_matrix, -1, 1))
         np.fill_diagonal(dist, 0)
@@ -31,7 +32,7 @@ def _hierarchical_clusters(corr_matrix: np.ndarray, threshold: float) -> List[Li
         # threshold for cluster merge: ~1 - max_correlation
         t = 1.0 - threshold
         labels = fcluster(Z, t, criterion="distance")
-        clusters: Dict[int, List[int]] = {}
+        clusters: dict[int, list[int]] = {}
         for i, l in enumerate(labels):
             clusters.setdefault(int(l), []).append(i)
         return list(clusters.values())
@@ -45,15 +46,15 @@ class SignalClustering:
     hierarchical cluster; from each cluster select one strongest alpha (by quality score).
     """
 
-    def __init__(self, config: Optional[ClusterConfig] = None):
+    def __init__(self, config: ClusterConfig | None = None):
         self.config = config or ClusterConfig()
 
     def cluster(
         self,
-        signal_ids: List[str],
+        signal_ids: list[str],
         signal_returns: np.ndarray,
-        quality_scores: Optional[Dict[str, float]] = None,
-    ) -> List[str]:
+        quality_scores: dict[str, float] | None = None,
+    ) -> list[str]:
         """
         signal_returns: shape (n_signals, T) — each row is a signal's return series (or signal series).
         Compute correlation matrix; cluster; from each cluster pick signal_id with highest quality_score.
@@ -69,7 +70,7 @@ class SignalClustering:
             return list(signal_ids)
         np.fill_diagonal(corr, 1.0)
         clusters = _hierarchical_clusters(corr, self.config.max_correlation)
-        selected: List[str] = []
+        selected: list[str] = []
         for c in clusters:
             if not c:
                 continue

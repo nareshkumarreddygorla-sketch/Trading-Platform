@@ -8,79 +8,117 @@ Categorises exceptions into:
 
 Used by OrderEntryService and OrderRouter to decide whether to retry or reject.
 """
+
 import asyncio
 import logging
 from enum import Enum
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
 class ErrorCategory(str, Enum):
-    RETRYABLE = "retryable"      # Network timeout, 5xx, transient broker issue
-    PERMANENT = "permanent"      # Invalid order, insufficient funds, 4xx, auth failure
-    UNKNOWN = "unknown"          # Unclassified — default to limited retry
+    RETRYABLE = "retryable"  # Network timeout, 5xx, transient broker issue
+    PERMANENT = "permanent"  # Invalid order, insufficient funds, 4xx, auth failure
+    UNKNOWN = "unknown"  # Unclassified — default to limited retry
 
 
 # Angel One error codes that are permanent (no retry)
-_ANGEL_PERMANENT_CODES = frozenset({
-    "AB1001",  # Invalid input
-    "AB1002",  # Insufficient margin/funds
-    "AB1003",  # Circuit breaker halt
-    "AB1004",  # Price out of range
-    "AB1005",  # Quantity validation error
-    "OI8001", "OI8002", "OI8003", "OI8004", "OI8005",  # Exchange circuit
-})
+_ANGEL_PERMANENT_CODES = frozenset(
+    {
+        "AB1001",  # Invalid input
+        "AB1002",  # Insufficient margin/funds
+        "AB1003",  # Circuit breaker halt
+        "AB1004",  # Price out of range
+        "AB1005",  # Quantity validation error
+        "OI8001",
+        "OI8002",
+        "OI8003",
+        "OI8004",
+        "OI8005",  # Exchange circuit
+    }
+)
 
 # Angel One error codes that are retryable
-_ANGEL_RETRYABLE_CODES = frozenset({
-    "AG8001", "AG8002", "AB8051",  # Session expired (retryable after refresh)
-})
+_ANGEL_RETRYABLE_CODES = frozenset(
+    {
+        "AG8001",
+        "AG8002",
+        "AB8051",  # Session expired (retryable after refresh)
+    }
+)
 
 # Kite error codes that are permanent
-_KITE_PERMANENT_CODES = frozenset({
-    "ORDER_REJECTED",
-    "INPUT_ERROR",
-    "CIRCUIT_HALT",
-    "AUTH_FAILED",
-    "TOKEN_EXPIRED",
-})
+_KITE_PERMANENT_CODES = frozenset(
+    {
+        "ORDER_REJECTED",
+        "INPUT_ERROR",
+        "CIRCUIT_HALT",
+        "AUTH_FAILED",
+        "TOKEN_EXPIRED",
+    }
+)
 
 # Kite error codes that are retryable
-_KITE_RETRYABLE_CODES = frozenset({
-    "TIMEOUT",
-    "RETRIES_EXHAUSTED",
-})
+_KITE_RETRYABLE_CODES = frozenset(
+    {
+        "TIMEOUT",
+        "RETRIES_EXHAUSTED",
+    }
+)
 
 # Exception type names that indicate permanent errors
-_PERMANENT_EXCEPTION_TYPES = frozenset({
-    "OrderException",      # Kite: order rejected by exchange
-    "InputException",      # Kite: invalid parameters
-    "PermissionException", # Kite: auth/permission issue
-    "ValueError",          # Our own validation errors
-})
+_PERMANENT_EXCEPTION_TYPES = frozenset(
+    {
+        "OrderException",  # Kite: order rejected by exchange
+        "InputException",  # Kite: invalid parameters
+        "PermissionException",  # Kite: auth/permission issue
+        "ValueError",  # Our own validation errors
+    }
+)
 
 # Exception type names that indicate retryable errors
-_RETRYABLE_EXCEPTION_TYPES = frozenset({
-    "TimeoutError",
-    "ConnectionError",
-    "NetworkException",    # Kite: network issues
-    "GeneralException",    # Kite: catch-all (often transient)
-})
+_RETRYABLE_EXCEPTION_TYPES = frozenset(
+    {
+        "TimeoutError",
+        "ConnectionError",
+        "NetworkException",  # Kite: network issues
+        "GeneralException",  # Kite: catch-all (often transient)
+    }
+)
 
 # HTTP status code patterns in error messages
-_PERMANENT_STATUS_KEYWORDS = frozenset({
-    "400", "401", "403", "404", "422",
-    "insufficient", "invalid", "rejected", "not allowed",
-    "margin", "funds",
-})
+_PERMANENT_STATUS_KEYWORDS = frozenset(
+    {
+        "400",
+        "401",
+        "403",
+        "404",
+        "422",
+        "insufficient",
+        "invalid",
+        "rejected",
+        "not allowed",
+        "margin",
+        "funds",
+    }
+)
 
-_RETRYABLE_STATUS_KEYWORDS = frozenset({
-    "500", "502", "503", "504",
-    "timeout", "timed out", "connection",
-    "temporarily", "unavailable", "rate limit",
-    "retry", "overloaded",
-})
+_RETRYABLE_STATUS_KEYWORDS = frozenset(
+    {
+        "500",
+        "502",
+        "503",
+        "504",
+        "timeout",
+        "timed out",
+        "connection",
+        "temporarily",
+        "unavailable",
+        "rate limit",
+        "retry",
+        "overloaded",
+    }
+)
 
 
 def classify_error(exc: Exception) -> ErrorCategory:

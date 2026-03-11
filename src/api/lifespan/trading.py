@@ -2,18 +2,20 @@
 Lifespan: Autonomous loop, strategies, agents, background tasks
 (auto-retrain, drift detection, self-learning, daily report).
 """
+
 import asyncio
 import logging
 import os
 import time
+from datetime import UTC
 
 from fastapi import FastAPI
 
 from .ai import (
-    setup_ensemble_engine,
-    setup_drift_detector,
-    setup_self_learning,
     setup_auto_retrain,
+    setup_drift_detector,
+    setup_ensemble_engine,
+    setup_self_learning,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,20 +27,20 @@ async def init_trading(app: FastAPI) -> None:
     _autonomous_loop = None
     if getattr(app.state, "order_entry_service", None) is not None:
         try:
-            from src.execution.autonomous_loop import AutonomousLoop
-            from src.strategy_engine.runner import StrategyRunner
-            from src.strategy_engine.allocator import PortfolioAllocator, AllocatorConfig
-            from src.api.routers.strategies import get_registry
-            from src.core.events import Exchange
+            from src.ai.alpha_model import AlphaModel, AlphaStrategy
             from src.ai.feature_engine import FeatureEngine
             from src.ai.regime.classifier import RegimeClassifier
-            from src.ai.alpha_model import AlphaModel, AlphaStrategy
+            from src.api.routers.strategies import get_registry
+            from src.core.events import Exchange
+            from src.execution.autonomous_loop import AutonomousLoop
+            from src.strategy_engine.allocator import AllocatorConfig, PortfolioAllocator
+            from src.strategy_engine.runner import StrategyRunner
 
             # ── AI Ensemble Engine: create BEFORE joblib.load to avoid torch/joblib deadlock ──
-            _models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "models")
-            _ensemble_engine, model_registry, _rl_predictor = setup_ensemble_engine(
-                app, None, None, _models_dir
+            _models_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "models"
             )
+            _ensemble_engine, model_registry, _rl_predictor = setup_ensemble_engine(app, None, None, _models_dir)
 
             # Load trained XGBoost model if available (uses joblib.load — must happen AFTER
             # setup_ensemble_engine to avoid torch load_state_dict deadlock on macOS/Py3.9)
@@ -50,7 +52,10 @@ async def init_trading(app: FastAPI) -> None:
                 else:
                     logger.warning("Failed to load AI model from %s — using fallback heuristic", _model_path)
             else:
-                logger.info("No trained AI model found at %s — using fallback heuristic. Run: PYTHONPATH=. python scripts/train_alpha_model.py", _model_path)
+                logger.info(
+                    "No trained AI model found at %s — using fallback heuristic. Run: PYTHONPATH=. python scripts/train_alpha_model.py",
+                    _model_path,
+                )
 
             def _get_safe_mode() -> bool:
                 return bool(getattr(app.state, "safe_mode", True))
@@ -73,6 +78,7 @@ async def init_trading(app: FastAPI) -> None:
                     MACDStrategy,
                     RSIStrategy,
                 )
+
                 registry.register(EMACrossoverStrategy(fast=9, slow=21))
                 registry.register(MACDStrategy(fast=12, slow=26, signal=9))
                 registry.register(RSIStrategy(period=14, oversold=30.0, overbought=70.0))
@@ -83,6 +89,7 @@ async def init_trading(app: FastAPI) -> None:
             # 3. Momentum Breakout (for trending markets)
             try:
                 from src.strategy_engine.momentum_breakout import MomentumBreakoutStrategy
+
                 registry.register(MomentumBreakoutStrategy())
                 logger.info("Strategy registered: momentum_breakout")
             except Exception as e:
@@ -91,23 +98,25 @@ async def init_trading(app: FastAPI) -> None:
             # 4. Mean Reversion (for sideways markets)
             try:
                 from src.strategy_engine.mean_reversion import MeanReversionStrategy
+
                 registry.register(MeanReversionStrategy())
                 logger.info("Strategy registered: mean_reversion")
             except Exception as e:
                 logger.debug("MeanReversion not available: %s", e)
 
-            logger.info("Total strategies registered: %d → %s",
-                        len(registry.list_all()), registry.list_all())
+            logger.info("Total strategies registered: %d → %s", len(registry.list_all()), registry.list_all())
 
             # ── Wire strategy registry disable into existing PerformanceTracker (Sprint 10.8: single instance) ──
             _performance_tracker = getattr(app.state, "performance_tracker", None)
             if _performance_tracker is not None:
                 try:
                     # Wire registry.disable into the existing tracker's strategy disabled callback
-                    _orig_disabled_cb = getattr(_performance_tracker, '_on_strategy_disabled', None)
+                    _orig_disabled_cb = getattr(_performance_tracker, "_on_strategy_disabled", None)
 
                     def _enhanced_strategy_disabled(strategy_id: str, reason: str):
-                        logger.warning("PerformanceTracker AUTO-DISABLED strategy '%s' (reason=%s)", strategy_id, reason)
+                        logger.warning(
+                            "PerformanceTracker AUTO-DISABLED strategy '%s' (reason=%s)", strategy_id, reason
+                        )
                         registry.disable(strategy_id)
                         # Also fire the original WS broadcast callback
                         if _orig_disabled_cb:
@@ -132,29 +141,33 @@ async def init_trading(app: FastAPI) -> None:
 
             # P0-3: Load feature normalizer (z-score normalization for model safety)
             from src.ai.feature_engine import FeatureNormalizer
+
             _normalizer_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-                "models", "feature_normalizer.json",
+                "models",
+                "feature_normalizer.json",
             )
             _feature_normalizer = FeatureNormalizer.load(_normalizer_path)
             app.state.feature_normalizer = _feature_normalizer
 
             # Enhanced allocator: more concurrent signals, strategy-level caps
-            allocator = PortfolioAllocator(AllocatorConfig(
-                max_active_signals=10,              # allow 10 concurrent positions
-                max_capital_pct_per_signal=5.0,     # 5% per position (aligned with risk limit)
-                min_confidence=0.2,
-                strategy_cap_pct={
-                    "ai_alpha": 5.0,                # Aligned with max_position_pct
-                    "ema_crossover": 5.0,
-                    "macd": 5.0,
-                    "rsi": 5.0,
-                    "momentum_breakout": 5.0,
-                    "mean_reversion": 5.0,
-                    "ml_predictor": 5.0,            # ML ensemble (LSTM+Transformer+XGB)
-                    "rl_agent": 5.0,                # Reinforcement learning agent
-                },
-            ))
+            allocator = PortfolioAllocator(
+                AllocatorConfig(
+                    max_active_signals=10,  # allow 10 concurrent positions
+                    max_capital_pct_per_signal=5.0,  # 5% per position (aligned with risk limit)
+                    min_confidence=0.2,
+                    strategy_cap_pct={
+                        "ai_alpha": 5.0,  # Aligned with max_position_pct
+                        "ema_crossover": 5.0,
+                        "macd": 5.0,
+                        "rsi": 5.0,
+                        "momentum_breakout": 5.0,
+                        "mean_reversion": 5.0,
+                        "ml_predictor": 5.0,  # ML ensemble (LSTM+Transformer+XGB)
+                        "rl_agent": 5.0,  # Reinforcement learning agent
+                    },
+                )
+            )
 
             def _get_market_feed_healthy() -> bool:
                 svc = getattr(app.state, "market_data_service", None)
@@ -172,8 +185,9 @@ async def init_trading(app: FastAPI) -> None:
                 ts = bar_cache.get_current_bar_ts()
                 if ts:
                     return ts
-                from datetime import datetime, timezone
-                return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                from datetime import datetime
+
+                return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             def _get_bars(symbol: str, exchange: Exchange, interval: str, n: int):
                 return bar_cache.get_bars(symbol, exchange, interval, n)
@@ -195,8 +209,9 @@ async def init_trading(app: FastAPI) -> None:
                 regime_scale = 1.0
                 try:
                     import numpy as np
+
                     recent_returns = np.array([0.0])
-                    vol = getattr(rm, '_current_vol', 0.01)
+                    vol = getattr(rm, "_current_vol", 0.01)
                     regime_result = regime_classifier.classify(recent_returns, vol, 0.0)
                     regime_label = regime_result.label.value
                     if regime_label == "crisis":
@@ -215,8 +230,8 @@ async def init_trading(app: FastAPI) -> None:
                 # Tail risk: reduce exposure based on VIX level
                 tail_risk_scale = 1.0
                 _trp = getattr(app.state, "tail_risk_protector", None)
-                if _trp and hasattr(_trp, 'state'):
-                    tail_risk_scale = getattr(_trp.state, 'exposure_scale', 1.0)
+                if _trp and hasattr(_trp, "state"):
+                    tail_risk_scale = getattr(_trp.state, "exposure_scale", 1.0)
 
                 # Composite exposure multiplier
                 base_mult = getattr(rm, "_exposure_multiplier", 1.0)
@@ -244,6 +259,7 @@ async def init_trading(app: FastAPI) -> None:
             _market_scanner = None
             try:
                 from src.scanner.market_scanner import MarketScanner
+
                 _market_scanner = MarketScanner(
                     alpha_model=_alpha_model,
                     feature_engine=feature_engine,
@@ -258,12 +274,15 @@ async def init_trading(app: FastAPI) -> None:
             if _alpha_model and model_registry:
                 try:
                     from src.ai.models.base import BasePredictor, PredictionOutput
+
                     class XGBoostPredictor(BasePredictor):
                         model_id = "xgboost_alpha"
                         version = "v1"
+
                         def __init__(self_xgb, alpha_model):
                             self_xgb._alpha = alpha_model
                             self_xgb.path = ""
+
                         def predict(self_xgb, features, context=None):
                             try:
                                 score = self_xgb._alpha.score(features)
@@ -272,11 +291,13 @@ async def init_trading(app: FastAPI) -> None:
                                     prob_up=min(0.95, max(0.05, prob_up)),
                                     expected_return=score * 0.01,
                                     confidence=min(1.0, abs(score)),
-                                    model_id="xgboost_alpha", version="v1",
+                                    model_id="xgboost_alpha",
+                                    version="v1",
                                     metadata={"raw_score": score},
                                 )
                             except Exception:
                                 return PredictionOutput(0.5, 0.0, 0.0, "xgboost_alpha", "v1", {})
+
                     xgb_pred = XGBoostPredictor(_alpha_model)
                     model_registry.register(xgb_pred)
                     logger.info("XGBoost predictor wired into ensemble (post-joblib)")
@@ -286,6 +307,7 @@ async def init_trading(app: FastAPI) -> None:
             # ── Register ML strategies (connect to real models) ──
             try:
                 from src.strategy_engine.ml_strategies import MLPredictorStrategy, RLAgentStrategy
+
                 ml_strategy = MLPredictorStrategy(
                     ensemble_engine=_ensemble_engine,
                     feature_engine=feature_engine,
@@ -307,6 +329,7 @@ async def init_trading(app: FastAPI) -> None:
 
             async def _ws_broadcast(message):
                 from src.api.ws_manager import get_ws_manager
+
                 mgr = get_ws_manager()
                 if mgr:
                     await mgr.broadcast(message)
@@ -318,6 +341,7 @@ async def init_trading(app: FastAPI) -> None:
 
             # GAP-5 fix: wire drift_gate and regime_gate into autonomous loop
             _drift_detector = getattr(app.state, "drift_detector", None)
+
             def _drift_gate():
                 if _drift_detector is None:
                     return True
@@ -327,6 +351,7 @@ async def init_trading(app: FastAPI) -> None:
                     return True  # Fail open on error
 
             _regime_cls = regime_classifier
+
             def _regime_gate():
                 if _regime_cls is None:
                     return True
@@ -365,7 +390,9 @@ async def init_trading(app: FastAPI) -> None:
             # P0-3: Wire feature normalizer into autonomous loop
             if _feature_normalizer and _feature_normalizer._fitted:
                 _autonomous_loop.set_feature_normalizer(_feature_normalizer)
-                logger.info("Feature normalizer wired to autonomous loop (%d features)", len(_feature_normalizer._means))
+                logger.info(
+                    "Feature normalizer wired to autonomous loop (%d features)", len(_feature_normalizer._means)
+                )
 
             # Wire open trade persistence (write-ahead for SL/TP tracking)
             # Try PostgreSQL first (if DATABASE_URL set), fall back to SQLite TradeStore
@@ -373,6 +400,7 @@ async def init_trading(app: FastAPI) -> None:
             if os.environ.get("DATABASE_URL"):
                 try:
                     from src.persistence.open_trade_repo import OpenTradeRepository
+
                     _open_trade_repo = OpenTradeRepository()
                     _autonomous_loop.set_open_trade_repo(_open_trade_repo)
                     recovered = _autonomous_loop.load_open_trades_from_db()
@@ -384,7 +412,12 @@ async def init_trading(app: FastAPI) -> None:
             if not _trade_repo_wired:
                 try:
                     from src.persistence.trade_store import TradeStore
-                    _db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data", "trades.db")
+
+                    _db_path = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                        "data",
+                        "trades.db",
+                    )
                     _trade_store = TradeStore(db_path=_db_path)
                     _autonomous_loop.set_open_trade_repo(_trade_store)
                     recovered = _autonomous_loop.load_open_trades_from_db()
@@ -396,6 +429,7 @@ async def init_trading(app: FastAPI) -> None:
             # ── Wire Trade Outcome Repository (self-learning feedback loop) ──
             try:
                 from src.persistence.trade_outcome_repo import TradeOutcomeRepository
+
                 _trade_outcome_repo = TradeOutcomeRepository()
                 _autonomous_loop.set_trade_outcome_repo(_trade_outcome_repo)
                 app.state.trade_outcome_repo = _trade_outcome_repo
@@ -410,11 +444,13 @@ async def init_trading(app: FastAPI) -> None:
             # ── Wire kill switch into autonomous loop (Sprint 7.1) ──
             _ks_for_loop = getattr(app.state, "kill_switch", None)
             if _ks_for_loop is not None:
+
                 async def _kill_switch_check():
                     ks = getattr(app.state, "kill_switch", None)
                     if ks is None:
                         return False
                     return await ks.is_armed()
+
                 _autonomous_loop.set_kill_switch(_kill_switch_check)
                 logger.info("Kill switch wired to autonomous loop (auto-close on arm)")
 
@@ -430,12 +466,15 @@ async def init_trading(app: FastAPI) -> None:
             try:
                 from src.ai.llm.client import LLMClient, LLMConfig
                 from src.ai.llm.sentiment import NewsSentimentService
+
                 _openai_key = os.environ.get("OPENAI_API_KEY", "")
                 _anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
                 if _openai_key:
                     _llm_config = LLMConfig(provider="openai", api_key=_openai_key, model="gpt-4o-mini")
                 elif _anthropic_key:
-                    _llm_config = LLMConfig(provider="anthropic", api_key=_anthropic_key, model="claude-3-haiku-20240307")
+                    _llm_config = LLMConfig(
+                        provider="anthropic", api_key=_anthropic_key, model="claude-3-haiku-20240307"
+                    )
                 else:
                     _llm_config = None
                 if _llm_config:
@@ -452,6 +491,7 @@ async def init_trading(app: FastAPI) -> None:
             # Always wire FinBERT sentiment predictor as fallback (works without API keys)
             try:
                 from src.ai.models.sentiment_predictor import SentimentPredictor
+
                 _finbert_predictor = SentimentPredictor()
                 _autonomous_loop.set_sentiment_predictor(_finbert_predictor)
                 if _llm_sentiment_wired:
@@ -464,9 +504,9 @@ async def init_trading(app: FastAPI) -> None:
             # ── Multi-Agent Orchestrator ──
             try:
                 from src.agents.base import AgentOrchestrator
+                from src.agents.execution_agent import ExecutionAgent
                 from src.agents.research_agent import ResearchAgent
                 from src.agents.risk_agent import RiskMonitorAgent
-                from src.agents.execution_agent import ExecutionAgent
                 from src.agents.strategy_selector import StrategySelectorAgent
 
                 orchestrator = AgentOrchestrator()
@@ -475,6 +515,7 @@ async def init_trading(app: FastAPI) -> None:
                 _market_scanner_for_agent = None
                 try:
                     from src.scanner.market_scanner import MarketScanner
+
                     _market_scanner_for_agent = MarketScanner(
                         alpha_model=_alpha_model,
                         feature_engine=feature_engine,
@@ -531,14 +572,18 @@ async def init_trading(app: FastAPI) -> None:
                 # Broadcast callback for WebSocket
                 async def _agent_broadcast(msg):
                     from src.api.ws_manager import get_ws_manager
+
                     mgr = get_ws_manager()
                     if mgr:
-                        await mgr.broadcast({
-                            "type": f"agent_{msg.msg_type}",
-                            "source": msg.source,
-                            "payload": msg.payload,
-                            "timestamp": msg.timestamp,
-                        })
+                        await mgr.broadcast(
+                            {
+                                "type": f"agent_{msg.msg_type}",
+                                "source": msg.source,
+                                "payload": msg.payload,
+                                "timestamp": msg.timestamp,
+                            }
+                        )
+
                 orchestrator.set_broadcast_callback(_agent_broadcast)
 
                 orchestrator.start_all()
@@ -554,15 +599,21 @@ async def init_trading(app: FastAPI) -> None:
             setup_drift_detector(app)
 
             # ── Self-Learning Scheduler (Sprint 4.1 + 4.5) ──
-            setup_self_learning(app, _ensemble_engine, _alpha_model, _model_path, _models_dir, feature_engine, bar_cache)
+            setup_self_learning(
+                app, _ensemble_engine, _alpha_model, _model_path, _models_dir, feature_engine, bar_cache
+            )
 
             # ── Daily Report Scheduler (16:00 IST after market close) ──
             try:
                 _drg = getattr(app.state, "daily_report_generator", None)
                 if _drg:
+
                     async def _daily_report_loop():
                         """Generate daily performance report at 16:00 IST."""
-                        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                        from datetime import datetime as _dt
+                        from datetime import timedelta as _td
+                        from datetime import timezone as _tz
+
                         _IST = _tz(_td(hours=5, minutes=30))
                         _last_report_date = None
                         while True:
@@ -585,13 +636,21 @@ async def init_trading(app: FastAPI) -> None:
                                         drg.save_to_db(report)
                                     except Exception:
                                         pass
-                                    logger.info("Daily report generated: %s trades, net_pnl=%.2f, sharpe=%.2f",
-                                                report.total_trades, report.net_pnl, report.sharpe_ratio_20d)
+                                    logger.info(
+                                        "Daily report generated: %s trades, net_pnl=%.2f, sharpe=%.2f",
+                                        report.total_trades,
+                                        report.net_pnl,
+                                        report.sharpe_ratio_20d,
+                                    )
                                     from src.api.ws_manager import get_ws_manager
+
                                     mgr = get_ws_manager()
                                     if mgr:
                                         from src.reporting.daily_report import DailyReportGenerator
-                                        await mgr.broadcast({"type": "daily_report", "report": DailyReportGenerator.to_dict(report)})
+
+                                        await mgr.broadcast(
+                                            {"type": "daily_report", "report": DailyReportGenerator.to_dict(report)}
+                                        )
                             except asyncio.CancelledError:
                                 break
                             except Exception as e:
@@ -605,9 +664,13 @@ async def init_trading(app: FastAPI) -> None:
 
             # ── Nightly Simulation Scheduler (16:30 IST after market close) ──
             try:
+
                 async def _nightly_simulation_loop():
                     """Run nightly strategy simulation at 16:30 IST."""
-                    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                    from datetime import datetime as _dt
+                    from datetime import timedelta as _td
+                    from datetime import timezone as _tz
+
                     _IST = _tz(_td(hours=5, minutes=30))
                     _last_sim_date = None
                     while True:
@@ -624,13 +687,17 @@ async def init_trading(app: FastAPI) -> None:
                             _last_sim_date = today
                             logger.info("Starting nightly simulation pipeline...")
                             from src.simulation.orchestrator import SimulationOrchestrator
+
                             sim_orch = SimulationOrchestrator()
                             results = await sim_orch.run_nightly_pipeline(intervals=["15m", "1h"])
                             logger.info("Nightly simulation complete: %d results", len(results) if results else 0)
                             from src.api.ws_manager import get_ws_manager
+
                             mgr = get_ws_manager()
                             if mgr:
-                                await mgr.broadcast({"type": "simulation_complete", "result_count": len(results) if results else 0})
+                                await mgr.broadcast(
+                                    {"type": "simulation_complete", "result_count": len(results) if results else 0}
+                                )
                         except asyncio.CancelledError:
                             break
                         except Exception as e:
@@ -644,9 +711,13 @@ async def init_trading(app: FastAPI) -> None:
 
             # ── Pre-Market Briefing Scheduler (9:00 IST before market open) ──
             try:
+
                 async def _pre_market_briefing_loop():
                     """Generate pre-market briefing at 9:00 IST."""
-                    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                    from datetime import datetime as _dt
+                    from datetime import timedelta as _td
+                    from datetime import timezone as _tz
+
                     _IST = _tz(_td(hours=5, minutes=30))
                     _last_brief_date = None
                     while True:
@@ -663,24 +734,31 @@ async def init_trading(app: FastAPI) -> None:
                             _last_brief_date = today
                             logger.info("Generating pre-market briefing...")
                             from src.ai.llm.pre_market_brief import PreMarketBriefing
+
                             briefing_engine = PreMarketBriefing()
                             briefing = await briefing_engine.generate_briefing()
                             # Apply exposure multiplier to risk manager
                             rm = getattr(app.state, "risk_manager", None)
                             if rm and briefing and hasattr(briefing, "exposure_multiplier"):
                                 rm._exposure_multiplier = briefing.exposure_multiplier
-                                logger.info("Pre-market briefing: outlook=%s, exposure_mult=%.2f",
-                                            getattr(briefing, "outlook", "unknown"), briefing.exposure_multiplier)
+                                logger.info(
+                                    "Pre-market briefing: outlook=%s, exposure_mult=%.2f",
+                                    getattr(briefing, "outlook", "unknown"),
+                                    briefing.exposure_multiplier,
+                                )
                             from src.api.ws_manager import get_ws_manager
+
                             mgr = get_ws_manager()
                             if mgr and briefing:
-                                await mgr.broadcast({
-                                    "type": "pre_market_briefing",
-                                    "outlook": getattr(briefing, "outlook", "neutral"),
-                                    "confidence": getattr(briefing, "confidence", 0.5),
-                                    "exposure_multiplier": getattr(briefing, "exposure_multiplier", 1.0),
-                                    "key_risks": getattr(briefing, "key_risks", []),
-                                })
+                                await mgr.broadcast(
+                                    {
+                                        "type": "pre_market_briefing",
+                                        "outlook": getattr(briefing, "outlook", "neutral"),
+                                        "confidence": getattr(briefing, "confidence", 0.5),
+                                        "exposure_multiplier": getattr(briefing, "exposure_multiplier", 1.0),
+                                        "key_risks": getattr(briefing, "key_risks", []),
+                                    }
+                                )
                         except asyncio.CancelledError:
                             break
                         except Exception as e:
@@ -728,19 +806,19 @@ async def shutdown_trading(app: FastAPI) -> None:
             logger.warning("Autonomous loop stop: %s", ex)
 
     # ── Snapshot open trades to TradeStore before exit ──
-    if hasattr(app.state, 'trade_store') and hasattr(app.state, 'autonomous_loop'):
+    if hasattr(app.state, "trade_store") and hasattr(app.state, "autonomous_loop"):
         _loop_ref = app.state.autonomous_loop
         for trade_key, trade in _loop_ref._open_trades.items():
             try:
                 app.state.trade_store.upsert_trade(
                     trade_key=trade_key,
-                    symbol=trade.get('symbol', ''),
-                    exchange=trade.get('exchange', 'NSE'),
-                    side=trade.get('side', ''),
-                    quantity=trade.get('quantity', 0),
-                    entry_price=trade.get('entry_price', 0),
-                    stop_loss=trade.get('stop_loss'),
-                    take_profit=trade.get('take_profit'),
+                    symbol=trade.get("symbol", ""),
+                    exchange=trade.get("exchange", "NSE"),
+                    side=trade.get("side", ""),
+                    quantity=trade.get("quantity", 0),
+                    entry_price=trade.get("entry_price", 0),
+                    stop_loss=trade.get("stop_loss"),
+                    take_profit=trade.get("take_profit"),
                 )
             except Exception as e:
                 logger.warning("Failed to snapshot trade %s: %s", trade_key, e)

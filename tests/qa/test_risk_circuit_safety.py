@@ -4,6 +4,7 @@ QA Phase 3 — Risk & circuit safety.
 9) Distributed lock expiry: lock TTL expires; another submission → idempotency catches duplicate.
 10) Cluster reservation overflow: max_open=5, 10 concurrent → exactly 5 broker calls.
 """
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,9 +33,19 @@ def test_var_breach_rejects_no_reservation_leak():
     )
     rm = RiskManager(equity=100_000.0, limits=limits)
     rm.positions = [
-        Position(symbol="X", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=500, avg_price=50.0, strategy_id="s1"),
+        Position(
+            symbol="X", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=500, avg_price=50.0, strategy_id="s1"
+        ),
     ]
-    sig = Signal(strategy_id="s1", symbol="Y", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.9, portfolio_weight=0.1, price=100.0)
+    sig = Signal(
+        strategy_id="s1",
+        symbol="Y",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.9,
+        portfolio_weight=0.1,
+        price=100.0,
+    )
     result = rm.can_place_order(sig, 100, 100.0)
     assert not result.allowed
     assert "var" in result.reason.lower() or "exposure" in result.reason.lower()
@@ -88,11 +99,26 @@ async def test_cluster_reservation_overflow_max_5_broker_calls():
         kill_switch=kill_switch,
         reservation=reservation,
     )
-    sig = Signal(strategy_id="s1", symbol="RELIANCE", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.9, portfolio_weight=0.1, price=2500.0)
+    sig = Signal(
+        strategy_id="s1",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.9,
+        portfolio_weight=0.1,
+        price=2500.0,
+    )
 
     async def submit(i):
         return await service.submit_order(
-            OrderEntryRequest(signal=sig, quantity=10, order_type=OrderType.LIMIT, limit_price=2500.0, idempotency_key=f"qa_overflow_{i}", source="qa")
+            OrderEntryRequest(
+                signal=sig,
+                quantity=10,
+                order_type=OrderType.LIMIT,
+                limit_price=2500.0,
+                idempotency_key=f"qa_overflow_{i}",
+                source="qa",
+            )
         )
 
     await asyncio.gather(*[submit(i) for i in range(10)], return_exceptions=True)

@@ -1,8 +1,9 @@
 """Abstract base gateway for all broker integrations."""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class BrokerType(str, Enum):
@@ -28,29 +29,29 @@ class BrokerHealth:
     broker: BrokerType
     status: GatewayStatus
     latency_ms: float = 0.0
-    last_heartbeat: Optional[str] = None
+    last_heartbeat: str | None = None
     error_count: int = 0
     orders_today: int = 0
-    rate_limit_remaining: Optional[int] = None
-    supported_exchanges: List[str] = field(default_factory=list)
-    supported_order_types: List[str] = field(default_factory=list)
+    rate_limit_remaining: int | None = None
+    supported_exchanges: list[str] = field(default_factory=list)
+    supported_order_types: list[str] = field(default_factory=list)
     paper_mode: bool = True
 
 
 @dataclass
 class BrokerOrder:
-    broker_order_id: Optional[str]
+    broker_order_id: str | None
     symbol: str
     exchange: str
     side: str
     quantity: int
     order_type: str
-    limit_price: Optional[float]
+    limit_price: float | None
     status: str
     filled_qty: int = 0
     avg_price: float = 0.0
-    timestamp: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    timestamp: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -82,8 +83,13 @@ class BaseBrokerGateway(ABC):
 
     @abstractmethod
     async def place_order(
-        self, symbol: str, exchange: str, side: str, quantity: int,
-        order_type: str = "MARKET", limit_price: Optional[float] = None,
+        self,
+        symbol: str,
+        exchange: str,
+        side: str,
+        quantity: int,
+        order_type: str = "MARKET",
+        limit_price: float | None = None,
         **kwargs,
     ) -> BrokerOrder:
         """Place an order. Returns BrokerOrder with broker_order_id."""
@@ -100,7 +106,7 @@ class BaseBrokerGateway(ABC):
         ...
 
     @abstractmethod
-    async def get_positions(self) -> List[BrokerPosition]:
+    async def get_positions(self) -> list[BrokerPosition]:
         """Get all open positions."""
         ...
 
@@ -110,6 +116,6 @@ class BaseBrokerGateway(ABC):
         ...
 
     @abstractmethod
-    def supported_exchanges(self) -> List[str]:
+    def supported_exchanges(self) -> list[str]:
         """Return list of supported exchange codes."""
         ...

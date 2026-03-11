@@ -2,6 +2,7 @@
 Stress tests: many concurrent submit_order calls; idempotency and lock prevent duplicate broker calls.
 Requires Redis for distributed lock and cluster reservation (skips if unavailable).
 """
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
@@ -84,12 +85,27 @@ async def test_concurrent_submissions_same_idempotency_key(risk_manager, lifecyc
     )
 
     idem_key = "stress_same_key_001"
-    signal = Signal(strategy_id="s1", symbol="RELIANCE", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.9, portfolio_weight=0.05, price=2500.0)
+    signal = Signal(
+        strategy_id="s1",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.9,
+        portfolio_weight=0.05,
+        price=2500.0,
+    )
     from src.execution.order_entry.request import OrderEntryRequest
 
     async def submit():
         return await service.submit_order(
-            OrderEntryRequest(signal=signal, quantity=10, order_type=OrderType.LIMIT, limit_price=2500.0, idempotency_key=idem_key, source="stress")
+            OrderEntryRequest(
+                signal=signal,
+                quantity=10,
+                order_type=OrderType.LIMIT,
+                limit_price=2500.0,
+                idempotency_key=idem_key,
+                source="stress",
+            )
         )
 
     results = await asyncio.gather(*[submit() for _ in range(50)], return_exceptions=True)
@@ -146,12 +162,27 @@ async def test_concurrent_submissions_different_keys_capped_by_reservation(lifec
         reservation=reservation,
     )
 
-    signal = Signal(strategy_id="s1", symbol="RELIANCE", exchange=Exchange.NSE, side=SignalSide.BUY, score=0.9, portfolio_weight=0.05, price=2500.0)
+    signal = Signal(
+        strategy_id="s1",
+        symbol="RELIANCE",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        score=0.9,
+        portfolio_weight=0.05,
+        price=2500.0,
+    )
     from src.execution.order_entry.request import OrderEntryRequest
 
     async def submit(i):
         return await service.submit_order(
-            OrderEntryRequest(signal=signal, quantity=10, order_type=OrderType.LIMIT, limit_price=2500.0, idempotency_key=f"stress_key_{i}", source="stress")
+            OrderEntryRequest(
+                signal=signal,
+                quantity=10,
+                order_type=OrderType.LIMIT,
+                limit_price=2500.0,
+                idempotency_key=f"stress_key_{i}",
+                source="stress",
+            )
         )
 
     results = await asyncio.gather(*[submit(i) for i in range(60)], return_exceptions=True)

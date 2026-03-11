@@ -3,8 +3,10 @@ Phase 4: Regime specialists.
 Registry: trend, mean_reversion, high_vol_breakout, low_liquidity_defensive.
 Activate by regime_id; blend outputs with regime weights.
 """
+
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -20,8 +22,8 @@ class SpecialistOutput:
 @dataclass
 class RegimeSpecialist:
     specialist_id: str
-    regime_ids: List[int]  # regimes where this specialist is active
-    predict_fn: Callable[[Dict[str, float], Any], SpecialistOutput]
+    regime_ids: list[int]  # regimes where this specialist is active
+    predict_fn: Callable[[dict[str, float], Any], SpecialistOutput]
 
 
 class RegimeSpecialistRegistry:
@@ -31,17 +33,17 @@ class RegimeSpecialistRegistry:
     """
 
     def __init__(self):
-        self._specialists: Dict[str, RegimeSpecialist] = {}
-        self._regime_weights: Dict[int, Dict[str, float]] = {}  # regime_id -> specialist_id -> weight
+        self._specialists: dict[str, RegimeSpecialist] = {}
+        self._regime_weights: dict[int, dict[str, float]] = {}  # regime_id -> specialist_id -> weight
 
     def register(self, specialist: RegimeSpecialist) -> None:
         self._specialists[specialist.specialist_id] = specialist
 
-    def set_regime_weights(self, regime_id: int, weights: Dict[str, float]) -> None:
+    def set_regime_weights(self, regime_id: int, weights: dict[str, float]) -> None:
         """Weights for blending specialists in this regime (e.g. trend=0.7, mr=0.3)."""
         self._regime_weights[regime_id] = dict(weights)
 
-    def get_active(self, regime_id: int) -> List[RegimeSpecialist]:
+    def get_active(self, regime_id: int) -> list[RegimeSpecialist]:
         """Return specialists active in this regime."""
         out = []
         for s in self._specialists.values():
@@ -52,8 +54,8 @@ class RegimeSpecialistRegistry:
     def predict_blend(
         self,
         regime_id: int,
-        features: Dict[str, float],
-        context: Optional[Any] = None,
+        features: dict[str, float],
+        context: Any | None = None,
     ) -> SpecialistOutput:
         """
         Get active specialists; run predict; blend with regime weights.

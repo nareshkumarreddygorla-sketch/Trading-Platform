@@ -3,8 +3,8 @@ Dynamic position sizing:
   f = clip(Kelly * confidence * regime_mult * drawdown_scale, 0, f_max)
 Volatility targeting: notional = capital * sigma_target / sigma_forecast.
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -33,7 +33,7 @@ def dynamic_position_fraction(
     confidence: float,
     current_drawdown_pct: float,
     regime_multiplier: float = 1.0,
-    config: Optional[SizingConfig] = None,
+    config: SizingConfig | None = None,
 ) -> float:
     """
     Position size as fraction of capital:
@@ -61,5 +61,5 @@ def volatility_target_notional(
     """
     if sigma_forecast <= 0:
         return 0.0
-    sigma_target_daily = sigma_target_annual / (periods_per_year ** 0.5)
+    sigma_target_daily = sigma_target_annual / (periods_per_year**0.5)
     return capital * (sigma_target_daily / (sigma_forecast + 1e-12))

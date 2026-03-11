@@ -9,10 +9,11 @@ Aggregates:
 - Risk assessment for the day
 - Recommended sector biases and exposure multiplier
 """
+
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 from src.ai.llm.client import LLMClient
 
@@ -53,19 +54,19 @@ class PreMarketBriefing:
     Called at 9:00 IST before market open (9:15).
     """
 
-    def __init__(self, llm_client: Optional[LLMClient] = None):
+    def __init__(self, llm_client: LLMClient | None = None):
         self._llm = llm_client
-        self._latest_brief: Optional[Dict[str, Any]] = None
-        self._latest_time: Optional[datetime] = None
+        self._latest_brief: dict[str, Any] | None = None
+        self._latest_time: datetime | None = None
 
     async def generate_briefing(
         self,
         news_headlines: str = "",
-        global_markets: Optional[Dict[str, float]] = None,
-        yesterday_performance: Optional[Dict[str, Any]] = None,
+        global_markets: dict[str, float] | None = None,
+        yesterday_performance: dict[str, Any] | None = None,
         current_regime: str = "unknown",
         vix_level: float = 0.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate pre-market briefing.
 
@@ -141,7 +142,7 @@ class PreMarketBriefing:
         )
         return brief
 
-    def _parse_response(self, response: str) -> Dict[str, Any]:
+    def _parse_response(self, response: str) -> dict[str, Any]:
         """Parse LLM JSON response."""
         try:
             # Try to extract JSON from response
@@ -159,7 +160,7 @@ class PreMarketBriefing:
         self,
         vix_level: float,
         regime: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate rule-based fallback when LLM is unavailable."""
         # Conservative defaults
         exposure = 1.0
@@ -206,7 +207,7 @@ class PreMarketBriefing:
         }
 
     @property
-    def latest_briefing(self) -> Optional[Dict[str, Any]]:
+    def latest_briefing(self) -> dict[str, Any] | None:
         return self._latest_brief
 
     @property

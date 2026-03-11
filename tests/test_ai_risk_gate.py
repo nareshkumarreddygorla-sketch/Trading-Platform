@@ -1,8 +1,10 @@
 """Tests for AI risk gate: all AI decisions pass risk engine."""
+
 import pytest
-from src.core.events import Signal, SignalSide, Exchange
-from src.risk_engine import RiskManager, RiskLimits
+
 from src.ai.risk_gate import AIRiskGate
+from src.core.events import Exchange, Signal, SignalSide
+from src.risk_engine import RiskLimits, RiskManager
 
 
 @pytest.fixture

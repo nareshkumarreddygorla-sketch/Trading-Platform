@@ -1,4 +1,5 @@
 """Self-learning pipeline API: status, history, manual trigger, drift info."""
+
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -106,7 +107,7 @@ async def get_drift_status(request: Request, current_user: dict = Depends(get_cu
                 }
                 for s in signals
             }
-        except Exception as e:
+        except Exception:
             logger.exception("Multi-layer drift check failed")
             result["multi_layer_drift"] = {"error": "Drift check failed"}
 
@@ -125,12 +126,15 @@ async def trigger_self_learning_cycle(
 
     try:
         result = await sls.run_now()
-        logger.info("Manual self-learning cycle triggered by %s: %s",
-                     current_user.get("sub", "unknown"), result.get("action", "unknown"))
+        logger.info(
+            "Manual self-learning cycle triggered by %s: %s",
+            current_user.get("sub", "unknown"),
+            result.get("action", "unknown"),
+        )
         return {
             "status": "completed",
             "result": result,
         }
-    except Exception as e:
+    except Exception:
         logger.exception("Manual self-learning cycle failed")
-        raise HTTPException(status_code=500, detail="Self-learning cycle failed")
+        raise HTTPException(status_code=500, detail="Self-learning cycle failed") from None

@@ -2,9 +2,9 @@
 Portfolio allocator: rank signals, enforce max active, allocate capital proportionally,
 strategy-level caps, regime/drawdown adjustment, risk-aware sizing.
 """
+
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 from src.core.events import Position, Signal
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class AllocatorConfig:
     max_active_signals: int = 5
     max_capital_pct_per_signal: float = 10.0
-    strategy_cap_pct: Optional[dict] = None  # strategy_id -> max % of equity
+    strategy_cap_pct: dict | None = None  # strategy_id -> max % of equity
     min_confidence: float = 0.5
     drawdown_exposure_scale: float = 1.0  # reduce exposure when drawdown; 0.5 = half
     regime_scale: float = 1.0  # reduce in bad regime
@@ -29,27 +29,31 @@ class PortfolioAllocator:
     Respect strategy-level capital caps, drawdown and regime scaling.
     """
 
-    def __init__(self, config: Optional[AllocatorConfig] = None):
+    def __init__(self, config: AllocatorConfig | None = None):
         self.config = config or AllocatorConfig()
 
     def allocate(
         self,
-        signals: List[Signal],
+        signals: list[Signal],
         equity: float,
-        positions: List[Position],
+        positions: list[Position],
         *,
         exposure_multiplier: float = 1.0,
-        drawdown_scale: Optional[float] = None,
-        regime_scale: Optional[float] = None,
+        drawdown_scale: float | None = None,
+        regime_scale: float | None = None,
         max_position_pct: float = 5.0,
-    ) -> List[Tuple[Signal, int]]:
+    ) -> list[tuple[Signal, int]]:
         """
         Returns list of (signal, quantity) to submit. Quantity is risk-adjusted.
         Filters by min_confidence, applies max_active_signals, capital allocation.
         """
         if equity <= 0:
             return []
-        scale = exposure_multiplier * (drawdown_scale or self.config.drawdown_exposure_scale) * (regime_scale or self.config.regime_scale)
+        scale = (
+            exposure_multiplier
+            * (drawdown_scale or self.config.drawdown_exposure_scale)
+            * (regime_scale or self.config.regime_scale)
+        )
         scale = max(0.0, min(1.0, scale))
 
         # Filter by confidence (score)
@@ -60,9 +64,11 @@ class PortfolioAllocator:
         # Already sorted by score in StrategyRunner; take top N
         top = candidates[: self.config.max_active_signals]
 
-        out: List[Tuple[Signal, int]] = []
+        out: list[tuple[Signal, int]] = []
         for signal in top:
-            strategy_cap_pct = (self.config.strategy_cap_pct or {}).get(signal.strategy_id) or self.config.max_capital_pct_per_signal
+            strategy_cap_pct = (self.config.strategy_cap_pct or {}).get(
+                signal.strategy_id
+            ) or self.config.max_capital_pct_per_signal
 
             # Kelly criterion: f* = (bp - q) / b
             # b = win/loss ratio estimate, p = win probability (from signal score), q = 1-p

@@ -3,8 +3,8 @@ Objective: J = E[R] - λ1*DD - λ2*Turnover - λ3*σ.
 Approximation for training: reward per sample = r - λ1*dd_contrib - λ2*turnover_contrib - λ3*vol_contrib.
 Sharpe-like: mean_ret / (std_ret + ε).
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -19,9 +19,9 @@ class ObjectiveConfig:
 
 def risk_adjusted_reward(
     returns: np.ndarray,
-    drawdown_contrib: Optional[np.ndarray] = None,
-    turnover: Optional[np.ndarray] = None,
-    config: Optional[ObjectiveConfig] = None,
+    drawdown_contrib: np.ndarray | None = None,
+    turnover: np.ndarray | None = None,
+    config: ObjectiveConfig | None = None,
 ) -> float:
     """
     J = mean(returns) - λ1 * mean(drawdown_contrib) - λ2 * mean(turnover) - λ3 * std(returns).

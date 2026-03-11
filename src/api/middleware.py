@@ -1,12 +1,13 @@
 """
 Security middleware: headers, rate limiting (Redis-backed with in-memory fallback), request logging.
 """
+
 import logging
 import os
 import secrets
 import time
 from collections import defaultdict
-from typing import Callable, Tuple
+from collections.abc import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -50,10 +51,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # More specific paths are checked first to ensure login/register get the
 # strictest limit (5/min) rather than the generic auth limit (10/min).
 _ENDPOINT_LIMITS = {
-    "/api/v1/auth/login": 5,       # Brute-force protection: 5 login attempts/min per IP
-    "/api/v1/auth/register": 5,    # Prevent mass account creation
-    "/api/v1/auth/refresh": 10,    # Token refresh is less sensitive
-    "/api/v1/auth": 10,            # Other auth endpoints
+    "/api/v1/auth/login": 5,  # Brute-force protection: 5 login attempts/min per IP
+    "/api/v1/auth/register": 5,  # Prevent mass account creation
+    "/api/v1/auth/refresh": 10,  # Token refresh is less sensitive
+    "/api/v1/auth": 10,  # Other auth endpoints
     "/api/v1/orders": 30,
     "/api/v1/health": 600,
 }
@@ -81,8 +82,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     - Automatic fallback to in-memory when Redis is unavailable
     """
 
-    def __init__(self, app, requests_per_minute: int = 120, auth_requests_per_minute: int = 10,
-                 trust_proxy: bool = False, max_tracked_ips: int = 10_000):
+    def __init__(
+        self,
+        app,
+        requests_per_minute: int = 120,
+        auth_requests_per_minute: int = 10,
+        trust_proxy: bool = False,
+        max_tracked_ips: int = 10_000,
+    ):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
         self.auth_requests_per_minute = auth_requests_per_minute
@@ -98,6 +105,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if redis_url:
             try:
                 import redis
+
                 self._redis = redis.Redis.from_url(redis_url, socket_connect_timeout=2, decode_responses=True)
                 self._redis.ping()
                 self._redis_available = True
@@ -140,7 +148,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return parts[3]
         return "default"
 
-    def _check_rate_memory(self, client_ip: str, limit: int, path: str = "") -> Tuple[bool, int]:
+    def _check_rate_memory(self, client_ip: str, limit: int, path: str = "") -> tuple[bool, int]:
         """In-memory rate check. Returns (is_limited, remaining)."""
         now = time.time()
         window_start = now - 60
@@ -157,7 +165,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._requests[rate_key].append(now)
         return False, max(0, limit - count - 1)
 
-    def _check_rate_redis(self, client_ip: str, limit: int, path: str) -> Tuple[bool, int]:
+    def _check_rate_redis(self, client_ip: str, limit: int, path: str) -> tuple[bool, int]:
         """Redis-backed rate check using a fixed-window counter. Returns (is_limited, remaining).
 
         This is a fixed-window rate limiter: each key gets a 60-second TTL via EXPIRE.
@@ -230,7 +238,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         import uuid
+
         from src.api.logging_config import set_correlation_id
+
         correlation_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
         set_correlation_id(correlation_id)
 
@@ -250,7 +260,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             duration_ms = round((time.time() - start) * 1000, 1)
             logger.error(
                 "%s %s 500 %.1fms ip=%s (unhandled exception)",
-                method, path, duration_ms, client_ip,
+                method,
+                path,
+                duration_ms,
+                client_ip,
             )
             raise
 
@@ -261,15 +274,30 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         if status >= 500:
             logger.error(
-                "%s %s %d %.1fms ip=%s", method, path, status, duration_ms, client_ip,
+                "%s %s %d %.1fms ip=%s",
+                method,
+                path,
+                status,
+                duration_ms,
+                client_ip,
             )
         elif status >= 400:
             logger.warning(
-                "%s %s %d %.1fms ip=%s", method, path, status, duration_ms, client_ip,
+                "%s %s %d %.1fms ip=%s",
+                method,
+                path,
+                status,
+                duration_ms,
+                client_ip,
             )
         else:
             logger.info(
-                "%s %s %d %.1fms ip=%s", method, path, status, duration_ms, client_ip,
+                "%s %s %d %.1fms ip=%s",
+                method,
+                path,
+                status,
+                duration_ms,
+                client_ip,
             )
 
         return response

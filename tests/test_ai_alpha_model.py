@@ -1,8 +1,7 @@
 """AI AlphaModel: predict deterministic fallback when no model loaded."""
-import pytest
 
-from src.core.events import Exchange, SignalSide
 from src.ai.alpha_model import AlphaModel
+from src.core.events import Exchange, SignalSide
 
 
 def test_predict_fallback_rsi_low():

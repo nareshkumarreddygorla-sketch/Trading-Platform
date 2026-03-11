@@ -3,7 +3,7 @@
 # One-command operations for dev, training, and production
 # ============================================================
 
-.PHONY: help install train train-full train-ai train-ai-quick train-ai-full download-data run dev deploy stop logs retrain test lint
+.PHONY: help install train train-full train-ai train-ai-quick train-ai-full download-data run dev deploy stop logs retrain test lint setup-hooks format check release-tag
 
 # Default
 help:  ## Show this help
@@ -48,6 +48,31 @@ test:  ## Run tests
 
 lint:  ## Run linter
 	ruff check src/ scripts/
+
+# ── Code Quality ──
+
+setup-hooks:  ## Install pre-commit hooks
+	pip install pre-commit
+	pre-commit install
+	pre-commit install --hook-type commit-msg
+	pre-commit install --hook-type pre-push
+	@echo "Pre-commit hooks installed successfully"
+
+format:  ## Auto-format Python code
+	ruff format src/ scripts/ tests/
+	ruff check --fix src/ scripts/ tests/
+
+check:  ## Run all quality checks (lint + test + security)
+	ruff check src/ scripts/ tests/
+	ruff format --check src/ scripts/ tests/
+	PYTHONPATH=. pytest tests/ -v --cov=src --cov-fail-under=80 -m "not slow"
+	cd trading-ui && npm run lint && npx tsc --noEmit
+
+release-tag:  ## Create a release tag: make release-tag VERSION=1.2.0
+	@test -n "$(VERSION)" || (echo "Usage: make release-tag VERSION=1.2.0" && exit 1)
+	git tag -a v$(VERSION) -m "Release v$(VERSION)"
+	git push origin v$(VERSION)
+	@echo "Tagged and pushed v$(VERSION)"
 
 # ── Production (Docker) ──
 

@@ -3,8 +3,6 @@ Platt scaling: P_cal = sigmoid(β0 + β1 * logit(p)).
 Isotonic regression: non-parametric monotonic mapping from score to probability.
 Reliability curve: binned predicted prob vs realized frequency (for monitoring).
 """
-from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 
@@ -27,12 +25,15 @@ class PlattCalibrator:
 
     def fit(self, p: np.ndarray, y: np.ndarray) -> None:
         from scipy import optimize
+
         logit_p = logit(p)
+
         def nll(params):
             b0, b1 = params
             q = sigmoid(b0 + b1 * logit_p)
             q = np.clip(q, 1e-6, 1 - 1e-6)
             return -np.sum(y * np.log(q) + (1 - y) * np.log(1 - q))
+
         res = optimize.minimize(nll, [0.0, 1.0], method="L-BFGS-B")
         self.b0, self.b1 = res.x
 
@@ -44,11 +45,12 @@ class IsotonicCalibrator:
     """Isotonic regression: monotonic mapping. Fit on (p, y); predict with interpolate."""
 
     def __init__(self):
-        self._mapping: Optional[Tuple[np.ndarray, np.ndarray]] = None
+        self._mapping: tuple[np.ndarray, np.ndarray] | None = None
 
     def fit(self, p: np.ndarray, y: np.ndarray) -> None:
         try:
             from sklearn.isotonic import IsotonicRegression
+
             ir = IsotonicRegression(out_of_bounds="clip")
             ir.fit(p, y)
             self._mapping = (np.linspace(0, 1, 101), ir.predict(np.linspace(0, 1, 101)))
@@ -66,7 +68,7 @@ def reliability_curve(
     y_true: np.ndarray,
     y_prob: np.ndarray,
     n_bins: int = 10,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Binned mean predicted prob and mean realized frequency.
     Returns (bin_edges_mid, mean_predicted_prob, mean_realized_freq).

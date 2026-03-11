@@ -2,7 +2,6 @@
 Cost-aware barrier and label utilities.
 Round-trip cost = slippage + commission (both sides); applied to barrier levels.
 """
-from typing import Tuple
 
 
 def cost_aware_barriers(
@@ -10,7 +9,7 @@ def cost_aware_barriers(
     profit_target_pct: float,
     stop_loss_pct: float,
     round_trip_cost_pct: float,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Upper and lower barriers after round-trip cost.
     U = price * (1 + b_u - c), L = price * (1 - b_d + c).

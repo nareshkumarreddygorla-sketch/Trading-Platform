@@ -5,9 +5,9 @@ End-to-end trading flow tests covering the full lifecycle:
 Uses the FastAPI TestClient (via httpx AsyncClient + ASGITransport) so
 no external services (Redis, Postgres, broker) are required.
 """
+
 import os
 import time
-from typing import Optional
 
 import jwt
 import pytest
@@ -31,6 +31,7 @@ API = "/api/v1"
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def app():
@@ -70,9 +71,10 @@ async def auth_headers(auth_token) -> dict:
 # Helper: create a valid JWT directly (for cases where login is not tested)
 # ---------------------------------------------------------------------------
 
+
 def _make_token(
     sub: str = "testadmin",
-    roles: Optional[list] = None,
+    roles: list | None = None,
     token_type: str = "access",
     exp_delta: int = 1800,
 ) -> str:
@@ -92,6 +94,7 @@ def _make_token(
 # =========================================================================
 # 1. Login returns tokens
 # =========================================================================
+
 
 class TestLoginFlow:
     @pytest.mark.asyncio
@@ -122,6 +125,7 @@ class TestLoginFlow:
 # 2. Protected endpoint requires auth
 # =========================================================================
 
+
 class TestAuthProtection:
     @pytest.mark.asyncio
     async def test_protected_endpoint_requires_auth(self, client):
@@ -141,6 +145,7 @@ class TestAuthProtection:
 # =========================================================================
 # 3. Strategies
 # =========================================================================
+
 
 class TestStrategies:
     @pytest.mark.asyncio
@@ -162,6 +167,7 @@ class TestStrategies:
 # 4. Positions
 # =========================================================================
 
+
 class TestPositions:
     @pytest.mark.asyncio
     async def test_get_positions(self, client, auth_headers):
@@ -176,6 +182,7 @@ class TestPositions:
 # =========================================================================
 # 5. Risk state
 # =========================================================================
+
 
 class TestRiskState:
     @pytest.mark.asyncio
@@ -193,6 +200,7 @@ class TestRiskState:
 # 6. Trading mode
 # =========================================================================
 
+
 class TestTradingMode:
     @pytest.mark.asyncio
     async def test_trading_mode_shows_paper(self, client, auth_headers):
@@ -207,6 +215,7 @@ class TestTradingMode:
 # =========================================================================
 # 7. Autonomous toggle
 # =========================================================================
+
 
 class TestAutonomousToggle:
     @pytest.mark.asyncio
@@ -229,6 +238,7 @@ class TestAutonomousToggle:
 # 8. Health endpoint
 # =========================================================================
 
+
 class TestHealth:
     @pytest.mark.asyncio
     async def test_health_endpoint(self, client):
@@ -241,6 +251,7 @@ class TestHealth:
 # =========================================================================
 # 9. Ready endpoint
 # =========================================================================
+
 
 class TestReady:
     @pytest.mark.asyncio
@@ -256,6 +267,7 @@ class TestReady:
 # 10. Metrics endpoint
 # =========================================================================
 
+
 class TestMetrics:
     @pytest.mark.asyncio
     async def test_metrics_endpoint(self, client):
@@ -270,6 +282,7 @@ class TestMetrics:
 # =========================================================================
 # 11. Refresh token flow
 # =========================================================================
+
 
 class TestRefreshTokenFlow:
     @pytest.mark.asyncio
@@ -308,6 +321,7 @@ class TestRefreshTokenFlow:
 # =========================================================================
 # 12. Order submission (paper mode)
 # =========================================================================
+
 
 class TestOrderSubmission:
     @pytest.mark.asyncio

@@ -3,6 +3,7 @@ Broker credential management: configure, validate, disconnect, and check Angel O
 Enables zero-intervention flow: user enters creds -> system validates -> auto-switches to live.
 Credentials are encrypted at rest using Fernet (AES-128-CBC) derived from JWT_SECRET via PBKDF2.
 """
+
 import asyncio
 import base64
 import hashlib
@@ -10,8 +11,7 @@ import logging
 import os
 import secrets
 import time
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -28,7 +28,7 @@ _fernet_instance = None
 _encryption_available = False
 
 
-def _derive_fernet_key() -> Optional[bytes]:
+def _derive_fernet_key() -> bytes | None:
     """Derive a Fernet-compatible key from JWT_SECRET using PBKDF2."""
     secret = os.environ.get("JWT_SECRET") or os.environ.get("AUTH_SECRET")
     if not secret:
@@ -51,6 +51,7 @@ def _get_fernet():
         return _fernet_instance
     try:
         from cryptography.fernet import Fernet
+
         key = _derive_fernet_key()
         if key is None:
             logger.warning("Broker cred encryption: no JWT_SECRET set, falling back to base64 encoding")
@@ -93,6 +94,7 @@ def decrypt_credential(value: str) -> str:
             return value
     return value
 
+
 router = APIRouter()
 
 
@@ -107,24 +109,24 @@ class BrokerCredentials(BaseModel):
 class BrokerCredentialResponse(BaseModel):
     status: str
     message: str
-    mode: Optional[str] = None
+    mode: str | None = None
     connected: bool = False
     auto_started: bool = False
-    confirm_token: Optional[str] = None
+    confirm_token: str | None = None
 
 
 class BrokerStatusResponse(BaseModel):
     connected: bool
     mode: str
     healthy: bool
-    safe_mode: Optional[bool] = None
-    has_credentials: Optional[bool] = None
-    client_id: Optional[str] = None
-    last_connected: Optional[str] = None
-    autonomous_running: Optional[bool] = None
-    tick_count: Optional[int] = None
-    open_trades: Optional[int] = None
-    message: Optional[str] = None
+    safe_mode: bool | None = None
+    has_credentials: bool | None = None
+    client_id: str | None = None
+    last_connected: str | None = None
+    autonomous_running: bool | None = None
+    tick_count: int | None = None
+    open_trades: int | None = None
+    message: str | None = None
 
 
 class BrokerDisconnectResponse(BaseModel):
@@ -160,6 +162,7 @@ def _get_redis():
         return _redis_client if _redis_available else None
     try:
         import redis
+
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
         _redis_client = redis.from_url(redis_url, socket_timeout=2, decode_responses=True)
         _redis_client.ping()
@@ -175,6 +178,7 @@ def _get_redis():
 def _store_pending_token(token: str, data: dict) -> None:
     """Store a pending confirmation token in Redis (with TTL) and in-memory fallback."""
     import json as _json
+
     _pending_live_switch[token] = data
     rc = _get_redis()
     if rc is not None:
@@ -188,9 +192,10 @@ def _store_pending_token(token: str, data: dict) -> None:
             logger.warning("Redis SET for confirm token failed (in-memory still valid): %s", e)
 
 
-def _pop_pending_token(token: str) -> Optional[dict]:
+def _pop_pending_token(token: str) -> dict | None:
     """Retrieve and delete a pending confirmation token. Tries Redis first, falls back to in-memory."""
     import json as _json
+
     rc = _get_redis()
     if rc is not None:
         try:
@@ -204,7 +209,7 @@ def _pop_pending_token(token: str) -> Optional[dict]:
     return _pending_live_switch.pop(token, None)
 
 
-def _mask_client_id(client_id: Optional[str]) -> Optional[str]:
+def _mask_client_id(client_id: str | None) -> str | None:
     """Mask client ID for safe display, e.g. 'A12345' -> 'A1***5'."""
     if not client_id or len(client_id) < 3:
         return client_id
@@ -221,7 +226,7 @@ def _validate_credentials_via_login(api_key: str, client_id: str, password: str,
     try:
         import pyotp
     except ImportError:
-        raise RuntimeError("pyotp package is required. Install with: pip install pyotp")
+        raise RuntimeError("pyotp package is required. Install with: pip install pyotp") from None
 
     totp_code = pyotp.TOTP(totp_secret).now()
 
@@ -261,6 +266,7 @@ async def configure_broker(
     # Validate credentials by attempting Angel One login
     try:
         import asyncio
+
         loop = asyncio.get_running_loop()
         access_token, refresh_token = await loop.run_in_executor(
             None,
@@ -270,7 +276,7 @@ async def configure_broker(
             creds.password,
             creds.totp_secret,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Broker credential validation failed")
         return JSONResponse(
             status_code=400,
@@ -313,7 +319,7 @@ async def configure_broker(
             os.environ["EXEC_PAPER"] = "true"
 
             request.app.state.safe_mode = False
-            request.app.state.broker_last_connected = datetime.now(timezone.utc).isoformat()
+            request.app.state.broker_last_connected = datetime.now(UTC).isoformat()
 
             logger.info(
                 "Broker credentials validated -- PAPER mode active with real market data (client=%s, actor=%s)",
@@ -365,7 +371,10 @@ async def configure_broker(
                             exchange="NSE",
                         )
                         mds = MarketDataService(
-                            ws_connector, bar_cache, bar_aggregator, feed_symbols,
+                            ws_connector,
+                            bar_cache,
+                            bar_aggregator,
+                            feed_symbols,
                         )
                         mds.start()
                         request.app.state.market_data_service = mds
@@ -397,7 +406,7 @@ async def configure_broker(
                 "auto_started": auto_started,
             }
 
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to configure gateway in paper mode")
             return JSONResponse(
                 status_code=500,
@@ -437,8 +446,8 @@ async def configure_broker(
     return {
         "status": "confirm_required",
         "message": f"Credentials validated for client {creds.client_id}. "
-                   f"Call POST /broker/confirm-live with the confirm_token to switch to LIVE mode. "
-                   f"Token expires in {_CONFIRM_TOKEN_TTL_SECONDS // 60} minutes.",
+        f"Call POST /broker/confirm-live with the confirm_token to switch to LIVE mode. "
+        f"Token expires in {_CONFIRM_TOKEN_TTL_SECONDS // 60} minutes.",
         "mode": "paper",
         "connected": False,
         "auto_started": False,
@@ -525,7 +534,7 @@ async def confirm_live_mode(
         request.app.state.safe_mode = False
 
         # Store last connected timestamp
-        request.app.state.broker_last_connected = datetime.now(timezone.utc).isoformat()
+        request.app.state.broker_last_connected = datetime.now(UTC).isoformat()
 
         logger.info(
             "Broker credentials CONFIRMED -- switched to LIVE mode (client=%s, actor=%s)",
@@ -578,7 +587,10 @@ async def confirm_live_mode(
                         exchange="NSE",
                     )
                     mds = MarketDataService(
-                        ws_connector, bar_cache, bar_aggregator, feed_symbols,
+                        ws_connector,
+                        bar_cache,
+                        bar_aggregator,
+                        feed_symbols,
                     )
                     mds.start()
                     request.app.state.market_data_service = mds
@@ -614,7 +626,7 @@ async def confirm_live_mode(
             "auto_started": auto_started,
         }
 
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to reconfigure gateway")
         return JSONResponse(
             status_code=500,
@@ -632,8 +644,11 @@ async def broker_status(request: Request, current_user: dict = Depends(get_curre
     gateway = getattr(request.app.state, "gateway", None)
     if gateway is None:
         return {
-            "connected": False, "mode": "paper", "healthy": False,
-            "client_id": None, "last_connected": None,
+            "connected": False,
+            "mode": "paper",
+            "healthy": False,
+            "client_id": None,
+            "last_connected": None,
             "message": "Gateway not initialized",
         }
 
@@ -642,10 +657,7 @@ async def broker_status(request: Request, current_user: dict = Depends(get_curre
 
     # Check if Angel One credentials are configured
     client_code = getattr(gateway, "_client_code", None)
-    has_creds = bool(
-        getattr(gateway, "api_key", None)
-        and client_code
-    )
+    has_creds = bool(getattr(gateway, "api_key", None) and client_code)
 
     # Check autonomous loop status
     autonomous_loop = getattr(request.app.state, "autonomous_loop", None)
@@ -722,8 +734,11 @@ async def disconnect_broker(
 
     # Clear environment variables
     for env_key in [
-        "ANGEL_ONE_API_KEY", "ANGEL_ONE_CLIENT_ID", "ANGEL_ONE_PASSWORD",
-        "ANGEL_ONE_TOTP_SECRET", "ANGEL_ONE_TOKEN",
+        "ANGEL_ONE_API_KEY",
+        "ANGEL_ONE_CLIENT_ID",
+        "ANGEL_ONE_PASSWORD",
+        "ANGEL_ONE_TOTP_SECRET",
+        "ANGEL_ONE_TOKEN",
     ]:
         os.environ.pop(env_key, None)
     os.environ["EXEC_PAPER"] = "true"
@@ -760,6 +775,7 @@ async def validate_broker_credentials(creds: BrokerCredentials, current_user: di
     """Test Angel One credentials without saving. Returns success/failure."""
     try:
         import asyncio
+
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,
@@ -770,7 +786,7 @@ async def validate_broker_credentials(creds: BrokerCredentials, current_user: di
             creds.totp_secret,
         )
         return {"valid": True, "message": "Credentials validated successfully"}
-    except Exception as e:
+    except Exception:
         logger.exception("Broker credential validation failed")
         return JSONResponse(
             status_code=400,
