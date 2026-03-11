@@ -32,11 +32,14 @@ ALLOWED_DB_TRANSITIONS = {
 # Domain OrderStatus -> DB status
 ORDER_STATUS_TO_DB = {
     OrderStatus.PENDING: DB_NEW,
+    OrderStatus.SUBMITTING: DB_SUBMITTING,
     OrderStatus.LIVE: DB_ACK,
     OrderStatus.PARTIALLY_FILLED: DB_PARTIAL,
     OrderStatus.FILLED: DB_FILLED,
     OrderStatus.REJECTED: DB_REJECTED,
     OrderStatus.CANCELLED: DB_CANCELLED,
+    OrderStatus.TIMEOUT_UNCERTAIN: DB_CANCELLED,  # Treat uncertain as terminal
+    OrderStatus.EXPIRED: DB_CANCELLED,  # Treat expired as terminal
 }
 
 

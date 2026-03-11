@@ -25,18 +25,26 @@ from src.risk_engine.limits import RiskLimits
 # --- 8) VaR breach edge ---
 def test_var_breach_rejects_no_reservation_leak():
     """Craft signals that barely exceed VaR; expect reject; no reservation leak."""
+    from unittest.mock import MagicMock
+
     limits = RiskLimits(
         max_open_positions=10,
-        max_position_pct=20.0,
-        var_limit_pct=30.0,
+        max_position_pct=25.0,
+        var_limit_pct=5.0,
         max_sector_concentration_pct=100.0,
+        max_per_symbol_pct=50.0,
     )
-    rm = RiskManager(equity=100_000.0, limits=limits)
+    rm = RiskManager(equity=100_000.0, limits=limits, load_persisted_state=False)
     rm.positions = [
         Position(
             symbol="X", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=500, avg_price=50.0, strategy_id="s1"
         ),
     ]
+    # Mock portfolio VaR to return breach
+    mock_var = MagicMock()
+    mock_var.check_var_limit.return_value = (False, 6.5)  # VaR 6.5% > limit 5%
+    rm._portfolio_var = mock_var
+
     sig = Signal(
         strategy_id="s1",
         symbol="Y",
@@ -49,9 +57,7 @@ def test_var_breach_rejects_no_reservation_leak():
     result = rm.can_place_order(sig, 100, 100.0)
     assert not result.allowed
     reason = result.reason.lower()
-    assert "var" in reason or "exposure" in reason or "circuit" in reason, (
-        f"Expected risk rejection (var/exposure/circuit), got: {result.reason}"
-    )
+    assert "var" in reason, f"Expected VaR rejection, got: {result.reason}"
 
 
 # --- 9) Lock expiry: covered in chaos test_redis_distributed_lock_expiry ---

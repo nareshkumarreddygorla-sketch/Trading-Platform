@@ -8,6 +8,17 @@ from src.api.app import create_app
 from src.core.events import Bar, Exchange
 
 
+@pytest.fixture(autouse=True)
+def _isolate_circuit_state(tmp_path, monkeypatch):
+    """Prevent tests from reading/writing the shared circuit_state.json file."""
+    import src.risk_engine.manager as rm_mod
+
+    test_state_dir = tmp_path / "data"
+    test_state_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(rm_mod, "_CIRCUIT_STATE_DIR", test_state_dir)
+    monkeypatch.setattr(rm_mod, "_CIRCUIT_STATE_PATH", test_state_dir / "circuit_state.json")
+
+
 @pytest.fixture
 def app():
     return create_app()

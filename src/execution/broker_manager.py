@@ -58,19 +58,23 @@ class BrokerManager:
 
     async def connect_all(self) -> dict[BrokerType, bool]:
         """Connect to all registered brokers in parallel."""
-        results: dict[BrokerType, bool] = {}
-        for broker_type, gw in self._gateways.items():
+        if not self._gateways:
+            return {}
+
+        async def _connect_one(broker_type: BrokerType, gw: BaseBrokerGateway) -> tuple[BrokerType, bool]:
             try:
                 ok = await gw.connect()
-                results[broker_type] = ok
                 if ok:
                     logger.info("Broker %s: connected", broker_type.value)
                 else:
                     logger.warning("Broker %s: connection failed", broker_type.value)
+                return broker_type, ok
             except Exception as e:
                 logger.error("Broker %s: connect error: %s", broker_type.value, e)
-                results[broker_type] = False
-        return results
+                return broker_type, False
+
+        pairs = await asyncio.gather(*[_connect_one(bt, gw) for bt, gw in self._gateways.items()])
+        return dict(pairs)
 
     async def disconnect_all(self) -> None:
         if self._health_task and not self._health_task.done():
