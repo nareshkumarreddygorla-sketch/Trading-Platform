@@ -768,8 +768,13 @@ class TestKillSwitchConcurrency:
         """Rapid sequential arm/disarm (via shared loop) should not corrupt state."""
         from src.execution.order_entry.kill_switch import KillReason
 
-        with patch.object(KillSwitch, "_load_state", return_value=None):
-            ks = KillSwitch()
+        # Create KillSwitch on the shared event loop so its asyncio.Lock is bound
+        # to the correct loop (required for Python 3.11 strict loop binding).
+        async def _create_ks():
+            with patch.object(KillSwitch, "_load_state", return_value=None):
+                return KillSwitch()
+
+        ks = _run_on_shared_loop(_create_ks())
 
         errors = []
 
@@ -807,8 +812,15 @@ class TestKillSwitchConcurrency:
         rm = _make_risk_manager()
         svc = _build_order_entry_service(risk_manager=rm)
 
-        # Arm the kill switch
-        _run_on_shared_loop(svc.kill_switch.arm(KillReason.MANUAL, "stress_test"))
+        # Re-create kill switch on the shared event loop so its asyncio.Lock is
+        # bound to the correct loop (required for Python 3.11 strict loop binding).
+        async def _create_and_arm():
+            with patch.object(KillSwitch, "_load_state", return_value=None):
+                ks = KillSwitch()
+            await ks.arm(KillReason.MANUAL, "stress_test")
+            return ks
+
+        svc.kill_switch = _run_on_shared_loop(_create_and_arm())
 
         results = []
         ks_errors = []
