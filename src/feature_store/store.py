@@ -2,14 +2,15 @@
 Feature store: persist and retrieve time-series features for ML.
 File-based persistence by default; production: TimescaleDB/ClickHouse.
 """
+
 import json
 import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
-from .schema import FeatureSpec, FeatureVector
+from .schema import FeatureVector
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,8 @@ class FeatureStore:
         from_ts: datetime,
         to_ts: datetime,
         version: str = "v1",
-        feature_names: Optional[List[str]] = None,
-    ) -> List[FeatureVector]:
+        feature_names: list[str] | None = None,
+    ) -> list[FeatureVector]:
         """Load feature vectors in time range from file store."""
         path = self._path(version)
         if not path.exists():
@@ -55,7 +56,7 @@ class FeatureStore:
         result = []
         from_ts_str = from_ts.isoformat() if hasattr(from_ts, "isoformat") else str(from_ts)
         to_ts_str = to_ts.isoformat() if hasattr(to_ts, "isoformat") else str(to_ts)
-        with open(path, "r") as f:
+        with open(path) as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -83,7 +84,7 @@ class FeatureStore:
         result.sort(key=lambda v: v.ts)
         return result
 
-    def compute_features(self, bars: List[Any], symbol: str, ts: datetime) -> FeatureVector:
+    def compute_features(self, bars: list[Any], symbol: str, ts: datetime) -> FeatureVector:
         """Compute default technical features from OHLCV bars. Placeholder."""
         features = {}
         if len(bars) >= 20:

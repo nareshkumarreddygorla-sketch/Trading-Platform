@@ -3,10 +3,10 @@ JWT authentication and RBAC. All critical actions traceable to actor.
 JWT_SECRET is REQUIRED. If not set, a random secret is generated at startup
 and a warning is logged. Auth is NEVER bypassed.
 """
-import os
+
 import logging
+import os
 import secrets
-from typing import List, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -17,7 +17,7 @@ HTTP_BEARER = HTTPBearer(auto_error=False)
 
 # Generate a fallback secret at module load if JWT_SECRET is not configured.
 # This ensures auth is NEVER bypassed, but tokens won't survive restarts.
-_FALLBACK_SECRET: Optional[str] = None
+_FALLBACK_SECRET: str | None = None
 
 
 def _get_secret() -> str:
@@ -36,9 +36,10 @@ def _get_secret() -> str:
     return _FALLBACK_SECRET
 
 
-def _decode_token(token: str) -> Optional[dict]:
+def _decode_token(token: str) -> dict | None:
     # Check blacklist BEFORE spending CPU on JWT validation
     from .token_blacklist import is_blacklisted
+
     if is_blacklisted(token):
         logger.debug("JWT rejected: token is blacklisted")
         return None
@@ -46,6 +47,7 @@ def _decode_token(token: str) -> Optional[dict]:
     secret = _get_secret()
     try:
         import jwt
+
         payload = jwt.decode(token, secret, algorithms=["HS256"])
         return payload
     except Exception as e:
@@ -55,7 +57,7 @@ def _decode_token(token: str) -> Optional[dict]:
 
 async def get_current_user(
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTP_BEARER),
+    credentials: HTTPAuthorizationCredentials | None = Depends(HTTP_BEARER),
 ) -> dict:
     """
     Resolve current user from JWT. Auth is ALWAYS enforced.
@@ -82,7 +84,7 @@ async def get_current_user(
     return {"user_id": user_id, "roles": list(roles), "tenant_id": tenant_id}
 
 
-def require_roles(allowed: List[str]):
+def require_roles(allowed: list[str]):
     """Dependency: require at least one of allowed roles (e.g. admin)."""
 
     async def _check(
@@ -97,7 +99,7 @@ def require_roles(allowed: List[str]):
     return _check
 
 
-def get_actor(request: Request, current_user: Optional[dict] = None) -> str:
+def get_actor(request: Request, current_user: dict | None = None) -> str:
     """Return actor string for audit: user_id from JWT or 'api'."""
     if current_user and current_user.get("user_id") and current_user.get("user_id") != "system":
         return str(current_user["user_id"])

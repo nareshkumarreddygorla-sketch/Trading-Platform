@@ -12,6 +12,7 @@ Implements:
   - Portfolio volatility via w' * Sigma * w
   - Marginal VaR contribution per position
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,7 +20,7 @@ import math
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Literal
 
 import numpy as np
 from scipy import stats as scipy_stats
@@ -56,7 +57,7 @@ def _cornish_fisher_z(z: float, skew: float, excess_kurt: float) -> float:
     return z_cf
 
 
-def _evt_var_99(returns: np.ndarray, threshold_percentile: float = 10.0) -> Optional[float]:
+def _evt_var_99(returns: np.ndarray, threshold_percentile: float = 10.0) -> float | None:
     """
     Extreme Value Theory (Generalised Pareto Distribution) tail estimation.
 
@@ -95,18 +96,19 @@ def _evt_var_99(returns: np.ndarray, threshold_percentile: float = 10.0) -> Opti
 @dataclass
 class VaRResult:
     """Portfolio VaR output."""
-    var_95: float = 0.0         # 95% VaR in currency (INR)
-    var_99: float = 0.0         # 99% VaR in currency (INR)
-    var_95_pct: float = 0.0     # 95% VaR as % of portfolio
-    var_99_pct: float = 0.0     # 99% VaR as % of portfolio
+
+    var_95: float = 0.0  # 95% VaR in currency (INR)
+    var_99: float = 0.0  # 99% VaR in currency (INR)
+    var_95_pct: float = 0.0  # 95% VaR as % of portfolio
+    var_99_pct: float = 0.0  # 99% VaR as % of portfolio
     portfolio_vol: float = 0.0  # annualised portfolio volatility
     portfolio_vol_daily: float = 0.0  # daily portfolio volatility
     horizon_days: int = 1
     n_positions: int = 0
-    per_position_var: Dict[str, float] = field(default_factory=dict)
+    per_position_var: dict[str, float] = field(default_factory=dict)
     method: str = "parametric"  # which VaR method was used
-    evt_var_99: Optional[float] = None  # EVT tail estimate for 99% VaR (if available)
-    skewness: float = 0.0       # portfolio return skewness
+    evt_var_99: float | None = None  # EVT tail estimate for 99% VaR (if available)
+    skewness: float = 0.0  # portfolio return skewness
     excess_kurtosis: float = 0.0  # portfolio return excess kurtosis
 
     def as_dict(self) -> dict:
@@ -162,63 +164,125 @@ class PortfolioVaR:
         self._lock = threading.RLock()
 
         # Per-symbol daily returns buffer: symbol -> deque of daily returns
-        self._returns: Dict[str, deque] = {}
+        self._returns: dict[str, deque] = {}
         # EWMA variance cache: symbol -> current variance estimate
-        self._ewma_var: Dict[str, float] = {}
+        self._ewma_var: dict[str, float] = {}
         # Default vol for stocks with no history
         self._default_daily_vol = 0.025  # 2.5% daily vol (conservative)
 
         logger.info(
             "PortfolioVaR initialised: method=%s, ewma_lambda=%.2f, "
             "correlation_window=%d, horizon=%d days, monte_carlo_sims=%d",
-            self._var_method, self.ewma_lambda, self.correlation_window,
-            self.horizon_days, self._monte_carlo_simulations,
+            self._var_method,
+            self.ewma_lambda,
+            self.correlation_window,
+            self.horizon_days,
+            self._monte_carlo_simulations,
         )
 
     # ── Indian market sector classification for correlation defaults ──
     _SECTOR_MAP = {
         # IT sector (typically 0.75-0.90 intra-sector correlation)
-        "INFY": "IT", "TCS": "IT", "WIPRO": "IT", "HCLTECH": "IT", "TECHM": "IT",
-        "LTIM": "IT", "MPHASIS": "IT", "COFORGE": "IT", "PERSISTENT": "IT",
+        "INFY": "IT",
+        "TCS": "IT",
+        "WIPRO": "IT",
+        "HCLTECH": "IT",
+        "TECHM": "IT",
+        "LTIM": "IT",
+        "MPHASIS": "IT",
+        "COFORGE": "IT",
+        "PERSISTENT": "IT",
         # Banking (typically 0.80+ intra-sector correlation)
-        "HDFCBANK": "BANK", "ICICIBANK": "BANK", "SBIN": "BANK", "KOTAKBANK": "BANK",
-        "AXISBANK": "BANK", "INDUSINDBK": "BANK", "BANDHANBNK": "BANK", "FEDERALBNK": "BANK",
-        "IDFCFIRSTB": "BANK", "PNB": "BANK", "BANKBARODA": "BANK", "CANBK": "BANK",
+        "HDFCBANK": "BANK",
+        "ICICIBANK": "BANK",
+        "SBIN": "BANK",
+        "KOTAKBANK": "BANK",
+        "AXISBANK": "BANK",
+        "INDUSINDBK": "BANK",
+        "BANDHANBNK": "BANK",
+        "FEDERALBNK": "BANK",
+        "IDFCFIRSTB": "BANK",
+        "PNB": "BANK",
+        "BANKBARODA": "BANK",
+        "CANBK": "BANK",
         # NBFC / Financial Services
-        "BAJFINANCE": "NBFC", "BAJAJFINSV": "NBFC", "HDFC": "NBFC", "SBILIFE": "NBFC",
-        "HDFCLIFE": "NBFC", "ICICIGI": "NBFC", "CHOLAFIN": "NBFC",
+        "BAJFINANCE": "NBFC",
+        "BAJAJFINSV": "NBFC",
+        "HDFC": "NBFC",
+        "SBILIFE": "NBFC",
+        "HDFCLIFE": "NBFC",
+        "ICICIGI": "NBFC",
+        "CHOLAFIN": "NBFC",
         # Auto
-        "MARUTI": "AUTO", "TATAMOTORS": "AUTO", "M&M": "AUTO", "BAJAJ-AUTO": "AUTO",
-        "EICHERMOT": "AUTO", "HEROMOTOCO": "AUTO", "ASHOKLEY": "AUTO",
+        "MARUTI": "AUTO",
+        "TATAMOTORS": "AUTO",
+        "M&M": "AUTO",
+        "BAJAJ-AUTO": "AUTO",
+        "EICHERMOT": "AUTO",
+        "HEROMOTOCO": "AUTO",
+        "ASHOKLEY": "AUTO",
         # Pharma
-        "SUNPHARMA": "PHARMA", "DRREDDY": "PHARMA", "CIPLA": "PHARMA", "DIVISLAB": "PHARMA",
-        "APOLLOHOSP": "PHARMA", "BIOCON": "PHARMA", "LUPIN": "PHARMA",
+        "SUNPHARMA": "PHARMA",
+        "DRREDDY": "PHARMA",
+        "CIPLA": "PHARMA",
+        "DIVISLAB": "PHARMA",
+        "APOLLOHOSP": "PHARMA",
+        "BIOCON": "PHARMA",
+        "LUPIN": "PHARMA",
         # Metal & Mining
-        "TATASTEEL": "METAL", "JSWSTEEL": "METAL", "HINDALCO": "METAL",
-        "VEDL": "METAL", "COALINDIA": "METAL", "NMDC": "METAL",
+        "TATASTEEL": "METAL",
+        "JSWSTEEL": "METAL",
+        "HINDALCO": "METAL",
+        "VEDL": "METAL",
+        "COALINDIA": "METAL",
+        "NMDC": "METAL",
         # Energy / Oil & Gas
-        "RELIANCE": "ENERGY", "ONGC": "ENERGY", "BPCL": "ENERGY",
-        "IOC": "ENERGY", "GAIL": "ENERGY", "NTPC": "ENERGY", "POWERGRID": "ENERGY",
+        "RELIANCE": "ENERGY",
+        "ONGC": "ENERGY",
+        "BPCL": "ENERGY",
+        "IOC": "ENERGY",
+        "GAIL": "ENERGY",
+        "NTPC": "ENERGY",
+        "POWERGRID": "ENERGY",
         # FMCG
-        "HINDUNILVR": "FMCG", "ITC": "FMCG", "NESTLEIND": "FMCG",
-        "BRITANNIA": "FMCG", "DABUR": "FMCG", "MARICO": "FMCG",
+        "HINDUNILVR": "FMCG",
+        "ITC": "FMCG",
+        "NESTLEIND": "FMCG",
+        "BRITANNIA": "FMCG",
+        "DABUR": "FMCG",
+        "MARICO": "FMCG",
         # Telecom
-        "BHARTIARTL": "TELECOM", "IDEA": "TELECOM",
+        "BHARTIARTL": "TELECOM",
+        "IDEA": "TELECOM",
         # Cement / Construction
-        "ULTRACEMCO": "CEMENT", "SHREECEM": "CEMENT", "AMBUJACEM": "CEMENT",
-        "ACC": "CEMENT", "GRASIM": "CEMENT",
+        "ULTRACEMCO": "CEMENT",
+        "SHREECEM": "CEMENT",
+        "AMBUJACEM": "CEMENT",
+        "ACC": "CEMENT",
+        "GRASIM": "CEMENT",
     }
 
     # Default correlations between sector pairs
     _SECTOR_CORR = {
-        ("IT", "IT"): 0.82, ("BANK", "BANK"): 0.85, ("NBFC", "NBFC"): 0.80,
-        ("AUTO", "AUTO"): 0.72, ("PHARMA", "PHARMA"): 0.70, ("METAL", "METAL"): 0.78,
-        ("ENERGY", "ENERGY"): 0.75, ("FMCG", "FMCG"): 0.68, ("CEMENT", "CEMENT"): 0.74,
-        ("BANK", "NBFC"): 0.72, ("NBFC", "BANK"): 0.72,
-        ("IT", "BANK"): 0.35, ("BANK", "IT"): 0.35,
-        ("PHARMA", "IT"): 0.25, ("IT", "PHARMA"): 0.25,
-        ("METAL", "ENERGY"): 0.55, ("ENERGY", "METAL"): 0.55,
-        ("FMCG", "PHARMA"): 0.40, ("PHARMA", "FMCG"): 0.40,
+        ("IT", "IT"): 0.82,
+        ("BANK", "BANK"): 0.85,
+        ("NBFC", "NBFC"): 0.80,
+        ("AUTO", "AUTO"): 0.72,
+        ("PHARMA", "PHARMA"): 0.70,
+        ("METAL", "METAL"): 0.78,
+        ("ENERGY", "ENERGY"): 0.75,
+        ("FMCG", "FMCG"): 0.68,
+        ("CEMENT", "CEMENT"): 0.74,
+        ("BANK", "NBFC"): 0.72,
+        ("NBFC", "BANK"): 0.72,
+        ("IT", "BANK"): 0.35,
+        ("BANK", "IT"): 0.35,
+        ("PHARMA", "IT"): 0.25,
+        ("IT", "PHARMA"): 0.25,
+        ("METAL", "ENERGY"): 0.55,
+        ("ENERGY", "METAL"): 0.55,
+        ("FMCG", "PHARMA"): 0.40,
+        ("PHARMA", "FMCG"): 0.40,
     }
 
     def _get_sector(self, symbol: str) -> str:
@@ -263,9 +327,9 @@ class PortfolioVaR:
         lam = self.ewma_lambda
         if symbol not in self._ewma_var:
             # Initialize with squared return
-            self._ewma_var[symbol] = daily_return ** 2
+            self._ewma_var[symbol] = daily_return**2
         else:
-            self._ewma_var[symbol] = lam * self._ewma_var[symbol] + (1 - lam) * daily_return ** 2
+            self._ewma_var[symbol] = lam * self._ewma_var[symbol] + (1 - lam) * daily_return**2
 
     def get_daily_vol(self, symbol: str) -> float:
         """Get EWMA daily volatility estimate for a symbol."""
@@ -277,7 +341,7 @@ class PortfolioVaR:
             return float(np.std(returns, ddof=1))
         return self._default_daily_vol
 
-    def _correlation_matrix(self, symbols: List[str]) -> np.ndarray:
+    def _correlation_matrix(self, symbols: list[str]) -> np.ndarray:
         """Compute rolling pairwise correlation matrix."""
         n = len(symbols)
         if n == 0:
@@ -295,7 +359,8 @@ class PortfolioVaR:
             # Prevents VaR underestimation for new strategies by assuming higher correlation.
             logger.warning(
                 "VaR: insufficient history (%d < %d days) — using stress correlation matrix",
-                use_len, self.min_history,
+                use_len,
+                self.min_history,
             )
             _STRESS_CORR_FLOOR = 0.5  # minimum pairwise correlation under stress
             corr = np.eye(n)
@@ -337,7 +402,7 @@ class PortfolioVaR:
                     corr[j, i] = default_corr
             return corr
 
-    def _covariance_matrix(self, symbols: List[str]) -> np.ndarray:
+    def _covariance_matrix(self, symbols: list[str]) -> np.ndarray:
         """Build covariance matrix from EWMA vols and correlation matrix."""
         n = len(symbols)
         corr = self._correlation_matrix(symbols)
@@ -358,8 +423,10 @@ class PortfolioVaR:
         return cov
 
     def _portfolio_return_series(
-        self, symbols: List[str], weights: np.ndarray,
-    ) -> Optional[np.ndarray]:
+        self,
+        symbols: list[str],
+        weights: np.ndarray,
+    ) -> np.ndarray | None:
         """Build a historical portfolio return series from per-symbol returns."""
         min_len_needed = max(self.min_history, 20)
         # Find common length
@@ -373,8 +440,10 @@ class PortfolioVaR:
         return ret_matrix @ weights  # weighted portfolio returns
 
     def _compute_skew_kurt(
-        self, symbols: List[str], weights: np.ndarray,
-    ) -> Tuple[float, float]:
+        self,
+        symbols: list[str],
+        weights: np.ndarray,
+    ) -> tuple[float, float]:
         """Return (skewness, excess_kurtosis) of portfolio returns, or (0, 0) if insufficient data."""
         port_rets = self._portfolio_return_series(symbols, weights)
         if port_rets is None or len(port_rets) < 20:
@@ -389,9 +458,9 @@ class PortfolioVaR:
 
     def compute(
         self,
-        positions: List[dict],
+        positions: list[dict],
         portfolio_value: float,
-        method: Optional[VaRMethod] = None,
+        method: VaRMethod | None = None,
     ) -> VaRResult:  # Thread-safe: acquires lock
         """
         Compute portfolio VaR using the configured method.
@@ -441,7 +510,10 @@ class PortfolioVaR:
             # ── Dispatch to VaR method ──
             if active_method == "historical":
                 var_95, var_99 = self._compute_historical_var(
-                    symbols, weights, portfolio_value, sqrt_h,
+                    symbols,
+                    weights,
+                    portfolio_value,
+                    sqrt_h,
                 )
                 # Fallback to parametric if insufficient history
                 if var_95 == 0.0 and var_99 == 0.0:
@@ -450,7 +522,10 @@ class PortfolioVaR:
 
             if active_method == "monte_carlo":
                 var_95, var_99 = self._compute_monte_carlo_var(
-                    cov, weights, portfolio_value, sqrt_h,
+                    cov,
+                    weights,
+                    portfolio_value,
+                    sqrt_h,
                 )
                 # If Monte Carlo returned zeros (failure), fall back to cornish_fisher
                 if var_95 == 0.0 and var_99 == 0.0:
@@ -465,7 +540,12 @@ class PortfolioVaR:
                 logger.debug(
                     "VaR cornish_fisher: z95_cf=%.4f (vs %.4f Gaussian), "
                     "z99_cf=%.4f (vs %.4f Gaussian), skew=%.3f, kurt=%.3f",
-                    z95_cf, Z_95, z99_cf, Z_99, skew, excess_kurt,
+                    z95_cf,
+                    Z_95,
+                    z99_cf,
+                    Z_99,
+                    skew,
+                    excess_kurt,
                 )
 
             if active_method == "parametric":
@@ -485,9 +565,10 @@ class PortfolioVaR:
                     # If EVT estimate is higher than the method's 99% VaR, log a warning
                     if evt_var99_value > var_99 * 1.2:
                         logger.warning(
-                            "EVT tail 99%% VaR (%.2f) exceeds %s 99%% VaR (%.2f) by >20%% — "
-                            "fat tails detected",
-                            evt_var99_value, active_method, var_99,
+                            "EVT tail 99%% VaR (%.2f) exceeds %s 99%% VaR (%.2f) by >20%% — fat tails detected",
+                            evt_var99_value,
+                            active_method,
+                            var_99,
                         )
 
             # Per-position marginal VaR (component VaR) — always parametric-based
@@ -504,8 +585,15 @@ class PortfolioVaR:
             logger.info(
                 "VaR computed: method=%s, VaR95=%.2f (%.2f%%), VaR99=%.2f (%.2f%%), "
                 "port_vol=%.4f, skew=%.3f, kurt=%.3f, n_pos=%d",
-                active_method, var_95, var_95_pct, var_99, var_99_pct,
-                port_vol_annual, skew, excess_kurt, n,
+                active_method,
+                var_95,
+                var_95_pct,
+                var_99,
+                var_99_pct,
+                port_vol_annual,
+                skew,
+                excess_kurt,
+                n,
             )
 
             return VaRResult(
@@ -526,11 +614,11 @@ class PortfolioVaR:
 
     def _compute_historical_var(
         self,
-        symbols: List[str],
+        symbols: list[str],
         weights: np.ndarray,
         portfolio_value: float,
         sqrt_h: float,
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """
         Historical VaR: use percentile of actual portfolio return distribution.
         Returns (var_95, var_99) in currency. Returns (0, 0) if insufficient data.
@@ -548,7 +636,9 @@ class PortfolioVaR:
 
         logger.debug(
             "VaR historical: 5th_pctile=%.4f, 1st_pctile=%.4f, n_obs=%d",
-            -var_95_ret, -var_99_ret, len(port_rets),
+            -var_95_ret,
+            -var_99_ret,
+            len(port_rets),
         )
         return max(0.0, var_95), max(0.0, var_99)
 
@@ -558,7 +648,7 @@ class PortfolioVaR:
         weights: np.ndarray,
         portfolio_value: float,
         sqrt_h: float,
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """
         Monte Carlo VaR: simulate from fitted covariance matrix.
         Returns (var_95, var_99) in currency.
@@ -578,7 +668,9 @@ class PortfolioVaR:
 
             logger.debug(
                 "VaR monte_carlo: n_sims=%d, var95_ret=%.4f, var99_ret=%.4f",
-                n_sims, var_95_ret, var_99_ret,
+                n_sims,
+                var_95_ret,
+                var_99_ret,
             )
             return max(0.0, var_95), max(0.0, var_99)
         except Exception as e:
@@ -588,7 +680,7 @@ class PortfolioVaR:
 
     def marginal_var_for_new_position(
         self,
-        current_positions: List[dict],
+        current_positions: list[dict],
         new_symbol: str,
         new_notional: float,
         portfolio_value: float,
@@ -611,7 +703,7 @@ class PortfolioVaR:
 
     def compute_cvar(
         self,
-        positions: List[dict],
+        positions: list[dict],
         portfolio_value: float,
         n_simulations: int = 10000,
         confidence: float = 0.95,
@@ -691,10 +783,10 @@ class PortfolioVaR:
 
     def check_var_limit(
         self,
-        positions: List[dict],
+        positions: list[dict],
         portfolio_value: float,
         max_var_pct: float = 5.0,
-    ) -> Tuple[bool, float]:
+    ) -> tuple[bool, float]:
         """
         Check if current portfolio VaR is within limit.
 
@@ -706,10 +798,10 @@ class PortfolioVaR:
 
     def check_cvar_limit(
         self,
-        positions: List[dict],
+        positions: list[dict],
         portfolio_value: float,
         max_cvar_pct: float = 8.0,
-    ) -> Tuple[bool, float]:
+    ) -> tuple[bool, float]:
         """Check if CVaR is within limit. Returns (allowed, cvar_pct)."""
         cvar_pct = self.compute_cvar(positions, portfolio_value)
         return cvar_pct <= max_cvar_pct, cvar_pct

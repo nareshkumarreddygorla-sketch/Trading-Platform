@@ -7,10 +7,9 @@ Covers:
   2. bcrypt (passlib) password hashing and verification
   3. Paper-to-live confirmation token TTL and storage
 """
+
 import os
 import time
-
-import pytest
 
 # Environment setup (must precede imports that read env vars)
 os.environ.setdefault("JWT_SECRET", "test-secret-minimum-32-characters-long!!")
@@ -23,12 +22,12 @@ os.environ.setdefault("ENV", "development")
 # =========================================================================
 
 from src.api.routers.auth import (  # noqa: E402
+    _LOCKOUT_DURATION_SECONDS,
+    _MAX_FAILED_ATTEMPTS,
     _check_lockout,
-    _record_failed_attempt,
     _clear_failed_attempts,
     _failed_attempts,
-    _MAX_FAILED_ATTEMPTS,
-    _LOCKOUT_DURATION_SECONDS,
+    _record_failed_attempt,
 )
 
 
@@ -172,7 +171,7 @@ class TestPasswordHashing:
 # 3. Password strength validation tests
 # =========================================================================
 
-from src.api.routers.auth import _validate_password_strength, MIN_PASSWORD_LENGTH  # noqa: E402
+from src.api.routers.auth import MIN_PASSWORD_LENGTH, _validate_password_strength  # noqa: E402
 
 
 class TestPasswordStrength:
@@ -214,7 +213,7 @@ class TestPasswordStrength:
 # 4. Paper-to-live confirmation token tests
 # =========================================================================
 
-from src.api.routers.broker import _pending_live_switch, _CONFIRM_TOKEN_TTL_SECONDS  # noqa: E402
+from src.api.routers.broker import _CONFIRM_TOKEN_TTL_SECONDS, _pending_live_switch  # noqa: E402
 
 
 class TestPaperToLiveConfirmation:

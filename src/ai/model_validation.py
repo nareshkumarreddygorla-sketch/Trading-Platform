@@ -15,36 +15,38 @@ Usage:
     else:
         print(result.diagnostics)
 """
+
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 # Validation thresholds
-IC_MIN_THRESHOLD = 0.05          # Minimum Information Coefficient
-IC_PVALUE_THRESHOLD = 0.05       # Maximum p-value for IC significance
-IC_MIN_OBSERVATIONS = 63         # Minimum observations (~3 months trading days)
-OOS_MIN_ACCURACY = 0.52          # Minimum out-of-sample accuracy (above random)
-OOS_MIN_SAMPLES = 100            # Minimum OOS samples for reliable test
-CALIBRATION_MAX_ECE = 0.10       # Maximum expected calibration error
-CALIBRATION_N_BINS = 10          # Number of bins for calibration check
+IC_MIN_THRESHOLD = 0.05  # Minimum Information Coefficient
+IC_PVALUE_THRESHOLD = 0.05  # Maximum p-value for IC significance
+IC_MIN_OBSERVATIONS = 63  # Minimum observations (~3 months trading days)
+OOS_MIN_ACCURACY = 0.52  # Minimum out-of-sample accuracy (above random)
+OOS_MIN_SAMPLES = 100  # Minimum OOS samples for reliable test
+CALIBRATION_MAX_ECE = 0.10  # Maximum expected calibration error
+CALIBRATION_N_BINS = 10  # Number of bins for calibration check
 FEATURE_STABILITY_OVERLAP = 0.6  # Minimum Jaccard overlap of top-10 features
-FEATURE_STABILITY_WINDOWS = 3    # Number of time windows for stability check
+FEATURE_STABILITY_WINDOWS = 3  # Number of time windows for stability check
 
 
 @dataclass
 class ValidationResult:
     """Detailed results from model validation."""
+
     passed: bool
-    ic_test: Dict[str, Any] = field(default_factory=dict)
-    oos_test: Dict[str, Any] = field(default_factory=dict)
-    feature_stability_test: Dict[str, Any] = field(default_factory=dict)
-    calibration_test: Dict[str, Any] = field(default_factory=dict)
-    diagnostics: List[str] = field(default_factory=list)
+    ic_test: dict[str, Any] = field(default_factory=dict)
+    oos_test: dict[str, Any] = field(default_factory=dict)
+    feature_stability_test: dict[str, Any] = field(default_factory=dict)
+    calibration_test: dict[str, Any] = field(default_factory=dict)
+    diagnostics: list[str] = field(default_factory=list)
 
     @property
     def summary(self) -> str:
@@ -82,9 +84,9 @@ class ModelValidator:
         model: Any,
         X_oos: np.ndarray,
         y_oos: np.ndarray,
-        predictions_oos: Optional[np.ndarray] = None,
-        feature_names: Optional[List[str]] = None,
-        feature_importances_over_time: Optional[List[Dict[str, float]]] = None,
+        predictions_oos: np.ndarray | None = None,
+        feature_names: list[str] | None = None,
+        feature_importances_over_time: list[dict[str, float]] | None = None,
     ) -> ValidationResult:
         """Run full validation suite on a model.
 
@@ -103,19 +105,18 @@ class ModelValidator:
         Returns:
             ValidationResult with pass/fail and detailed diagnostics.
         """
-        diagnostics: List[str] = []
-        ic_result: Dict[str, Any] = {}
-        oos_result: Dict[str, Any] = {}
-        stability_result: Dict[str, Any] = {}
-        calibration_result: Dict[str, Any] = {}
+        diagnostics: list[str] = []
+        ic_result: dict[str, Any] = {}
+        oos_result: dict[str, Any] = {}
+        stability_result: dict[str, Any] = {}
+        calibration_result: dict[str, Any] = {}
 
         # --- Get predictions if not provided ---
         if predictions_oos is None:
             predictions_oos = self._get_predictions(model, X_oos)
             if predictions_oos is None:
                 diagnostics.append(
-                    "FAIL: Could not obtain model predictions. "
-                    "Model must have predict() or provide predictions_oos."
+                    "FAIL: Could not obtain model predictions. Model must have predict() or provide predictions_oos."
                 )
                 return ValidationResult(
                     passed=False,
@@ -135,9 +136,7 @@ class ModelValidator:
             )
         else:
             diagnostics.append(
-                f"PASS IC: IC={ic_result['ic']:.4f}, "
-                f"p={ic_result['pvalue']:.4f}, "
-                f"n={ic_result['n_observations']}"
+                f"PASS IC: IC={ic_result['ic']:.4f}, p={ic_result['pvalue']:.4f}, n={ic_result['n_observations']}"
             )
 
         # --- 2. Out-of-Sample Performance ---
@@ -157,9 +156,7 @@ class ModelValidator:
 
         # --- 3. Feature Importance Stability ---
         if feature_importances_over_time and len(feature_importances_over_time) >= 2:
-            stability_result = self._test_feature_stability(
-                feature_importances_over_time
-            )
+            stability_result = self._test_feature_stability(feature_importances_over_time)
             if not stability_result.get("passed", False):
                 diagnostics.append(
                     f"FAIL Feature Stability: mean_overlap="
@@ -167,15 +164,10 @@ class ModelValidator:
                     f"(need >={self.feature_stability_overlap})"
                 )
             else:
-                diagnostics.append(
-                    f"PASS Feature Stability: mean_overlap="
-                    f"{stability_result['mean_overlap']:.3f}"
-                )
+                diagnostics.append(f"PASS Feature Stability: mean_overlap={stability_result['mean_overlap']:.3f}")
         elif feature_names is not None and X_oos.shape[0] >= OOS_MIN_SAMPLES * 2:
             # Compute feature importances from data splits
-            stability_result = self._compute_and_test_stability(
-                model, X_oos, y_oos, feature_names
-            )
+            stability_result = self._compute_and_test_stability(model, X_oos, y_oos, feature_names)
             if not stability_result.get("passed", False):
                 diagnostics.append(
                     f"FAIL Feature Stability: mean_overlap="
@@ -183,10 +175,7 @@ class ModelValidator:
                     f"(need >={self.feature_stability_overlap})"
                 )
             else:
-                diagnostics.append(
-                    f"PASS Feature Stability: mean_overlap="
-                    f"{stability_result['mean_overlap']:.3f}"
-                )
+                diagnostics.append(f"PASS Feature Stability: mean_overlap={stability_result['mean_overlap']:.3f}")
         else:
             stability_result = {"passed": True, "skipped": True, "reason": "insufficient_data"}
             diagnostics.append("SKIP Feature Stability: insufficient data or feature names")
@@ -195,20 +184,14 @@ class ModelValidator:
         calibration_result = self._test_calibration(predictions_oos, y_oos)
         if not calibration_result.get("passed", False):
             diagnostics.append(
-                f"FAIL Calibration: ECE={calibration_result.get('ece', 1):.4f} "
-                f"(need <{self.calibration_max_ece})"
+                f"FAIL Calibration: ECE={calibration_result.get('ece', 1):.4f} (need <{self.calibration_max_ece})"
             )
         else:
-            diagnostics.append(
-                f"PASS Calibration: ECE={calibration_result['ece']:.4f}"
-            )
+            diagnostics.append(f"PASS Calibration: ECE={calibration_result['ece']:.4f}")
 
         # --- Overall verdict: must pass ALL non-skipped tests ---
         all_results = [ic_result, oos_result, stability_result, calibration_result]
-        passed = all(
-            r.get("passed", False) or r.get("skipped", False)
-            for r in all_results
-        )
+        passed = all(r.get("passed", False) or r.get("skipped", False) for r in all_results)
 
         result = ValidationResult(
             passed=passed,
@@ -232,7 +215,7 @@ class ModelValidator:
         self,
         predictions: np.ndarray,
         actuals: np.ndarray,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Test that the Information Coefficient is statistically significant.
 
         IC is computed as Spearman rank correlation between predictions and
@@ -310,7 +293,7 @@ class ModelValidator:
         self,
         predictions: np.ndarray,
         actuals: np.ndarray,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Test out-of-sample directional accuracy and profit factor.
 
         For binary targets: accuracy = fraction of correct direction predictions.
@@ -349,7 +332,7 @@ class ModelValidator:
         signed_returns = acts * np.where(pred_direction == 1, 1, -1)
         gains = signed_returns[signed_returns > 0].sum()
         losses = abs(signed_returns[signed_returns < 0].sum())
-        profit_factor = float(gains / losses) if losses > 1e-12 else float('inf')
+        profit_factor = float(gains / losses) if losses > 1e-12 else float("inf")
 
         # Hit rate: percentage of profitable trades
         hit_rate = float(np.mean(signed_returns > 0))
@@ -366,9 +349,9 @@ class ModelValidator:
 
     def _test_feature_stability(
         self,
-        importances_over_time: List[Dict[str, float]],
+        importances_over_time: list[dict[str, float]],
         top_k: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Test that the top-K features are stable across time windows.
 
         Computes pairwise Jaccard similarity of top-K feature sets across
@@ -382,7 +365,7 @@ class ModelValidator:
             }
 
         # Extract top-K features per window
-        top_features_per_window: List[set] = []
+        top_features_per_window: list[set] = []
         for imp in importances_over_time:
             if not imp:
                 continue
@@ -398,7 +381,7 @@ class ModelValidator:
             }
 
         # Compute pairwise Jaccard overlaps
-        overlaps: List[float] = []
+        overlaps: list[float] = []
         for i in range(len(top_features_per_window) - 1):
             s1 = top_features_per_window[i]
             s2 = top_features_per_window[i + 1]
@@ -431,9 +414,9 @@ class ModelValidator:
         model: Any,
         X: np.ndarray,
         y: np.ndarray,
-        feature_names: List[str],
+        feature_names: list[str],
         n_splits: int = FEATURE_STABILITY_WINDOWS,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Compute feature importances from data splits and test stability.
 
         Splits the data into n_splits time-ordered windows and computes
@@ -448,7 +431,7 @@ class ModelValidator:
                 "reason": f"split_size_too_small_{split_size}",
             }
 
-        importances_over_time: List[Dict[str, float]] = []
+        importances_over_time: list[dict[str, float]] = []
 
         for i in range(n_splits):
             start = i * split_size
@@ -456,9 +439,7 @@ class ModelValidator:
             X_window = X[start:end]
             y_window = y[start:end]
 
-            importance = self._compute_permutation_importance(
-                model, X_window, y_window, feature_names
-            )
+            importance = self._compute_permutation_importance(model, X_window, y_window, feature_names)
             if importance:
                 importances_over_time.append(importance)
 
@@ -469,14 +450,14 @@ class ModelValidator:
         model: Any,
         X: np.ndarray,
         y: np.ndarray,
-        feature_names: List[str],
+        feature_names: list[str],
         n_repeats: int = 5,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Compute permutation feature importance for a model on given data.
 
         Shuffles each feature and measures the increase in prediction error.
         """
-        importance: Dict[str, float] = {}
+        importance: dict[str, float] = {}
 
         try:
             # Get baseline predictions
@@ -490,7 +471,7 @@ class ModelValidator:
             for j, fname in enumerate(feature_names):
                 if j >= X.shape[1]:
                     break
-                drops: List[float] = []
+                drops: list[float] = []
                 for _ in range(n_repeats):
                     X_permuted = X.copy()
                     np.random.shuffle(X_permuted[:, j])
@@ -511,7 +492,7 @@ class ModelValidator:
         predictions: np.ndarray,
         actuals: np.ndarray,
         n_bins: int = CALIBRATION_N_BINS,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Test calibration: predicted probabilities should match realized frequencies.
 
         Computes Expected Calibration Error (ECE):
@@ -547,7 +528,7 @@ class ModelValidator:
         # Compute ECE
         bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
         ece = 0.0
-        bin_details: List[Dict[str, Any]] = []
+        bin_details: list[dict[str, Any]] = []
 
         for i in range(n_bins):
             mask = (preds >= bin_edges[i]) & (preds < bin_edges[i + 1])
@@ -563,13 +544,15 @@ class ModelValidator:
             bin_ece = (bin_count / n) * abs(bin_accuracy - bin_confidence)
             ece += bin_ece
 
-            bin_details.append({
-                "bin": f"[{bin_edges[i]:.2f}, {bin_edges[i+1]:.2f})",
-                "count": bin_count,
-                "accuracy": round(bin_accuracy, 4),
-                "confidence": round(bin_confidence, 4),
-                "ece_contribution": round(bin_ece, 6),
-            })
+            bin_details.append(
+                {
+                    "bin": f"[{bin_edges[i]:.2f}, {bin_edges[i + 1]:.2f})",
+                    "count": bin_count,
+                    "accuracy": round(bin_accuracy, 4),
+                    "confidence": round(bin_confidence, 4),
+                    "ece_contribution": round(bin_ece, 6),
+                }
+            )
 
         passed = ece < self.calibration_max_ece
         return {
@@ -585,7 +568,7 @@ class ModelValidator:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_predictions(model: Any, X: np.ndarray) -> Optional[np.ndarray]:
+    def _get_predictions(model: Any, X: np.ndarray) -> np.ndarray | None:
         """Extract predictions from a model using various interfaces."""
         # Try predict_proba (sklearn-like)
         if hasattr(model, "predict_proba"):
@@ -602,6 +585,7 @@ class ModelValidator:
             try:
                 # Check if it's a BasePredictor (our custom interface)
                 from .models.base import BasePredictor
+
                 if isinstance(model, BasePredictor):
                     preds = []
                     for i in range(len(X)):
@@ -621,6 +605,7 @@ class ModelValidator:
         # Try XGBoost Booster
         try:
             import xgboost as xgb
+
             if isinstance(model, xgb.Booster):
                 dmat = xgb.DMatrix(X)
                 return model.predict(dmat)
@@ -655,9 +640,9 @@ def validate_model_for_deployment(
     model: Any,
     X_oos: np.ndarray,
     y_oos: np.ndarray,
-    predictions_oos: Optional[np.ndarray] = None,
-    feature_names: Optional[List[str]] = None,
-    feature_importances_over_time: Optional[List[Dict[str, float]]] = None,
+    predictions_oos: np.ndarray | None = None,
+    feature_names: list[str] | None = None,
+    feature_importances_over_time: list[dict[str, float]] | None = None,
     strict: bool = True,
 ) -> ValidationResult:
     """Convenience function for one-call model validation.

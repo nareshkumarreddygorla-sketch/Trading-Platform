@@ -1,7 +1,7 @@
 """Options Greeks calculator using Black-Scholes model."""
+
 import math
 from dataclasses import dataclass
-from typing import Optional
 
 
 def _norm_cdf(x: float) -> float:
@@ -26,14 +26,18 @@ class GreeksResult:
     delta: float
     gamma: float
     theta: float  # per calendar day
-    vega: float   # per 1% vol change
+    vega: float  # per 1% vol change
     rho: float
-    iv: Optional[float] = None
+    iv: float | None = None
 
 
 def black_scholes(
-    spot: float, strike: float, time_to_expiry: float,
-    risk_free_rate: float, volatility: float, option_type: str = "call",
+    spot: float,
+    strike: float,
+    time_to_expiry: float,
+    risk_free_rate: float,
+    volatility: float,
+    option_type: str = "call",
 ) -> GreeksResult:
     """Compute option price and Greeks via Black-Scholes.
 
@@ -69,10 +73,7 @@ def black_scholes(
         theta_sign = -1
 
     gamma = _norm_pdf(d1) / (s * v * sqrt_t)
-    theta = (
-        -(s * _norm_pdf(d1) * v / (2 * sqrt_t))
-        - r * k * discount * _norm_cdf(d2 if is_call else -d2) * theta_sign
-    )
+    theta = -(s * _norm_pdf(d1) * v / (2 * sqrt_t)) - r * k * discount * _norm_cdf(d2 if is_call else -d2) * theta_sign
     theta /= 365  # per calendar day
     vega = s * _norm_pdf(d1) * sqrt_t / 100  # per 1% vol change
 
@@ -80,9 +81,14 @@ def black_scholes(
 
 
 def implied_volatility(
-    market_price: float, spot: float, strike: float,
-    time_to_expiry: float, risk_free_rate: float,
-    option_type: str = "call", max_iter: int = 100, tol: float = 1e-6,
+    market_price: float,
+    spot: float,
+    strike: float,
+    time_to_expiry: float,
+    risk_free_rate: float,
+    option_type: str = "call",
+    max_iter: int = 100,
+    tol: float = 1e-6,
 ) -> float:
     """Implied volatility via Newton-Raphson."""
     vol = 0.3

@@ -3,12 +3,13 @@ Financial sentiment analyzer using FinBERT.
 Fetches Indian market news from free RSS feeds and analyzes sentiment.
 Implements BasePredictor contract for EnsembleEngine integration.
 """
+
 import logging
 import re
 import threading
 import time
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -30,6 +31,7 @@ CACHE_TTL = 300  # 5 minutes
 def _try_import_transformers():
     try:
         from transformers import pipeline
+
         return pipeline
     except ImportError:
         return None
@@ -38,6 +40,7 @@ def _try_import_transformers():
 def _try_import_feedparser():
     try:
         import feedparser
+
         return feedparser
     except ImportError:
         return None
@@ -47,12 +50,12 @@ class SentimentCache:
     """Simple in-memory cache for sentiment results."""
 
     def __init__(self, ttl: int = CACHE_TTL):
-        self._cache: Dict[str, Tuple[float, Dict]] = {}  # key -> (expiry, result)
+        self._cache: dict[str, tuple[float, dict]] = {}  # key -> (expiry, result)
         self._ttl = ttl
         self._lock = threading.Lock()
         self._max_size = 1000
 
-    def get(self, key: str) -> Optional[Dict]:
+    def get(self, key: str) -> dict | None:
         with self._lock:
             if key in self._cache:
                 expiry, result = self._cache[key]
@@ -61,7 +64,7 @@ class SentimentCache:
                 del self._cache[key]
             return None
 
-    def set(self, key: str, result: Dict) -> None:
+    def set(self, key: str, result: dict) -> None:
         with self._lock:
             self._cache[key] = (time.time() + self._ttl, result)
             # Evict old entries
@@ -71,7 +74,7 @@ class SentimentCache:
                 del self._cache[k]
             # Enforce max size cap
             if len(self._cache) > self._max_size:
-                oldest = sorted(self._cache.items(), key=lambda x: x[1][0])[:len(self._cache) - self._max_size]
+                oldest = sorted(self._cache.items(), key=lambda x: x[1][0])[: len(self._cache) - self._max_size]
                 for k, _ in oldest:
                     del self._cache[k]
 
@@ -79,11 +82,11 @@ class SentimentCache:
 class NewsFetcher:
     """Fetch news headlines from RSS feeds."""
 
-    def __init__(self, feeds: List[str] = None):
+    def __init__(self, feeds: list[str] = None):
         self._feeds = feeds or NEWS_FEEDS
         self._feedparser = _try_import_feedparser()
 
-    def fetch_headlines(self, symbol: Optional[str] = None, max_items: int = 20) -> List[str]:
+    def fetch_headlines(self, symbol: str | None = None, max_items: int = 20) -> list[str]:
         """Fetch recent headlines, optionally filtered by symbol."""
         if self._feedparser is None:
             return []
@@ -105,7 +108,7 @@ class NewsFetcher:
                             headlines.append(title)
                         elif symbol:
                             # Exact word boundary matching to avoid false positives
-                            pattern = r'\b' + re.escape(symbol) + r'\b'
+                            pattern = r"\b" + re.escape(symbol) + r"\b"
                             if re.search(pattern, title, re.IGNORECASE):
                                 headlines.append(title)
             except Exception as e:
@@ -149,7 +152,7 @@ class SentimentAnalyzer:
                 logger.warning("Failed to load FinBERT: %s — sentiment disabled", e)
                 self._initialized = True
 
-    def analyze(self, texts: List[str]) -> Dict[str, float]:
+    def analyze(self, texts: list[str]) -> dict[str, float]:
         """Analyze sentiment of texts. Returns {positive, negative, neutral} scores."""
         self._init_pipeline()
         if self._pipeline is None or not texts:
@@ -158,7 +161,7 @@ class SentimentAnalyzer:
         try:
             if len(texts) > self._max_texts:
                 logger.debug("Sentiment analysis: truncating %d texts to %d", len(texts), self._max_texts)
-            results = self._pipeline(texts[:self._max_texts])
+            results = self._pipeline(texts[: self._max_texts])
             pos_scores = []
             neg_scores = []
             neu_scores = []
@@ -203,7 +206,7 @@ class SentimentPredictor(BasePredictor):
         self._fetcher = NewsFetcher()
         self._cache = SentimentCache()
 
-    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> Optional[PredictionOutput]:
+    def predict(self, features: dict[str, float], context: dict[str, Any] | None = None) -> PredictionOutput | None:
         symbol = None
         if context:
             symbol = context.get("symbol")

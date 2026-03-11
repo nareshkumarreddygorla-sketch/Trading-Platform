@@ -1,9 +1,10 @@
 """Reconcile broker positions vs DB. Log discrepancies; do not auto-correct."""
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, List
+from datetime import UTC, datetime
+from typing import Any
 
 from .position_repo import PositionRepository
 
@@ -13,10 +14,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ReconciliationResult:
     in_sync: bool
-    broker_positions: List[Any] = field(default_factory=list)
-    db_positions: List[Any] = field(default_factory=list)
-    mismatches: List[str] = field(default_factory=list)
-    ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    broker_positions: list[Any] = field(default_factory=list)
+    db_positions: list[Any] = field(default_factory=list)
+    mismatches: list[str] = field(default_factory=list)
+    ts: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 def _broker_key_and_qty(p: Any) -> tuple:
@@ -73,7 +74,7 @@ async def reconcile_positions(
         k = (t[0], t[1], t[2])
         db_by_key[k] = t[3]
 
-    mismatches: List[str] = []
+    mismatches: list[str] = []
     all_keys = set(broker_by_key) | set(db_by_key)
     for key in all_keys:
         b_qty = broker_by_key.get(key, 0.0)

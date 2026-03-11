@@ -3,11 +3,11 @@ Token blacklist: revoke JWTs on logout / refresh rotation.
 Tries Redis first (distributed, survives restarts). Falls back to a
 thread-safe in-memory set with automatic expiry cleanup every 60 s.
 """
+
 import logging
 import os
 import threading
 import time
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
 _blacklist: dict[str, float] = {}  # token -> expires_at (epoch)
-_cleanup_thread: Optional[threading.Thread] = None
+_cleanup_thread: threading.Thread | None = None
 _cleanup_running = False
 
 
@@ -75,6 +75,7 @@ def _get_redis():
         return None
     try:
         import redis as _redis_mod
+
         _redis_client = _redis_mod.Redis.from_url(redis_url, socket_connect_timeout=2, decode_responses=True)
         _redis_client.ping()
         _redis_available = True
@@ -90,6 +91,7 @@ def _get_redis():
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def blacklist_token(token: str, expires_at: float) -> None:
     """

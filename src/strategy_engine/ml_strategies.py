@@ -1,9 +1,10 @@
 """ML/AI strategy hooks: predictive models, RL agent, meta-optimizer. Real implementations."""
-import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
 
-from src.core.events import Exchange, Signal, SignalSide
+import logging
+from typing import Any
+
+from src.core.events import Signal, SignalSide
+
 from .base import MarketState, StrategyBase
 
 logger = logging.getLogger(__name__)
@@ -14,17 +15,23 @@ class MLPredictorStrategy(StrategyBase):
     Ensemble ML predictor: LSTM + Transformer + XGBoost + Sentiment.
     Uses EnsembleEngine to aggregate predictions, emits signals when confidence > threshold.
     """
+
     strategy_id = "ml_predictor"
     description = "ML ensemble price direction predictor"
 
-    def __init__(self, ensemble_engine=None, feature_engine=None,
-                 confidence_threshold: float = 0.55, prob_threshold: float = 0.58):
+    def __init__(
+        self,
+        ensemble_engine=None,
+        feature_engine=None,
+        confidence_threshold: float = 0.55,
+        prob_threshold: float = 0.58,
+    ):
         self._ensemble = ensemble_engine
         self._feature_engine = feature_engine
         self.confidence_threshold = confidence_threshold
         self.prob_threshold = prob_threshold
         # Feature history per symbol for sequence building
-        self._feature_history: Dict[str, List[Dict[str, float]]] = {}
+        self._feature_history: dict[str, list[dict[str, float]]] = {}
 
     def set_ensemble(self, ensemble_engine) -> None:
         self._ensemble = ensemble_engine
@@ -35,7 +42,7 @@ class MLPredictorStrategy(StrategyBase):
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= 60
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         if not self.warm(state) or self._ensemble is None:
             return []
 
@@ -79,39 +86,43 @@ class MLPredictorStrategy(StrategyBase):
         # Determine signal direction
         signals = []
         if prediction.prob_up > self.prob_threshold:
-            signals.append(Signal(
-                strategy_id=self.strategy_id,
-                symbol=symbol,
-                exchange=state.exchange,
-                side=SignalSide.BUY,
-                score=prediction.confidence,
-                price=state.latest_price,
-                portfolio_weight=min(0.15, prediction.confidence * 0.2),
-                risk_level="NORMAL",
-                metadata={
-                    "prob_up": prediction.prob_up,
-                    "expected_return": prediction.expected_return,
-                    "models": prediction.metadata.get("models", []),
-                    "model_count": prediction.metadata.get("count", 0),
-                },
-            ))
+            signals.append(
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.BUY,
+                    score=prediction.confidence,
+                    price=state.latest_price,
+                    portfolio_weight=min(0.15, prediction.confidence * 0.2),
+                    risk_level="NORMAL",
+                    metadata={
+                        "prob_up": prediction.prob_up,
+                        "expected_return": prediction.expected_return,
+                        "models": prediction.metadata.get("models", []),
+                        "model_count": prediction.metadata.get("count", 0),
+                    },
+                )
+            )
         elif prediction.prob_up < (1.0 - self.prob_threshold):
-            signals.append(Signal(
-                strategy_id=self.strategy_id,
-                symbol=symbol,
-                exchange=state.exchange,
-                side=SignalSide.SELL,
-                score=prediction.confidence,
-                price=state.latest_price,
-                portfolio_weight=min(0.15, prediction.confidence * 0.2),
-                risk_level="NORMAL",
-                metadata={
-                    "prob_up": prediction.prob_up,
-                    "expected_return": prediction.expected_return,
-                    "models": prediction.metadata.get("models", []),
-                    "model_count": prediction.metadata.get("count", 0),
-                },
-            ))
+            signals.append(
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.SELL,
+                    score=prediction.confidence,
+                    price=state.latest_price,
+                    portfolio_weight=min(0.15, prediction.confidence * 0.2),
+                    risk_level="NORMAL",
+                    metadata={
+                        "prob_up": prediction.prob_up,
+                        "expected_return": prediction.expected_return,
+                        "models": prediction.metadata.get("models", []),
+                        "model_count": prediction.metadata.get("count", 0),
+                    },
+                )
+            )
 
         return signals
 
@@ -122,16 +133,16 @@ class RLAgentStrategy(StrategyBase):
     State: bars + position + PnL; action: hold/buy/sell.
     Uses trained PPO model from stable-baselines3.
     """
+
     strategy_id = "rl_agent"
     description = "RL dynamic entry/exit agent"
 
-    def __init__(self, rl_predictor=None, feature_engine=None,
-                 confidence_threshold: float = 0.5):
+    def __init__(self, rl_predictor=None, feature_engine=None, confidence_threshold: float = 0.5):
         self._rl = rl_predictor
         self._feature_engine = feature_engine
         self.confidence_threshold = confidence_threshold
         # Track positions per symbol for RL state
-        self._positions: Dict[str, Dict[str, Any]] = {}
+        self._positions: dict[str, dict[str, Any]] = {}
 
     def set_rl_predictor(self, rl_predictor) -> None:
         self._rl = rl_predictor
@@ -142,7 +153,7 @@ class RLAgentStrategy(StrategyBase):
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= 50
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         if not self.warm(state) or self._rl is None:
             return []
 
@@ -180,31 +191,35 @@ class RLAgentStrategy(StrategyBase):
         signals = []
 
         if action == 1:  # Buy
-            signals.append(Signal(
-                strategy_id=self.strategy_id,
-                symbol=symbol,
-                exchange=state.exchange,
-                side=SignalSide.BUY,
-                score=prediction.confidence,
-                price=state.latest_price,
-                portfolio_weight=0.08,
-                risk_level="NORMAL",
-                metadata={"action": "buy", "rl_confidence": prediction.confidence},
-            ))
+            signals.append(
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.BUY,
+                    score=prediction.confidence,
+                    price=state.latest_price,
+                    portfolio_weight=0.08,
+                    risk_level="NORMAL",
+                    metadata={"action": "buy", "rl_confidence": prediction.confidence},
+                )
+            )
             self._positions[symbol] = {"side": 1, "entry_price": state.latest_price, "bars_held": 0}
 
         elif action == 2:  # Sell
-            signals.append(Signal(
-                strategy_id=self.strategy_id,
-                symbol=symbol,
-                exchange=state.exchange,
-                side=SignalSide.SELL,
-                score=prediction.confidence,
-                price=state.latest_price,
-                portfolio_weight=0.08,
-                risk_level="NORMAL",
-                metadata={"action": "sell", "rl_confidence": prediction.confidence},
-            ))
+            signals.append(
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.SELL,
+                    score=prediction.confidence,
+                    price=state.latest_price,
+                    portfolio_weight=0.08,
+                    risk_level="NORMAL",
+                    metadata={"action": "sell", "rl_confidence": prediction.confidence},
+                )
+            )
             self._positions[symbol] = {"side": -1, "entry_price": state.latest_price, "bars_held": 0}
 
         else:  # Hold - increment bars_held
@@ -220,22 +235,28 @@ class MetaOptimizerStrategy(StrategyBase):
     Evaluates child strategy performance and disables underperformers.
     Does not generate direct trading signals -- operates as a supervisory layer.
     """
+
     strategy_id = "meta_optimizer"
     description = "Parameter tuning over rolling window"
 
-    def __init__(self, performance_tracker=None, strategy_registry=None,
-                 min_win_rate: float = 0.35, min_trades_for_eval: int = 10):
+    def __init__(
+        self,
+        performance_tracker=None,
+        strategy_registry=None,
+        min_win_rate: float = 0.35,
+        min_trades_for_eval: int = 10,
+    ):
         self._tracker = performance_tracker
         self._registry = strategy_registry
         self._min_win_rate = min_win_rate
         self._min_trades_for_eval = min_trades_for_eval
-        self._last_eval_decisions: Dict[str, str] = {}
+        self._last_eval_decisions: dict[str, str] = {}
 
     def warm(self, state: MarketState) -> bool:
         # Meta-optimizer runs whenever a tracker and registry are wired
         return self._tracker is not None and self._registry is not None
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         """Evaluate strategy performance and disable underperformers.
 
         Returns an empty list because the meta-optimizer does not produce
@@ -251,7 +272,7 @@ class MetaOptimizerStrategy(StrategyBase):
                 logger.debug("MetaOptimizer: no stats available yet")
                 return []
 
-            decisions: Dict[str, str] = {}
+            decisions: dict[str, str] = {}
             for sid, s in stats.items():
                 win_rate = s.get("win_rate", 0.5)
                 total_trades = s.get("wins", 0) + s.get("losses", 0)
@@ -262,19 +283,26 @@ class MetaOptimizerStrategy(StrategyBase):
                 if win_rate < self._min_win_rate:
                     self._registry.disable(sid)
                     decisions[sid] = f"DISABLED (win_rate={win_rate:.2f}, trades={total_trades})"
-                    logger.warning("MetaOptimizer: disabled strategy '%s' "
-                                   "(win_rate=%.2f < %.2f, trades=%d)",
-                                   sid, win_rate, self._min_win_rate, total_trades)
+                    logger.warning(
+                        "MetaOptimizer: disabled strategy '%s' (win_rate=%.2f < %.2f, trades=%d)",
+                        sid,
+                        win_rate,
+                        self._min_win_rate,
+                        total_trades,
+                    )
                 else:
                     decisions[sid] = f"ok (win_rate={win_rate:.2f}, trades={total_trades})"
 
             self._last_eval_decisions = decisions
             if decisions:
                 disabled_count = sum(1 for v in decisions.values() if v.startswith("DISABLED"))
-                logger.info("MetaOptimizer evaluated %d strategies: %d disabled, %d ok, %d skipped",
-                            len(decisions), disabled_count,
-                            sum(1 for v in decisions.values() if v.startswith("ok")),
-                            sum(1 for v in decisions.values() if v.startswith("skip")))
+                logger.info(
+                    "MetaOptimizer evaluated %d strategies: %d disabled, %d ok, %d skipped",
+                    len(decisions),
+                    disabled_count,
+                    sum(1 for v in decisions.values() if v.startswith("ok")),
+                    sum(1 for v in decisions.values() if v.startswith("skip")),
+                )
         except Exception as e:
             logger.warning("MetaOptimizer evaluation failed: %s", e)
 

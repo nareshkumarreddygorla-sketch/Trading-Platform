@@ -2,7 +2,6 @@
 Phase B: Information Coefficient and variants.
 IC (rank), IC stability across time, IC stability across regimes, turnover-adjusted IC.
 """
-from typing import List
 
 import numpy as np
 
@@ -24,6 +23,7 @@ def ic_rank(signal: np.ndarray, forward_return: np.ndarray) -> float:
     x, y = signal[mask], forward_return[mask]
     try:
         from scipy.stats import spearmanr
+
         r, _ = spearmanr(x, y)
         return float(r) if np.isfinite(r) else 0.0
     except Exception:
@@ -40,7 +40,7 @@ def ic_stability_time(
     n = len(signal)
     if n < window or len(forward_return) != n:
         return 0.0, 1.0
-    ics: List[float] = []
+    ics: list[float] = []
     for start in range(0, n - window, step):
         end = start + window
         ic = ic_rank(signal[start:end], forward_return[start:end])

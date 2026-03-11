@@ -1,8 +1,8 @@
 """Immutable audit log. Append-only. All critical actions traceable to actor."""
+
 import json
 import logging
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-def _parse_payload(payload_str: Optional[str]) -> Optional[dict]:
+def _parse_payload(payload_str: str | None) -> dict | None:
     if not payload_str:
         return None
     try:
@@ -31,15 +31,16 @@ class AuditRepository:
 
     def __init__(self, session_factory=None):
         from .database import get_session_factory
+
         self._session_factory = session_factory or get_session_factory()
 
     def append(
         self,
         event_type: str,
         actor: str,
-        payload: Optional[dict] = None,
-        tenant_id: Optional[str] = None,
-        session: Optional[Session] = None,
+        payload: dict | None = None,
+        tenant_id: str | None = None,
+        session: Session | None = None,
     ) -> None:
         """Append one audit event. Immutable."""
         payload_str = json.dumps(payload, default=str) if payload is not None else None
@@ -65,8 +66,8 @@ class AuditRepository:
         self,
         event_type: str,
         actor: str,
-        payload: Optional[dict] = None,
-        tenant_id: Optional[str] = None,
+        payload: dict | None = None,
+        tenant_id: str | None = None,
     ) -> None:
         """Synchronous append for use from sync code or executor."""
         with session_scope() as session:
@@ -75,9 +76,9 @@ class AuditRepository:
     def list_events(
         self,
         limit: int = 500,
-        event_type: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-    ) -> List[dict]:
+        event_type: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[dict]:
         """Return recent audit events (newest first). For API GET /audit/logs."""
         with session_scope() as session:
             q = session.query(AuditEventModel)

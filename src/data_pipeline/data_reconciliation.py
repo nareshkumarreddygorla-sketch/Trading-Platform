@@ -8,18 +8,17 @@ when the primary fails.
 
 import logging
 import threading
-import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 class DiscrepancyType(str, Enum):
     """Types of discrepancies between data sources."""
+
     PRICE_DIVERGENCE = "PRICE_DIVERGENCE"
     VOLUME_DIVERGENCE = "VOLUME_DIVERGENCE"
     MISSING_FROM_SOURCE = "MISSING_FROM_SOURCE"
@@ -29,27 +28,29 @@ class DiscrepancyType(str, Enum):
 @dataclass
 class SourceDataPoint:
     """A single data point from a named source."""
+
     source: str
     symbol: str
     price: float
     volume: float
     timestamp: datetime
-    received_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    received_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
 class ReconciliationResult:
     """Result of reconciling data across sources."""
+
     symbol: str
     is_consistent: bool
     primary_source: str
-    consensus_price: Optional[float] = None
-    consensus_volume: Optional[float] = None
+    consensus_price: float | None = None
+    consensus_volume: float | None = None
     price_spread: float = 0.0
     volume_spread_pct: float = 0.0
-    discrepancies: List[Dict] = field(default_factory=list)
-    sources_reporting: List[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    discrepancies: list[dict] = field(default_factory=list)
+    sources_reporting: list[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict:
         return {
@@ -69,12 +70,13 @@ class ReconciliationResult:
 @dataclass
 class SourceReliabilityStats:
     """Reliability statistics for a data source."""
+
     total_points: int = 0
     consistent_points: int = 0
     discrepant_points: int = 0
     stale_count: int = 0
     missing_count: int = 0
-    last_update: Optional[datetime] = None
+    last_update: datetime | None = None
     avg_latency_ms: float = 0.0
     _latency_sum: float = 0.0
     _latency_count: int = 0
@@ -121,11 +123,11 @@ class DataReconciliator:
         self._primary_source = primary_source
 
         # Latest data point from each source per symbol
-        self._latest: Dict[str, Dict[str, SourceDataPoint]] = defaultdict(dict)
+        self._latest: dict[str, dict[str, SourceDataPoint]] = defaultdict(dict)
         # Source reliability stats
-        self._source_stats: Dict[str, SourceReliabilityStats] = defaultdict(SourceReliabilityStats)
+        self._source_stats: dict[str, SourceReliabilityStats] = defaultdict(SourceReliabilityStats)
         # Reconciliation history
-        self._reconciliation_log: List[ReconciliationResult] = []
+        self._reconciliation_log: list[ReconciliationResult] = []
         self._max_log_size = 500
 
         self._lock = threading.RLock()
@@ -142,9 +144,9 @@ class DataReconciliator:
             timestamp: Data timestamp.
         """
         if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
+            timestamp = timestamp.replace(tzinfo=UTC)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data_point = SourceDataPoint(
             source=source,
             symbol=symbol,
@@ -185,20 +187,22 @@ class DataReconciliator:
                     sources_reporting=[],
                 )
 
-            now = datetime.now(timezone.utc)
-            active_sources: Dict[str, SourceDataPoint] = {}
-            discrepancies: List[Dict] = []
+            now = datetime.now(UTC)
+            active_sources: dict[str, SourceDataPoint] = {}
+            discrepancies: list[dict] = []
 
             # Filter out stale sources
             for source_name, dp in sources.items():
                 age = (now - dp.received_at).total_seconds()
                 if age > self._stale_source_seconds:
-                    discrepancies.append({
-                        "type": DiscrepancyType.STALE_SOURCE.value,
-                        "source": source_name,
-                        "age_seconds": round(age, 1),
-                        "message": f"Source {source_name} is stale ({age:.0f}s old)",
-                    })
+                    discrepancies.append(
+                        {
+                            "type": DiscrepancyType.STALE_SOURCE.value,
+                            "source": source_name,
+                            "age_seconds": round(age, 1),
+                            "message": f"Source {source_name} is stale ({age:.0f}s old)",
+                        }
+                    )
                     self._source_stats[source_name].stale_count += 1
                 else:
                     active_sources[source_name] = dp
@@ -252,9 +256,7 @@ class DataReconciliator:
 
             # Volume spread percentage
             if consensus_volume > 0:
-                vol_spread_pct = (
-                    (max(sorted_volumes) - min(sorted_volumes)) / consensus_volume * 100
-                )
+                vol_spread_pct = (max(sorted_volumes) - min(sorted_volumes)) / consensus_volume * 100
             else:
                 vol_spread_pct = 0.0
 
@@ -266,17 +268,19 @@ class DataReconciliator:
                     pct_diff = abs(price - consensus_price) / consensus_price * 100
                     if pct_diff > self._price_tolerance_pct:
                         is_consistent = False
-                        discrepancies.append({
-                            "type": DiscrepancyType.PRICE_DIVERGENCE.value,
-                            "source": src_name,
-                            "source_price": price,
-                            "consensus_price": consensus_price,
-                            "divergence_pct": round(pct_diff, 4),
-                            "message": (
-                                f"Price divergence: {src_name} reports {price:.2f} "
-                                f"vs consensus {consensus_price:.2f} ({pct_diff:.2f}%)"
-                            ),
-                        })
+                        discrepancies.append(
+                            {
+                                "type": DiscrepancyType.PRICE_DIVERGENCE.value,
+                                "source": src_name,
+                                "source_price": price,
+                                "consensus_price": consensus_price,
+                                "divergence_pct": round(pct_diff, 4),
+                                "message": (
+                                    f"Price divergence: {src_name} reports {price:.2f} "
+                                    f"vs consensus {consensus_price:.2f} ({pct_diff:.2f}%)"
+                                ),
+                            }
+                        )
                         self._source_stats[src_name].discrepant_points += 1
                     else:
                         self._source_stats[src_name].consistent_points += 1
@@ -286,22 +290,26 @@ class DataReconciliator:
                 if consensus_volume > 0:
                     pct_diff = abs(vol - consensus_volume) / consensus_volume * 100
                     if pct_diff > self._volume_tolerance_pct:
-                        discrepancies.append({
-                            "type": DiscrepancyType.VOLUME_DIVERGENCE.value,
-                            "source": src_name,
-                            "source_volume": vol,
-                            "consensus_volume": consensus_volume,
-                            "divergence_pct": round(pct_diff, 2),
-                            "message": (
-                                f"Volume divergence: {src_name} reports {vol:.0f} "
-                                f"vs consensus {consensus_volume:.0f} ({pct_diff:.1f}%)"
-                            ),
-                        })
+                        discrepancies.append(
+                            {
+                                "type": DiscrepancyType.VOLUME_DIVERGENCE.value,
+                                "source": src_name,
+                                "source_volume": vol,
+                                "consensus_volume": consensus_volume,
+                                "divergence_pct": round(pct_diff, 2),
+                                "message": (
+                                    f"Volume divergence: {src_name} reports {vol:.0f} "
+                                    f"vs consensus {consensus_volume:.0f} ({pct_diff:.1f}%)"
+                                ),
+                            }
+                        )
 
             # Check for sources that are missing data for this symbol
             all_known_sources = set(self._source_stats.keys())
             reporting_sources = set(active_sources.keys())
-            for missing_src in all_known_sources - reporting_sources - set(s for s in sources if s not in active_sources):
+            for missing_src in (
+                all_known_sources - reporting_sources - set(s for s in sources if s not in active_sources)
+            ):
                 self._source_stats[missing_src].missing_count += 1
 
             result = ReconciliationResult(
@@ -319,7 +327,7 @@ class DataReconciliator:
             self._log_result(result)
             return result
 
-    def _select_best_source(self, active_sources: Dict[str, SourceDataPoint]) -> str:
+    def _select_best_source(self, active_sources: dict[str, SourceDataPoint]) -> str:
         """Select the best source based on reliability and preference."""
         # Prefer primary source if it is active and reliable
         if self._primary_source in active_sources:
@@ -350,7 +358,7 @@ class DataReconciliator:
             if not sources:
                 return self._primary_source
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             active = {
                 name: dp
                 for name, dp in sources.items()
@@ -361,7 +369,7 @@ class DataReconciliator:
 
             return self._select_best_source(active)
 
-    def get_source_reliability(self) -> Dict[str, dict]:
+    def get_source_reliability(self) -> dict[str, dict]:
         """Get reliability scores and stats for all known sources."""
         with self._lock:
             result = {}
@@ -400,7 +408,7 @@ class DataReconciliator:
         """Log a reconciliation result."""
         self._reconciliation_log.append(result)
         if len(self._reconciliation_log) > self._max_log_size:
-            self._reconciliation_log = self._reconciliation_log[-self._max_log_size:]
+            self._reconciliation_log = self._reconciliation_log[-self._max_log_size :]
 
     def reset(self) -> None:
         """Reset all reconciliation state."""

@@ -1,14 +1,15 @@
 """FastAPI dependencies: OrderEntryService, etc. Resolve from app.state."""
-from typing import Any, Optional
+
+from typing import Any
 
 from fastapi import Request
 
 
-def get_order_entry_service(request: Request) -> Optional[Any]:
+def get_order_entry_service(request: Request) -> Any | None:
     """Return OrderEntryService from app state. None if not configured."""
     return getattr(request.app.state, "order_entry_service", None)
 
 
-def get_kill_switch(request: Request) -> Optional[Any]:
+def get_kill_switch(request: Request) -> Any | None:
     """Return KillSwitch from app state. None if not configured."""
     return getattr(request.app.state, "kill_switch", None)

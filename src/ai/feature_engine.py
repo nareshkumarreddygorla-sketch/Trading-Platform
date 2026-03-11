@@ -11,10 +11,11 @@ Features (35+):
   - Candlestick patterns (doji, hammer, engulfing)
   - Momentum (5, 10, 20 bars, rate of change)
 """
+
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
@@ -26,19 +27,23 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Primitive array extractors
 # ---------------------------------------------------------------------------
-def _closes(bars: List[Bar]) -> np.ndarray:
+def _closes(bars: list[Bar]) -> np.ndarray:
     return np.array([b.close for b in bars], dtype=float)
 
-def _opens(bars: List[Bar]) -> np.ndarray:
+
+def _opens(bars: list[Bar]) -> np.ndarray:
     return np.array([b.open for b in bars], dtype=float)
 
-def _highs(bars: List[Bar]) -> np.ndarray:
+
+def _highs(bars: list[Bar]) -> np.ndarray:
     return np.array([b.high for b in bars], dtype=float)
 
-def _lows(bars: List[Bar]) -> np.ndarray:
+
+def _lows(bars: list[Bar]) -> np.ndarray:
     return np.array([b.low for b in bars], dtype=float)
 
-def _volumes(bars: List[Bar]) -> np.ndarray:
+
+def _volumes(bars: list[Bar]) -> np.ndarray:
     return np.array([b.volume for b in bars], dtype=float)
 
 
@@ -54,7 +59,7 @@ def _returns(closes: np.ndarray, period: int) -> float:
 def _rolling_volatility(closes: np.ndarray, window: int) -> float:
     if len(closes) < window + 1:
         return 0.0
-    ret = np.diff(closes[-window - 1:]) / (closes[-window - 1:-1] + 1e-12)
+    ret = np.diff(closes[-window - 1 :]) / (closes[-window - 1 : -1] + 1e-12)
     return float(np.std(ret))
 
 
@@ -71,7 +76,7 @@ def _atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> f
 def _rsi(closes: np.ndarray, period: int = 14) -> float:
     if len(closes) < period + 1:
         return 50.0
-    deltas = np.diff(closes[-period - 1:])
+    deltas = np.diff(closes[-period - 1 :])
     gains = np.where(deltas > 0, deltas, 0.0)
     losses = np.where(deltas < 0, -deltas, 0.0)
     avg_gain = np.mean(gains)
@@ -127,7 +132,7 @@ def _volume_spike(volumes: np.ndarray, window: int = 20) -> float:
     if len(volumes) < window + 1:
         return 0.0
     recent = volumes[-1]
-    mean_vol = np.mean(volumes[-window - 1:-1])
+    mean_vol = np.mean(volumes[-window - 1 : -1])
     if mean_vol < 1e-12:
         return 0.0
     return float((recent - mean_vol) / (mean_vol + 1e-12))
@@ -147,7 +152,7 @@ def _macd(closes: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9):
     histogram = macd_line - signal_line
     price = closes[-1] if closes[-1] != 0 else 1.0
     return (
-        float(macd_line[-1] / (price + 1e-12)),   # normalize by price
+        float(macd_line[-1] / (price + 1e-12)),  # normalize by price
         float(signal_line[-1] / (price + 1e-12)),
         float(histogram[-1] / (price + 1e-12)),
     )
@@ -170,8 +175,7 @@ def _bollinger(closes: np.ndarray, period: int = 20, num_std: float = 2.0):
     return pct_b, bandwidth
 
 
-def _stochastic(high: np.ndarray, low: np.ndarray, close: np.ndarray,
-                k_period: int = 14, d_period: int = 3):
+def _stochastic(high: np.ndarray, low: np.ndarray, close: np.ndarray, k_period: int = 14, d_period: int = 3):
     """Stochastic %K and %D (smoothed %K)."""
     if len(close) < k_period:
         return 50.0, 50.0
@@ -247,8 +251,7 @@ def _vwap_distance(closes: np.ndarray, volumes: np.ndarray, period: int = 20) ->
     return float((closes[-1] - vwap) / (vwap + 1e-12))
 
 
-def _price_position(high: np.ndarray, low: np.ndarray, close: np.ndarray,
-                    period: int = 20) -> float:
+def _price_position(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 20) -> float:
     """Where current price sits in the period's high-low range (0=bottom, 1=top)."""
     if len(close) < period:
         return 0.5
@@ -271,8 +274,7 @@ def _gap_pct(opens: np.ndarray, closes: np.ndarray) -> float:
     return float((curr_open - prev_close) / (prev_close + 1e-12))
 
 
-def _candlestick_features(opens: np.ndarray, highs: np.ndarray,
-                          lows: np.ndarray, closes: np.ndarray):
+def _candlestick_features(opens: np.ndarray, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray):
     """Encode candlestick patterns as numerical features."""
     if len(closes) < 2:
         return 0.0, 0.0, 0.0, 0.0
@@ -309,7 +311,7 @@ def _rate_of_change(closes: np.ndarray, period: int) -> float:
     """Rate of change: percentage change over period."""
     if len(closes) < period + 1 or closes[-1 - period] < 1e-12:
         return 0.0
-    return float((closes[-1] / closes[-1 - period] - 1.0))
+    return float(closes[-1] / closes[-1 - period] - 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -330,11 +332,12 @@ def _intraday_seasonality(bars) -> tuple:
     try:
         if isinstance(ts, str):
             from datetime import datetime as _dt
+
             ts = _dt.fromisoformat(ts.replace("Z", "+00:00"))
         minute_of_day = ts.hour * 60 + ts.minute
         # NSE session: 09:15 (555 min) to 15:30 (930 min) = 375 min window
         nse_start = 9 * 60 + 15  # 555
-        nse_end = 15 * 60 + 30    # 930
+        nse_end = 15 * 60 + 30  # 930
         nse_minutes = nse_end - nse_start  # 375
         relative_minute = max(0, minute_of_day - nse_start)
         fraction = relative_minute / max(nse_minutes, 1)
@@ -452,20 +455,9 @@ def _adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14)
         return 25.0  # neutral default
 
     # True Range, +DM, -DM
-    tr_arr = np.maximum(
-        high[1:] - low[1:],
-        np.maximum(np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1]))
-    )
-    plus_dm = np.where(
-        (high[1:] - high[:-1]) > (low[:-1] - low[1:]),
-        np.maximum(high[1:] - high[:-1], 0),
-        0.0
-    )
-    minus_dm = np.where(
-        (low[:-1] - low[1:]) > (high[1:] - high[:-1]),
-        np.maximum(low[:-1] - low[1:], 0),
-        0.0
-    )
+    tr_arr = np.maximum(high[1:] - low[1:], np.maximum(np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1])))
+    plus_dm = np.where((high[1:] - high[:-1]) > (low[:-1] - low[1:]), np.maximum(high[1:] - high[:-1], 0), 0.0)
+    minus_dm = np.where((low[:-1] - low[1:]) > (high[1:] - high[:-1]), np.maximum(low[:-1] - low[1:], 0), 0.0)
 
     # Smoothed averages (Wilder's smoothing)
     atr_s = np.mean(tr_arr[:period])
@@ -490,8 +482,7 @@ def _adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14)
     return float(min(dx, 100.0))
 
 
-def _williams_r(high: np.ndarray, low: np.ndarray, close: np.ndarray,
-                period: int = 14) -> float:
+def _williams_r(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> float:
     """Williams %R: momentum oscillator (-100 to 0)."""
     if len(close) < period:
         return -50.0
@@ -503,8 +494,7 @@ def _williams_r(high: np.ndarray, low: np.ndarray, close: np.ndarray,
     return float(((highest - close[-1]) / r) * -100.0)
 
 
-def _mfi(high: np.ndarray, low: np.ndarray, close: np.ndarray,
-         volumes: np.ndarray, period: int = 14) -> float:
+def _mfi(high: np.ndarray, low: np.ndarray, close: np.ndarray, volumes: np.ndarray, period: int = 14) -> float:
     """Money Flow Index (volume-weighted RSI, 0-100)."""
     if len(close) < period + 1:
         return 50.0
@@ -558,7 +548,7 @@ def _regime_volatility_state(closes: np.ndarray, window: int = 20) -> float:
         # Compute rolling vol for the last 2*window returns
         vols = []
         for i in range(window, len(returns)):
-            vols.append(np.std(returns[i - window:i]))
+            vols.append(np.std(returns[i - window : i]))
         if not vols:
             return 0.0
         median_vol = np.median(vols)
@@ -576,7 +566,7 @@ def _regime_volatility_zscore(closes: np.ndarray, window: int = 20) -> float:
         returns = np.diff(closes) / (closes[:-1] + 1e-12)
         vols = []
         for i in range(window, len(returns)):
-            vols.append(np.std(returns[i - window:i]))
+            vols.append(np.std(returns[i - window : i]))
         if len(vols) < 5:
             return 0.0
         vols_arr = np.array(vols)
@@ -589,9 +579,9 @@ def _regime_volatility_zscore(closes: np.ndarray, window: int = 20) -> float:
         return 0.0
 
 
-def _orderflow_imbalance_proxy(opens: np.ndarray, highs: np.ndarray,
-                                lows: np.ndarray, closes: np.ndarray,
-                                volumes: np.ndarray) -> float:
+def _orderflow_imbalance_proxy(
+    opens: np.ndarray, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, volumes: np.ndarray
+) -> float:
     """Proxy for order flow imbalance using close-location-value (CLV) * volume."""
     if len(closes) < 5:
         return 0.0
@@ -614,7 +604,7 @@ def _tick_direction_ratio(closes: np.ndarray, window: int = 20) -> float:
     if len(closes) < window + 1:
         return 0.5
     try:
-        diffs = np.diff(closes[-window - 1:])
+        diffs = np.diff(closes[-window - 1 :])
         upticks = np.sum(diffs > 0)
         total = np.sum(diffs != 0)
         if total == 0:
@@ -711,8 +701,7 @@ def _mean_reversion_zscore(closes: np.ndarray, period: int = 20) -> float:
 # ---------------------------------------------------------------------------
 # RL-specific feature helpers
 # ---------------------------------------------------------------------------
-def _bid_ask_spread_proxy(highs: np.ndarray, lows: np.ndarray,
-                           closes: np.ndarray) -> float:
+def _bid_ask_spread_proxy(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> float:
     """Proxy for bid-ask spread using high-low range relative to close."""
     if len(closes) < 1:
         return 0.0
@@ -725,8 +714,7 @@ def _bid_ask_spread_proxy(highs: np.ndarray, lows: np.ndarray,
         return 0.0
 
 
-def _effective_spread_proxy(highs: np.ndarray, lows: np.ndarray,
-                             closes: np.ndarray, period: int = 5) -> float:
+def _effective_spread_proxy(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 5) -> float:
     """Rolling average of high-low spread as effective spread proxy."""
     if len(closes) < period:
         return 0.0
@@ -737,21 +725,19 @@ def _effective_spread_proxy(highs: np.ndarray, lows: np.ndarray,
         return 0.0
 
 
-def _intraday_volatility(highs: np.ndarray, lows: np.ndarray,
-                          closes: np.ndarray, period: int = 5) -> float:
+def _intraday_volatility(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 5) -> float:
     """Parkinson volatility estimator (more efficient than close-close)."""
     if len(closes) < period:
         return 0.0
     try:
         hl_ratio = np.log(highs[-period:] / (lows[-period:] + 1e-12))
-        parkinson_vol = np.sqrt(np.mean(hl_ratio ** 2) / (4.0 * np.log(2)))
+        parkinson_vol = np.sqrt(np.mean(hl_ratio**2) / (4.0 * np.log(2)))
         return float(parkinson_vol)
     except Exception:
         return 0.0
 
 
-def _intraday_range_ratio(highs: np.ndarray, lows: np.ndarray,
-                           closes: np.ndarray) -> float:
+def _intraday_range_ratio(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> float:
     """Ratio of current bar range to average bar range (last 20 bars)."""
     if len(closes) < 20:
         return 1.0
@@ -765,9 +751,9 @@ def _intraday_range_ratio(highs: np.ndarray, lows: np.ndarray,
         return 1.0
 
 
-def _slippage_estimate(highs: np.ndarray, lows: np.ndarray,
-                        closes: np.ndarray, volumes: np.ndarray,
-                        period: int = 10) -> float:
+def _slippage_estimate(
+    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, volumes: np.ndarray, period: int = 10
+) -> float:
     """Estimated slippage based on spread and volume."""
     if len(closes) < period:
         return 0.0
@@ -800,7 +786,7 @@ def _tick_velocity(closes: np.ndarray, period: int = 5) -> float:
     if len(closes) < period + 1:
         return 0.0
     try:
-        returns = np.diff(closes[-period - 1:]) / (closes[-period - 1:-1] + 1e-12)
+        returns = np.diff(closes[-period - 1 :]) / (closes[-period - 1 : -1] + 1e-12)
         return float(np.mean(returns))
     except Exception:
         return 0.0
@@ -812,7 +798,7 @@ def _quote_intensity(volumes: np.ndarray, period: int = 10) -> float:
         return 1.0
     try:
         recent = np.mean(volumes[-period:])
-        longer = np.mean(volumes[-period * 2:-period])
+        longer = np.mean(volumes[-period * 2 : -period])
         if longer < 1e-12:
             return 1.0
         return float(np.clip(recent / longer, 0.0, 5.0))
@@ -832,13 +818,13 @@ class FeatureEngine:
 
     def __init__(
         self,
-        return_periods: List[int] = None,
+        return_periods: list[int] = None,
         vol_window: int = 20,
         atr_period: int = 14,
         rsi_period: int = 14,
         ema_fast: int = 12,
         ema_slow: int = 26,
-        momentum_periods: List[int] = None,
+        momentum_periods: list[int] = None,
         volume_spike_window: int = 20,
     ):
         self.return_periods = return_periods or [1, 5, 10, 20]
@@ -850,7 +836,7 @@ class FeatureEngine:
         self.momentum_periods = momentum_periods or [5, 10, 20]
         self.volume_spike_window = volume_spike_window
 
-    def build_features(self, bars: List[Bar]) -> Dict[str, float]:
+    def build_features(self, bars: list[Bar]) -> dict[str, float]:
         """
         Compute 35+ features from bars. Only uses data up to and including
         the last bar. Returns dict of feature name -> value.
@@ -865,7 +851,7 @@ class FeatureEngine:
         volumes = _volumes(bars)
         n = len(closes)
 
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
 
         # ── Returns (4 features) ──
         for p in self.return_periods:
@@ -1017,6 +1003,7 @@ class FeatureEngine:
 # Feature Normalizer: z-score normalization for production safety
 # ---------------------------------------------------------------------------
 
+
 class FeatureNormalizer:
     """Z-score normalizer trained on historical features. Persisted alongside models.
 
@@ -1025,11 +1012,11 @@ class FeatureNormalizer:
     """
 
     def __init__(self):
-        self._means: Dict[str, float] = {}
-        self._stds: Dict[str, float] = {}
+        self._means: dict[str, float] = {}
+        self._stds: dict[str, float] = {}
         self._fitted: bool = False
 
-    def fit(self, feature_history: List[Dict[str, float]]) -> None:
+    def fit(self, feature_history: list[dict[str, float]]) -> None:
         """Compute per-feature mean and std from training data."""
         if len(feature_history) < 100:
             logger.warning("FeatureNormalizer: insufficient history (%d < 100), skipping fit", len(feature_history))
@@ -1049,11 +1036,11 @@ class FeatureNormalizer:
         self._fitted = True
         logger.info("FeatureNormalizer fitted on %d samples, %d features", len(feature_history), len(self._means))
 
-    def normalize(self, features: Dict[str, float]) -> Dict[str, float]:
+    def normalize(self, features: dict[str, float]) -> dict[str, float]:
         """Normalize features using stored statistics. Passthrough if not fitted."""
         if not self._fitted:
             return features
-        out: Dict[str, float] = {}
+        out: dict[str, float] = {}
         for k, v in features.items():
             mean = self._means.get(k, 0.0)
             std = self._stds.get(k, 1.0)

@@ -4,13 +4,12 @@ rank all stocks by prediction confidence, return top opportunities.
 
 Used by the AutonomousLoop to dynamically discover what to trade.
 """
+
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-
-import numpy as np
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -18,23 +17,25 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ScoredStock:
     """A stock scored by the AI model."""
+
     symbol: str
     exchange: str
-    confidence: float          # 0-1, model prediction strength
-    side: str                  # "BUY" or "SELL"
-    probability: float         # raw model output
-    price: float               # latest close price
-    volume: float              # latest volume
-    features: Dict[str, float] = field(default_factory=dict)
-    regime: Optional[str] = None
+    confidence: float  # 0-1, model prediction strength
+    side: str  # "BUY" or "SELL"
+    probability: float  # raw model output
+    price: float  # latest close price
+    volume: float  # latest volume
+    features: dict[str, float] = field(default_factory=dict)
+    regime: str | None = None
 
 
 @dataclass
 class ScanResult:
     """Result of a full market scan."""
-    scanned: int               # total symbols scanned
-    signals_found: int         # stocks with confidence above threshold
-    top_stocks: List[ScoredStock]
+
+    scanned: int  # total symbols scanned
+    signals_found: int  # stocks with confidence above threshold
+    top_stocks: list[ScoredStock]
     scan_time_ms: float
     timestamp: str
 
@@ -68,6 +69,7 @@ class MarketScanner:
         self.feature_engine = feature_engine
         if self.feature_engine is None:
             from src.ai.feature_engine import FeatureEngine
+
             self.feature_engine = FeatureEngine()
 
         self.top_n = top_n
@@ -78,9 +80,10 @@ class MarketScanner:
         self.yfinance_period = yfinance_period
         self._market_ctx = None  # cached per scan cycle
 
-    def _fetch_bars_yfinance(self, symbols: List[str]) -> Dict[str, Any]:
+    def _fetch_bars_yfinance(self, symbols: list[str]) -> dict[str, Any]:
         """Fetch latest bars for multiple symbols from yfinance (batch)."""
         import yfinance as yf
+
         from src.core.events import Bar, Exchange
 
         result = {}
@@ -121,7 +124,7 @@ class MarketScanner:
                     for idx, row in df.iterrows():
                         ts = idx.to_pydatetime()
                         if ts.tzinfo is None:
-                            ts = ts.replace(tzinfo=timezone.utc)
+                            ts = ts.replace(tzinfo=UTC)
                         bars.append(
                             Bar(
                                 symbol=symbol.replace(".NS", ""),
@@ -144,7 +147,7 @@ class MarketScanner:
 
         return result
 
-    def _score_bars(self, symbol: str, bars: list) -> Optional[ScoredStock]:
+    def _score_bars(self, symbol: str, bars: list) -> ScoredStock | None:
         """Run feature engine + alpha model on bars, return scored stock."""
         if len(bars) < 30:
             return None
@@ -194,7 +197,7 @@ class MarketScanner:
 
     def scan(
         self,
-        universe: Optional[List[str]] = None,
+        universe: list[str] | None = None,
         bar_cache=None,
     ) -> ScanResult:
         """
@@ -213,9 +216,11 @@ class MarketScanner:
             # Dynamic: auto-scan entire NSE market, pick best by liquidity
             try:
                 from src.scanner.dynamic_universe import get_dynamic_universe
+
                 universe = get_dynamic_universe().get_yfinance_symbols(count=300)
             except Exception:
                 from src.scanner.nse_universe import get_universe
+
                 universe = get_universe(yfinance_suffix=True)
 
         logger.info("MarketScanner: scanning %d symbols...", len(universe))
@@ -223,21 +228,25 @@ class MarketScanner:
         # Refresh market context once per scan cycle
         try:
             from src.ai.market_context import fetch_market_context
+
             self._market_ctx = fetch_market_context()
-            logger.info("Market context: NIFTY RSI=%.1f trend=%.0f vol=%.4f",
-                        self._market_ctx.get('nifty_rsi', 0),
-                        self._market_ctx.get('nifty_trend', 0),
-                        self._market_ctx.get('nifty_volatility', 0))
+            logger.info(
+                "Market context: NIFTY RSI=%.1f trend=%.0f vol=%.4f",
+                self._market_ctx.get("nifty_rsi", 0),
+                self._market_ctx.get("nifty_trend", 0),
+                self._market_ctx.get("nifty_volatility", 0),
+            )
         except Exception as e:
             logger.debug("Market context unavailable: %s", e)
             self._market_ctx = None
 
-        scored: List[ScoredStock] = []
+        scored: list[ScoredStock] = []
 
         # Try BarCache first for symbols that have live data
         cache_hits = set()
         if bar_cache is not None:
             from src.core.events import Exchange
+
             for symbol in universe:
                 raw_sym = symbol.replace(".NS", "")
                 bars = bar_cache.get_bars(raw_sym, Exchange.NSE, "1m", 100)
@@ -270,26 +279,31 @@ class MarketScanner:
         if top:
             logger.info(
                 "MarketScanner: scanned %d symbols, %d signals found, top %d returned (%.0fms)",
-                len(universe), len(scored), len(top), elapsed_ms,
+                len(universe),
+                len(scored),
+                len(top),
+                elapsed_ms,
             )
             for s in top[:5]:
-                logger.info("  %s %s  confidence=%.3f  price=%.2f  vol=%.0f",
-                            s.side, s.symbol, s.confidence, s.price, s.volume)
+                logger.info(
+                    "  %s %s  confidence=%.3f  price=%.2f  vol=%.0f", s.side, s.symbol, s.confidence, s.price, s.volume
+                )
         else:
-            logger.info("MarketScanner: scanned %d symbols, no signals above threshold (%.0fms)",
-                        len(universe), elapsed_ms)
+            logger.info(
+                "MarketScanner: scanned %d symbols, no signals above threshold (%.0fms)", len(universe), elapsed_ms
+            )
 
         return ScanResult(
             scanned=len(universe),
             signals_found=len(scored),
             top_stocks=top,
             scan_time_ms=elapsed_ms,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
         )
 
     def scan_to_signals(
         self,
-        universe: Optional[List[str]] = None,
+        universe: list[str] | None = None,
         bar_cache=None,
     ) -> list:
         """
@@ -310,7 +324,7 @@ class MarketScanner:
                 risk_level="NORMAL",
                 reason=f"scanner_prob={stock.probability:.3f}",
                 price=stock.price,
-                ts=datetime.now(timezone.utc),
+                ts=datetime.now(UTC),
                 metadata={"probability": stock.probability, "scanner": True},
             )
             signals.append(sig)

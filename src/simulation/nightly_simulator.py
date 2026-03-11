@@ -5,18 +5,16 @@ Select top performers for the next trading day.
 
 Runs at 16:30 IST (after NSE close at 15:30 + settlement buffer).
 """
+
 import asyncio
 import itertools
-import json
 import logging
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
-
-from src.core.events import Bar, Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +24,10 @@ _IST = timezone(timedelta(hours=5, minutes=30))
 @dataclass
 class StrategyPermutation:
     """A single strategy + parameter combination to simulate."""
+
     strategy_id: str
-    params: Dict[str, Any]
-    symbols: List[str]
+    params: dict[str, Any]
+    symbols: list[str]
     interval: str = "15m"
     lookback_days: int = 30
 
@@ -36,9 +35,10 @@ class StrategyPermutation:
 @dataclass
 class SimulationResult:
     """Outcome of a single permutation backtest."""
+
     strategy_id: str
-    params: Dict[str, Any]
-    symbols: List[str]
+    params: dict[str, Any]
+    symbols: list[str]
     interval: str
     lookback_days: int
     total_return_pct: float = 0.0
@@ -55,7 +55,7 @@ class SimulationResult:
 # --------------------------------------------------------------------------
 # Strategy parameter grids
 # --------------------------------------------------------------------------
-STRATEGY_GRIDS: Dict[str, Dict[str, list]] = {
+STRATEGY_GRIDS: dict[str, dict[str, list]] = {
     "ema_crossover": {
         "fast_period": [5, 9, 12, 21],
         "slow_period": [21, 26, 50, 100],
@@ -88,7 +88,7 @@ STRATEGY_GRIDS: Dict[str, Dict[str, list]] = {
 }
 
 
-def _generate_param_combinations(grid: Dict[str, list]) -> List[Dict[str, Any]]:
+def _generate_param_combinations(grid: dict[str, list]) -> list[dict[str, Any]]:
     """Generate all parameter combinations from a grid."""
     keys = list(grid.keys())
     values = list(grid.values())
@@ -98,7 +98,7 @@ def _generate_param_combinations(grid: Dict[str, list]) -> List[Dict[str, Any]]:
     return combinations
 
 
-def _filter_valid_ema(params: Dict) -> bool:
+def _filter_valid_ema(params: dict) -> bool:
     """Ensure EMA fast < slow."""
     if "fast_period" in params and "slow_period" in params:
         return params["fast_period"] < params["slow_period"]
@@ -111,13 +111,13 @@ def _filter_valid_ema(params: Dict) -> bool:
 # Simulation logic (runs in process pool for CPU parallelism)
 # --------------------------------------------------------------------------
 def _run_single_simulation(
-    bars_data: Dict[str, list],  # symbol -> list of bar dicts
+    bars_data: dict[str, list],  # symbol -> list of bar dicts
     strategy_id: str,
-    params: Dict[str, Any],
-    symbols: List[str],
+    params: dict[str, Any],
+    symbols: list[str],
     interval: str,
     initial_capital: float = 100000.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run a single strategy simulation on historical data.
     This function runs in a subprocess - must be self-contained.
@@ -142,7 +142,9 @@ def _run_single_simulation(
 
         position = None
         for i in range(50, len(closes)):
-            signal = _evaluate_signal(strategy_id, params, closes[:i+1], highs[:i+1], lows[:i+1], volumes[:i+1])
+            signal = _evaluate_signal(
+                strategy_id, params, closes[: i + 1], highs[: i + 1], lows[: i + 1], volumes[: i + 1]
+            )
 
             if signal > 0 and position is None:
                 # Enter long
@@ -157,11 +159,13 @@ def _run_single_simulation(
                 pnl = (exit_price - position["entry_price"]) * position["qty"]
                 capital += pnl
                 equity_curve.append(capital)
-                trades.append({
-                    "symbol": symbol,
-                    "pnl": pnl,
-                    "bars_held": i - position["entry_idx"],
-                })
+                trades.append(
+                    {
+                        "symbol": symbol,
+                        "pnl": pnl,
+                        "bars_held": i - position["entry_idx"],
+                    }
+                )
                 position = None
 
         # Force close at end
@@ -222,7 +226,7 @@ def _run_single_simulation(
 
 def _evaluate_signal(
     strategy_id: str,
-    params: Dict,
+    params: dict,
     closes: np.ndarray,
     highs: np.ndarray,
     lows: np.ndarray,
@@ -273,7 +277,7 @@ def _evaluate_signal(
         breakout_pct = params.get("breakout_pct", 2.0)
         if n < lookback + 1:
             return 0
-        high_n = np.max(highs[-lookback-1:-1])
+        high_n = np.max(highs[-lookback - 1 : -1])
         change_pct = (closes[-1] / high_n - 1) * 100
         if change_pct > breakout_pct:
             if params.get("volume_confirm", True):
@@ -324,7 +328,7 @@ def _evaluate_signal(
         if n < 30:
             return 0
         rsi = _simple_rsi(closes, 14)
-        momentum = (closes[-1] / closes[-20] - 1)
+        momentum = closes[-1] / closes[-20] - 1
         # Pseudo-confidence from normalized indicators
         confidence = 0.5 + momentum * 2 + (50 - rsi) / 200
         confidence = max(0, min(1, confidence))
@@ -351,7 +355,7 @@ def _simple_rsi(closes: np.ndarray, period: int = 14) -> float:
     """Fast RSI calculation."""
     if len(closes) < period + 1:
         return 50.0
-    deltas = np.diff(closes[-period-1:])
+    deltas = np.diff(closes[-period - 1 :])
     gains = np.mean(np.where(deltas > 0, deltas, 0))
     losses = np.mean(np.where(deltas < 0, -deltas, 0))
     if losses < 1e-12:
@@ -383,15 +387,15 @@ class NightlySimulator:
         self.top_n = top_n
         self.min_trades = min_trades
         self.min_sharpe = min_sharpe
-        self._results: List[SimulationResult] = []
-        self._last_run: Optional[datetime] = None
+        self._results: list[SimulationResult] = []
+        self._last_run: datetime | None = None
 
     def generate_permutations(
         self,
-        symbols: List[str],
-        intervals: List[str] = None,
-        strategies: List[str] = None,
-    ) -> List[StrategyPermutation]:
+        symbols: list[str],
+        intervals: list[str] = None,
+        strategies: list[str] = None,
+    ) -> list[StrategyPermutation]:
         """Generate all strategy-parameter-symbol permutations."""
         intervals = intervals or ["15m"]
         strategies = strategies or list(STRATEGY_GRIDS.keys())
@@ -410,22 +414,23 @@ class NightlySimulator:
                     continue
 
                 for interval in intervals:
-                    permutations.append(StrategyPermutation(
-                        strategy_id=strategy_id,
-                        params=params,
-                        symbols=symbols,
-                        interval=interval,
-                    ))
+                    permutations.append(
+                        StrategyPermutation(
+                            strategy_id=strategy_id,
+                            params=params,
+                            symbols=symbols,
+                            interval=interval,
+                        )
+                    )
 
-        logger.info("Generated %d permutations across %d strategies",
-                     len(permutations), len(strategies))
+        logger.info("Generated %d permutations across %d strategies", len(permutations), len(strategies))
         return permutations
 
     async def run_simulations(
         self,
-        bars_data: Dict[str, list],
-        permutations: List[StrategyPermutation],
-    ) -> List[SimulationResult]:
+        bars_data: dict[str, list],
+        permutations: list[StrategyPermutation],
+    ) -> list[SimulationResult]:
         """
         Run all permutations in parallel using process pool.
 
@@ -466,10 +471,7 @@ class NightlySimulator:
                 results.append(SimulationResult(**raw))
 
         # Filter: minimum trades and quality
-        qualified = [
-            r for r in results
-            if r.total_trades >= self.min_trades and r.sharpe_ratio >= self.min_sharpe
-        ]
+        qualified = [r for r in results if r.total_trades >= self.min_trades and r.sharpe_ratio >= self.min_sharpe]
 
         # Rank by composite score: Sharpe * 0.4 + Sortino * 0.3 + WinRate * 0.2 + (100 - |MaxDD|) * 0.1
         for r in qualified:
@@ -479,7 +481,7 @@ class NightlySimulator:
                 + r.win_rate * 0.002  # normalize to ~0-0.2
                 + (100 - abs(r.max_drawdown_pct)) * 0.001  # normalize
             )
-        qualified.sort(key=lambda r: getattr(r, '_score', 0), reverse=True)
+        qualified.sort(key=lambda r: getattr(r, "_score", 0), reverse=True)
 
         # Assign ranks and select top N
         for i, r in enumerate(qualified):
@@ -499,14 +501,14 @@ class NightlySimulator:
         )
         return qualified
 
-    def get_selected_strategies(self) -> List[SimulationResult]:
+    def get_selected_strategies(self) -> list[SimulationResult]:
         """Return strategies selected for next trading day."""
         return [r for r in self._results if r.selected]
 
-    def get_all_results(self) -> List[SimulationResult]:
+    def get_all_results(self) -> list[SimulationResult]:
         """Return all ranked results from last run."""
         return self._results
 
     @property
-    def last_run_time(self) -> Optional[datetime]:
+    def last_run_time(self) -> datetime | None:
         return self._last_run

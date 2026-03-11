@@ -6,13 +6,14 @@ Higher timeframes provide trend context; lower timeframes provide entry timing.
 Rule: Trade in the direction of the higher timeframe trend,
       timed by the lower timeframe signal.
 """
+
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
-from src.core.events import Bar
 from src.ai.feature_engine import FeatureEngine
+from src.core.events import Bar
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,14 @@ class MultiTimeframeEngine:
     Also computes cross-timeframe alignment features.
     """
 
-    def __init__(self, timeframes: List[str] = None):
+    def __init__(self, timeframes: list[str] = None):
         self.timeframes = timeframes or ["5m", "15m", "1h", "1d"]
         self._engine = FeatureEngine()
 
     def build_multi_tf_features(
         self,
-        bars_by_tf: Dict[str, List[Bar]],
-    ) -> Dict[str, float]:
+        bars_by_tf: dict[str, list[Bar]],
+    ) -> dict[str, float]:
         """
         Build comprehensive multi-timeframe feature dict.
 
@@ -52,10 +53,10 @@ class MultiTimeframeEngine:
         Returns:
             Dict of feature_name -> value with tf_ prefixes + alignment features.
         """
-        features: Dict[str, float] = {}
+        features: dict[str, float] = {}
 
         # Per-timeframe features
-        tf_features: Dict[str, Dict[str, float]] = {}
+        tf_features: dict[str, dict[str, float]] = {}
         for tf in self.timeframes:
             bars = bars_by_tf.get(tf, [])
             if len(bars) < 20:
@@ -79,13 +80,13 @@ class MultiTimeframeEngine:
 
     def _compute_alignment(
         self,
-        tf_features: Dict[str, Dict[str, float]],
-    ) -> Dict[str, float]:
+        tf_features: dict[str, dict[str, float]],
+    ) -> dict[str, float]:
         """
         Compute cross-timeframe alignment features.
         Alignment = how many timeframes agree on direction.
         """
-        alignment: Dict[str, float] = {}
+        alignment: dict[str, float] = {}
 
         # Trend alignment: count TFs where EMA spread > 0 (bullish)
         bullish_count = 0
@@ -97,9 +98,7 @@ class MultiTimeframeEngine:
                 if ema_spread > 0:
                     bullish_count += 1
 
-        alignment["mtf_trend_alignment"] = (
-            bullish_count / total_tfs if total_tfs > 0 else 0.5
-        )
+        alignment["mtf_trend_alignment"] = bullish_count / total_tfs if total_tfs > 0 else 0.5
 
         # Momentum alignment: count TFs with positive momentum_5
         mom_bullish = 0
@@ -111,9 +110,7 @@ class MultiTimeframeEngine:
                 if mom > 0:
                     mom_bullish += 1
 
-        alignment["mtf_momentum_alignment"] = (
-            mom_bullish / mom_total if mom_total > 0 else 0.5
-        )
+        alignment["mtf_momentum_alignment"] = mom_bullish / mom_total if mom_total > 0 else 0.5
 
         # RSI divergence: higher TF overbought but lower TF oversold (or vice versa)
         rsis = {}
@@ -151,21 +148,19 @@ class MultiTimeframeEngine:
                 macd_total += 1
                 if macd_hist > 0:
                     macd_bullish += 1
-        alignment["mtf_macd_alignment"] = (
-            macd_bullish / macd_total if macd_total > 0 else 0.5
-        )
+        alignment["mtf_macd_alignment"] = macd_bullish / macd_total if macd_total > 0 else 0.5
 
         return alignment
 
     def _compute_composite_signal(
         self,
-        tf_features: Dict[str, Dict[str, float]],
-    ) -> Dict[str, float]:
+        tf_features: dict[str, dict[str, float]],
+    ) -> dict[str, float]:
         """
         Compute a weighted composite signal across timeframes.
         Higher TFs get more weight for trend, lower TFs for timing.
         """
-        composite: Dict[str, float] = {}
+        composite: dict[str, float] = {}
 
         # Weighted trend score
         trend_score = 0.0
@@ -215,9 +210,7 @@ class MultiTimeframeEngine:
             # Agreement ratio: all same sign = high confidence
             avg_signal = np.mean(signals)
             composite["mtf_signal_strength"] = float(avg_signal / 3.0)  # normalize to [-1, 1]
-            composite["mtf_signal_agreement"] = float(
-                np.mean([1 if s * avg_signal > 0 else 0 for s in signals])
-            )
+            composite["mtf_signal_agreement"] = float(np.mean([1 if s * avg_signal > 0 else 0 for s in signals]))
         else:
             composite["mtf_signal_strength"] = 0.0
             composite["mtf_signal_agreement"] = 0.0
@@ -226,8 +219,8 @@ class MultiTimeframeEngine:
 
     def get_entry_timing(
         self,
-        bars_by_tf: Dict[str, List[Bar]],
-    ) -> Dict[str, Any]:
+        bars_by_tf: dict[str, list[Bar]],
+    ) -> dict[str, Any]:
         """
         Determine optimal entry timing based on multi-TF analysis.
 

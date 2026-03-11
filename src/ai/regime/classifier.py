@@ -3,10 +3,11 @@ Market Regime Classifier: Trending, Sideways, High/Low Vol, Crisis.
 Combines HMM, clustering, and volatility thresholds.
 Strategies activate/deactivate based on regime.
 """
+
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -29,7 +30,7 @@ class RegimeResult:
     confidence: float
     volatility_percentile: float
     trend_strength: float
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 class RegimeClassifier:
@@ -49,8 +50,8 @@ class RegimeClassifier:
         self.vol_low_percentile = vol_low_percentile
         self.crisis_vol_multiplier = crisis_vol_multiplier
         self.trend_threshold = trend_threshold
-        self._vol_history: List[float] = []
-        self._hmm: Optional[Any] = None
+        self._vol_history: list[float] = []
+        self._hmm: Any | None = None
         self._n_states = 3
 
     def update_vol_history(self, vol: float) -> None:
@@ -68,7 +69,7 @@ class RegimeClassifier:
         returns: np.ndarray,
         volatility: float,
         trend_strength: float,
-        hmm_state: Optional[int] = None,
+        hmm_state: int | None = None,
     ) -> RegimeResult:
         """
         Returns regime label and confidence. Uses volatility percentile and
@@ -125,7 +126,7 @@ class RegimeClassifier:
             metadata={"vol_regime": vol_regime, "trend_regime": trend_regime, "hmm_state": hmm_state},
         )
 
-    def strategies_for_regime(self, regime: RegimeLabel) -> List[str]:
+    def strategies_for_regime(self, regime: RegimeLabel) -> list[str]:
         """Which strategy IDs are allowed in this regime. Config-driven."""
         # Example mapping; load from config in production
         allowed = {

@@ -10,9 +10,8 @@ import logging
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +31,7 @@ INTERVAL_SECONDS = {
 
 class OHLCRejectReason(str, Enum):
     """Reasons an OHLC bar can be rejected or flagged."""
+
     VALID = "VALID"
     HIGH_LESS_THAN_OPEN = "HIGH_LESS_THAN_OPEN"
     HIGH_LESS_THAN_CLOSE = "HIGH_LESS_THAN_CLOSE"
@@ -47,6 +47,7 @@ class OHLCRejectReason(str, Enum):
 
 class OHLCWarning(str, Enum):
     """Warnings (non-rejecting) for OHLC bars."""
+
     GAP_DETECTED = "GAP_DETECTED"
     MISSING_BARS = "MISSING_BARS"
 
@@ -54,6 +55,7 @@ class OHLCWarning(str, Enum):
 @dataclass
 class OHLCValidationResult:
     """Result of validating a single OHLC bar."""
+
     is_valid: bool
     symbol: str
     open: float
@@ -62,8 +64,8 @@ class OHLCValidationResult:
     close: float
     volume: float
     timestamp: datetime
-    reject_reasons: List[OHLCRejectReason] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    reject_reasons: list[OHLCRejectReason] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     missing_bar_count: int = 0
 
     def to_dict(self) -> dict:
@@ -85,14 +87,15 @@ class OHLCValidationResult:
 @dataclass
 class SymbolBarStats:
     """Per-symbol OHLC validation statistics."""
+
     total_bars: int = 0
     valid_bars: int = 0
     rejected_bars: int = 0
-    reject_counts: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
-    warning_counts: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
-    last_close: Optional[float] = None
-    last_bar_timestamp: Optional[datetime] = None
-    last_interval: Optional[str] = None
+    reject_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    warning_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    last_close: float | None = None
+    last_bar_timestamp: datetime | None = None
+    last_interval: str | None = None
     total_gaps_detected: int = 0
     total_missing_bars: int = 0
 
@@ -124,7 +127,7 @@ class OHLCValidator:
         self._stale_seconds = stale_seconds
         self._extreme_body_ratio = extreme_body_ratio
         self._extreme_shadow_ratio = extreme_shadow_ratio
-        self._stats: Dict[str, SymbolBarStats] = defaultdict(SymbolBarStats)
+        self._stats: dict[str, SymbolBarStats] = defaultdict(SymbolBarStats)
         self._lock = threading.RLock()
 
     def validate_bar(
@@ -154,13 +157,13 @@ class OHLCValidator:
         Returns:
             OHLCValidationResult with is_valid and reject/warning details.
         """
-        reject_reasons: List[OHLCRejectReason] = []
-        warnings: List[str] = []
+        reject_reasons: list[OHLCRejectReason] = []
+        warnings: list[str] = []
         missing_bar_count = 0
 
         # Ensure timestamp is timezone-aware
         if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
+            timestamp = timestamp.replace(tzinfo=UTC)
 
         with self._lock:
             stats = self._stats[symbol]
@@ -210,7 +213,7 @@ class OHLCValidator:
                         stats.total_gaps_detected += 1
 
             # 5. Stale data detection
-            now_utc = datetime.now(timezone.utc)
+            now_utc = datetime.now(UTC)
             age_seconds = (now_utc - timestamp).total_seconds()
             if age_seconds > self._stale_seconds:
                 reject_reasons.append(OHLCRejectReason.STALE_BAR)
@@ -299,11 +302,7 @@ class OHLCValidator:
             stats = self._stats.get(symbol)
             if stats is None:
                 return {"symbol": symbol, "total_bars": 0}
-            valid_pct = (
-                (stats.valid_bars / stats.total_bars * 100)
-                if stats.total_bars > 0
-                else 0.0
-            )
+            valid_pct = (stats.valid_bars / stats.total_bars * 100) if stats.total_bars > 0 else 0.0
             return {
                 "symbol": symbol,
                 "total_bars": stats.total_bars,
@@ -313,16 +312,12 @@ class OHLCValidator:
                 "reject_counts": dict(stats.reject_counts),
                 "warning_counts": dict(stats.warning_counts),
                 "last_close": stats.last_close,
-                "last_bar_timestamp": (
-                    stats.last_bar_timestamp.isoformat()
-                    if stats.last_bar_timestamp
-                    else None
-                ),
+                "last_bar_timestamp": (stats.last_bar_timestamp.isoformat() if stats.last_bar_timestamp else None),
                 "total_gaps_detected": stats.total_gaps_detected,
                 "total_missing_bars": stats.total_missing_bars,
             }
 
-    def get_all_stats(self) -> Dict[str, dict]:
+    def get_all_stats(self) -> dict[str, dict]:
         """Get validation statistics for all tracked symbols."""
         with self._lock:
             return {symbol: self.get_stats(symbol) for symbol in self._stats}
@@ -337,7 +332,7 @@ class OHLCValidator:
             gaps = sum(s.total_gaps_detected for s in self._stats.values())
             missing = sum(s.total_missing_bars for s in self._stats.values())
 
-            all_reasons: Dict[str, int] = defaultdict(int)
+            all_reasons: dict[str, int] = defaultdict(int)
             for s in self._stats.values():
                 for reason, count in s.reject_counts.items():
                     all_reasons[reason] += count
@@ -353,7 +348,7 @@ class OHLCValidator:
                 "total_missing_bars": missing,
             }
 
-    def reset_stats(self, symbol: Optional[str] = None) -> None:
+    def reset_stats(self, symbol: str | None = None) -> None:
         """Reset statistics for a symbol or all symbols."""
         with self._lock:
             if symbol:

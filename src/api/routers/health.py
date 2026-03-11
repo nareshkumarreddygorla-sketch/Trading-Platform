@@ -1,13 +1,13 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -15,25 +15,25 @@ class HealthResponse(BaseModel):
 
 class ReadinessResponse(BaseModel):
     status: str
-    checks: Dict[str, Any]
-    message: Optional[str] = None
+    checks: dict[str, Any]
+    message: str | None = None
 
 
 class SelfTestResponse(BaseModel):
     status: str
-    checks: Dict[str, Any]
+    checks: dict[str, Any]
 
 
 class DeepHealthCheckStatus(BaseModel):
     status: str
-    reason: Optional[str] = None
-    joblib_count: Optional[int] = None
-    pt_count: Optional[int] = None
+    reason: str | None = None
+    joblib_count: int | None = None
+    pt_count: int | None = None
 
 
 class DeepHealthResponse(BaseModel):
     status: str
-    checks: Dict[str, Any]
+    checks: dict[str, Any]
 
 
 router = APIRouter()
@@ -52,17 +52,20 @@ async def ready(request: Request):
     Redis is optional in development mode.
     """
     import os
+
     checks = {}
     is_dev = os.getenv("ENV", "development") == "development"
 
     # Redis check (optional in dev mode)
     try:
         from src.core.config import get_settings
+
         redis_url = get_settings().market_data.redis_url
     except Exception:
         redis_url = "redis://localhost:6379/0"
     try:
         import redis.asyncio as aioredis
+
         r = aioredis.from_url(redis_url, decode_responses=True)
         await r.ping()
         await r.aclose()
@@ -77,6 +80,7 @@ async def ready(request: Request):
     if persistence is not None:
         try:
             import asyncio
+
             loop = asyncio.get_running_loop()
             await asyncio.wait_for(loop.run_in_executor(None, persistence.list_positions_sync), timeout=3.0)
             checks["database"] = "ok"
@@ -103,14 +107,17 @@ async def self_test(request: Request):
     Returns 200 with check results; 503 if any critical check fails.
     """
     import asyncio
+
     checks = {}
     critical_ok = True
 
     # Redis (use configured URL when available)
     try:
         import redis.asyncio as redis
+
         try:
             from src.core.config import get_settings
+
             redis_url = get_settings().market_data.redis_url
         except Exception:
             redis_url = "redis://localhost:6379/0"
@@ -118,7 +125,7 @@ async def self_test(request: Request):
         await asyncio.wait_for(r.ping(), timeout=2.0)
         await r.aclose()
         checks["redis"] = "ok"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         checks["redis"] = "timeout"
         critical_ok = False
     except Exception as e:
@@ -135,7 +142,7 @@ async def self_test(request: Request):
                 timeout=5.0,
             )
             checks["database"] = "ok"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             checks["database"] = "timeout"
             critical_ok = False
         except Exception as e:
@@ -148,13 +155,15 @@ async def self_test(request: Request):
     order_entry = getattr(request.app.state, "order_entry_service", None)
     if order_entry is not None and getattr(order_entry, "order_router", None):
         try:
-            gateway = getattr(order_entry.order_router, "default_gateway", None) or getattr(order_entry.order_router, "gateway", None)
+            gateway = getattr(order_entry.order_router, "default_gateway", None) or getattr(
+                order_entry.order_router, "gateway", None
+            )
             if gateway and hasattr(gateway, "get_positions"):
                 await asyncio.wait_for(gateway.get_positions(), timeout=5.0)
                 checks["broker"] = "ok"
             else:
                 checks["broker"] = "skipped (no get_positions)"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             checks["broker"] = "timeout"
         except Exception as e:
             checks["broker"] = str(e)
@@ -186,10 +195,12 @@ async def deep_health(request: Request):
     # 1. Database: SELECT 1 with 2s timeout
     try:
         from src.core.config import get_settings
+
         _settings = get_settings()
         db_url = _settings.database_url or os.environ.get("DATABASE_URL")
         if db_url:
             from sqlalchemy import create_engine, text
+
             engine = create_engine(db_url, pool_pre_ping=True)
             loop = asyncio.get_running_loop()
 
@@ -212,7 +223,7 @@ async def deep_health(request: Request):
                 checks["database"] = {"status": "ok"}
             else:
                 checks["database"] = {"status": "skipped", "reason": "no database configured"}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         checks["database"] = {"status": "fail", "reason": "timeout (2s)"}
         all_ok = False
     except Exception as e:
@@ -222,8 +233,10 @@ async def deep_health(request: Request):
     # 2. Redis: PING with 1s timeout
     try:
         import redis.asyncio as aioredis
+
         try:
             from src.core.config import get_settings
+
             redis_url = get_settings().market_data.redis_url
         except Exception:
             redis_url = "redis://localhost:6379/0"
@@ -231,7 +244,7 @@ async def deep_health(request: Request):
         await asyncio.wait_for(r.ping(), timeout=1.0)
         await r.aclose()
         checks["redis"] = {"status": "ok"}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         checks["redis"] = {"status": "fail", "reason": "timeout (1s)"}
         all_ok = False
     except ImportError:
@@ -297,7 +310,7 @@ async def deep_health(request: Request):
             checks["broker"] = {"status": "ok", "reason": "paper mode"}
         else:
             checks["broker"] = {"status": "skipped", "reason": "no gateway configured"}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         checks["broker"] = {"status": "fail", "reason": "timeout (5s)"}
         all_ok = False
     except Exception as e:

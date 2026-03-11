@@ -1,6 +1,6 @@
-from .registry import ModelRegistry, ModelMetadata, ModelVersion
-from .ensemble import EnsembleEngine, PredictionOutput
 from .base import BasePredictor
+from .ensemble import EnsembleEngine, PredictionOutput
+from .registry import ModelMetadata, ModelRegistry, ModelVersion
 
 __all__ = [
     "ModelRegistry",

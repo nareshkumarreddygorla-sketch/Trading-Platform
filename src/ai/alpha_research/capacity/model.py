@@ -3,15 +3,15 @@ Phase E: Capital capacity modeling.
 Participation impact, slippage scaling, market depth sensitivity, turnover pressure;
 simulate capital scaling; reject if edge breaks beyond participation threshold.
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
 class CapacityResult:
     capacity_notional: float
     capacity_score_normalized: float  # 0..1 vs target_capital
-    edge_breaks_at: Optional[float] = None
+    edge_breaks_at: float | None = None
     participation_at_capacity: float = 0.0
     passed: bool = True
 
@@ -26,7 +26,7 @@ def _impact_model(
     if adv <= 0:
         return 1.0
     participation = notional / adv
-    return k * (participation ** alpha)
+    return k * (participation**alpha)
 
 
 class CapacityModel:

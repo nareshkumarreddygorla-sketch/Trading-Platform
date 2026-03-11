@@ -3,8 +3,9 @@ Volatility prediction model using EWMA vol regime detection.
 Outputs confidence scaling based on current vs historical volatility,
 and directional bias from vol regime (mean-reversion signal: high vol → expect contraction → bullish).
 """
+
 import math
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .base import BasePredictor, PredictionOutput
 
@@ -23,14 +24,14 @@ class VolPredictor(BasePredictor):
     # EWMA decay factor (0.94 ~ RiskMetrics standard)
     LAMBDA = 0.94
     # Long-term vol percentile thresholds
-    HIGH_VOL_THRESHOLD = 1.5   # current vol > 1.5x median → high vol regime
-    LOW_VOL_THRESHOLD = 0.7    # current vol < 0.7x median → low vol regime
+    HIGH_VOL_THRESHOLD = 1.5  # current vol > 1.5x median → high vol regime
+    LOW_VOL_THRESHOLD = 0.7  # current vol < 0.7x median → low vol regime
 
     def __init__(self, model=None):
         self._model = model
         self.path = ""
 
-    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> PredictionOutput:
+    def predict(self, features: dict[str, float], context: dict[str, Any] | None = None) -> PredictionOutput:
         # Extract volatility features from feature engine
         rolling_vol_20 = features.get("rolling_vol_20", 0.0) or 0.0
         rolling_vol_5 = features.get("rolling_vol_5", 0.0) or 0.0

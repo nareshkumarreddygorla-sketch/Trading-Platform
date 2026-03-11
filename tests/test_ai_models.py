@@ -5,30 +5,31 @@ EnsembleEngine, FeatureEngine, and PerformanceTracker.
 All tests run without trained models on disk and without network access.
 Models operate in untrained/fallback mode.
 """
+
 import math
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
+from src.ai.feature_engine import FeatureEngine
 from src.ai.models.base import BasePredictor, PredictionOutput
-from src.ai.models.lstm_predictor import LSTMPredictor, FEATURE_KEYS, SEQ_LEN
-from src.ai.models.transformer_predictor import TransformerPredictor
+from src.ai.models.ensemble import EnsembleEngine
+from src.ai.models.lstm_predictor import FEATURE_KEYS, SEQ_LEN, LSTMPredictor
+from src.ai.models.registry import ModelRegistry
 from src.ai.models.rl_agent import RLPredictor
 from src.ai.models.sentiment_predictor import SentimentPredictor
-from src.ai.models.ensemble import EnsembleEngine
-from src.ai.models.registry import ModelRegistry
-from src.ai.feature_engine import FeatureEngine
-from src.ai.performance_tracker import PerformanceTracker, StrategyStats
+from src.ai.models.transformer_predictor import TransformerPredictor
+from src.ai.performance_tracker import PerformanceTracker
 from src.core.events import Bar, Exchange
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _make_dummy_features() -> Dict[str, float]:
+def _make_dummy_features() -> dict[str, float]:
     """Return a feature dict with all keys expected by LSTM/Transformer predictors."""
     return {k: np.random.uniform(-1.0, 1.0) for k in FEATURE_KEYS}
 
@@ -56,7 +57,7 @@ def _make_bar(
         low=l,
         close=c,
         volume=v,
-        ts=datetime(2025, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=ts_offset),
+        ts=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(minutes=ts_offset),
         source="test",
     )
 
@@ -71,8 +72,7 @@ class StubPredictor(BasePredictor):
         self._prob_up = prob_up
         self._confidence = confidence
 
-    def predict(self, features: Dict[str, float],
-                context: Optional[Dict[str, Any]] = None) -> PredictionOutput:
+    def predict(self, features: dict[str, float], context: dict[str, Any] | None = None) -> PredictionOutput:
         return PredictionOutput(
             prob_up=self._prob_up,
             expected_return=(self._prob_up - 0.5) * 0.02,
@@ -107,27 +107,43 @@ class TestPredictionOutput:
 
     def test_edge_values(self):
         po = PredictionOutput(
-            prob_up=0.0, expected_return=-0.05, confidence=1.0,
-            model_id="m", version="v0", metadata={},
+            prob_up=0.0,
+            expected_return=-0.05,
+            confidence=1.0,
+            model_id="m",
+            version="v0",
+            metadata={},
         )
         assert po.prob_up == 0.0
         assert po.confidence == 1.0
 
     def test_metadata_can_be_empty(self):
         po = PredictionOutput(
-            prob_up=0.5, expected_return=0.0, confidence=0.0,
-            model_id="m", version="v0", metadata={},
+            prob_up=0.5,
+            expected_return=0.0,
+            confidence=0.0,
+            model_id="m",
+            version="v0",
+            metadata={},
         )
         assert po.metadata == {}
 
     def test_equality(self):
         a = PredictionOutput(
-            prob_up=0.5, expected_return=0.0, confidence=0.5,
-            model_id="x", version="v1", metadata={},
+            prob_up=0.5,
+            expected_return=0.0,
+            confidence=0.5,
+            model_id="x",
+            version="v1",
+            metadata={},
         )
         b = PredictionOutput(
-            prob_up=0.5, expected_return=0.0, confidence=0.5,
-            model_id="x", version="v1", metadata={},
+            prob_up=0.5,
+            expected_return=0.0,
+            confidence=0.5,
+            model_id="x",
+            version="v1",
+            metadata={},
         )
         assert a == b
 
@@ -349,7 +365,10 @@ class TestModelRegistry:
         new = StubPredictor("model_x", prob_up=0.8)
         new.version = "v2_test"
         replaced = reg.replace_if_better(
-            "model_x", new, {"sharpe": 2.0}, compare_metric="sharpe",
+            "model_x",
+            new,
+            {"sharpe": 2.0},
+            compare_metric="sharpe",
         )
         assert replaced is True
         assert reg.get("model_x") is new
@@ -362,7 +381,10 @@ class TestModelRegistry:
         reg.register(old, metrics={"sharpe": 2.0})
         worse = StubPredictor("model_x", prob_up=0.3)
         replaced = reg.replace_if_better(
-            "model_x", worse, {"sharpe": 0.5}, compare_metric="sharpe",
+            "model_x",
+            worse,
+            {"sharpe": 0.5},
+            compare_metric="sharpe",
         )
         assert replaced is False
         assert reg.get("model_x") is old
@@ -485,9 +507,12 @@ class TestEnsembleEngine:
 
             def predict(self, features, context=None):
                 return PredictionOutput(
-                    prob_up=float("nan"), expected_return=float("nan"),
-                    confidence=float("nan"), model_id=self.model_id,
-                    version=self.version, metadata={},
+                    prob_up=float("nan"),
+                    expected_return=float("nan"),
+                    confidence=float("nan"),
+                    model_id=self.model_id,
+                    version=self.version,
+                    metadata={},
                 )
 
         reg = ModelRegistry()
@@ -535,18 +560,39 @@ class TestFeatureEngine:
     def test_expected_feature_keys_present(self, engine, bars_50):
         features = engine.build_features(bars_50)
         expected_keys = [
-            "returns_1", "returns_5", "returns_10", "returns_20",
-            "rolling_volatility", "atr", "bollinger_bandwidth",
-            "rsi", "ema_spread",
-            "macd_line", "macd_signal", "macd_histogram",
-            "stochastic_k", "stochastic_d", "adx",
-            "momentum_5", "momentum_10", "momentum_20", "roc_10",
-            "volume_spike", "obv_slope", "vwap_distance",
-            "bollinger_pct_b", "price_position", "gap_pct",
-            "candle_body_ratio", "candle_upper_shadow", "candle_lower_shadow",
+            "returns_1",
+            "returns_5",
+            "returns_10",
+            "returns_20",
+            "rolling_volatility",
+            "atr",
+            "bollinger_bandwidth",
+            "rsi",
+            "ema_spread",
+            "macd_line",
+            "macd_signal",
+            "macd_histogram",
+            "stochastic_k",
+            "stochastic_d",
+            "adx",
+            "momentum_5",
+            "momentum_10",
+            "momentum_20",
+            "roc_10",
+            "volume_spike",
+            "obv_slope",
+            "vwap_distance",
+            "bollinger_pct_b",
+            "price_position",
+            "gap_pct",
+            "candle_body_ratio",
+            "candle_upper_shadow",
+            "candle_lower_shadow",
             "candle_engulfing",
-            "williams_r", "mfi",
-            "close", "volume",
+            "williams_r",
+            "mfi",
+            "close",
+            "volume",
         ]
         for key in expected_keys:
             assert key in features, f"Missing feature key: {key}"

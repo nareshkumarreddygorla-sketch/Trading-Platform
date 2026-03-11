@@ -4,8 +4,8 @@ AlphaQualityScore = w1*IC_mean + w2*IC_stability + w3*Sharpe_OOS + w4*Regime_Rob
   + w5*Capacity_Score - w6*Turnover_penalty - w7*Slippage_sensitivity
 Rank; keep top decile; archive rest.
 """
+
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -32,7 +32,7 @@ class AlphaQualityScorer:
     keep only top decile (or top N); archive others.
     """
 
-    def __init__(self, config: Optional[AlphaQualityScoreConfig] = None):
+    def __init__(self, config: AlphaQualityScoreConfig | None = None):
         self.config = config or AlphaQualityScoreConfig()
 
     def score_one(
@@ -66,17 +66,17 @@ class AlphaQualityScorer:
 
     def rank_and_select(
         self,
-        validation_results: List[ValidationResult],
-        capacity_scores: Optional[Dict[str, float]] = None,
-        slippage_sensitivities: Optional[Dict[str, float]] = None,
-    ) -> List[tuple[str, float]]:
+        validation_results: list[ValidationResult],
+        capacity_scores: dict[str, float] | None = None,
+        slippage_sensitivities: dict[str, float] | None = None,
+    ) -> list[tuple[str, float]]:
         """
         Score each; sort by score descending; return list of (signal_id, score).
         If top_decile: return only top 10% of list; else return all sorted.
         """
         capacity_scores = capacity_scores or {}
         slippage_sensitivities = slippage_sensitivities or {}
-        scored: List[tuple[str, float]] = []
+        scored: list[tuple[str, float]] = []
         for vr in validation_results:
             if not vr.passed:
                 continue

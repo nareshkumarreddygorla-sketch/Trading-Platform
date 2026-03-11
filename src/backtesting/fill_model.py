@@ -3,8 +3,8 @@ Unified fill model: same logic for backtest and live simulation.
 Latency (N bars delay), slippage (bps), spread, volume participation limit, commission.
 No lookahead: fill at bar i+latency_bars using that bar's open/close and volume.
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 from src.core.events import Bar
 
@@ -28,7 +28,7 @@ class FillModel:
     fill_qty may be partial if volume limit. Out of range returns (None, 0, 0, 0).
     """
 
-    def __init__(self, config: Optional[FillModelConfig] = None):
+    def __init__(self, config: FillModelConfig | None = None):
         self.config = config or FillModelConfig()
         self.slippage = SlippageModel(self.config.slippage_bps)
 
@@ -54,7 +54,9 @@ class FillModel:
     def commission(self, notional: float) -> float:
         return notional * (self.config.commission_pct / 100.0)
 
-    def execute_at_bar_index(self, signal_bar_index: int, bars: list, side: str, requested_qty: float, price_hint: float) -> tuple[Optional[Bar], float, float, float]:
+    def execute_at_bar_index(
+        self, signal_bar_index: int, bars: list, side: str, requested_qty: float, price_hint: float
+    ) -> tuple[Bar | None, float, float, float]:
         """
         Signal was at bars[signal_bar_index]. Fill at signal_bar_index + latency_bars.
         Returns (fill_bar, fill_price, fill_qty, commission).

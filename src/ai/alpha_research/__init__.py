@@ -3,14 +3,15 @@ Alpha Research & Edge Discovery Engine.
 Automated hypothesis generation, statistical validation, quality scoring,
 clustering, capacity modeling, decay monitoring, edge preservation, pipeline.
 """
-from .hypothesis import AlphaHypothesisGenerator, HypothesisSpec
-from .validation import StatisticalValidator, ICResult, ValidationResult
-from .scoring import AlphaQualityScorer, AlphaQualityScoreConfig
-from .clustering import SignalClustering, ClusterConfig
+
 from .capacity import CapacityModel, CapacityResult
-from .decay import DecayMonitor, DecayConfig
+from .clustering import ClusterConfig, SignalClustering
+from .decay import DecayConfig, DecayMonitor
+from .hypothesis import AlphaHypothesisGenerator, HypothesisSpec
+from .pipeline import PipelineConfig, ResearchPipeline
 from .rules import EdgePreservationRules
-from .pipeline import ResearchPipeline, PipelineConfig
+from .scoring import AlphaQualityScoreConfig, AlphaQualityScorer
+from .validation import ICResult, StatisticalValidator, ValidationResult
 
 __all__ = [
     "AlphaHypothesisGenerator",

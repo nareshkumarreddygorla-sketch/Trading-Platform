@@ -2,10 +2,10 @@
 Fill delivery pipeline: poll broker order book, deduplicate, apply idempotently via FillHandler.
 Invariant: no fill may corrupt position state under concurrency (dedup + delta + order_lock).
 """
+
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Dict, Optional, Tuple
+from datetime import UTC, datetime
 
 from src.core.events import Order
 from src.monitoring.metrics import (
@@ -52,10 +52,12 @@ class FillListener:
         self.gateway = gateway
         self.fill_handler = fill_handler
         self.poll_interval = poll_interval_seconds
-        self._last_applied: Dict[str, Tuple[float, Optional[float], str]] = {}  # order_id -> (filled_qty, avg_price, status)
+        self._last_applied: dict[
+            str, tuple[float, float | None, str]
+        ] = {}  # order_id -> (filled_qty, avg_price, status)
         self._dedup_lock = asyncio.Lock()  # Protect _last_applied from concurrent access
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._redis = redis_client
         self._REDIS_PREFIX = "fill_dedup:"
         self._REDIS_TTL = 48 * 3600  # 48 hours
@@ -70,7 +72,8 @@ class FillListener:
             except Exception as e:
                 logger.warning(
                     "Failed to load fill dedup state from Redis on init "
-                    "(will use in-memory; dedup state may reload on first poll): %s", e
+                    "(will use in-memory; dedup state may reload on first poll): %s",
+                    e,
                 )
 
     def _load_dedup_from_redis(self) -> None:
@@ -78,6 +81,7 @@ class FillListener:
         if not self._redis:
             return
         import json
+
         keys = self._redis.keys(f"{self._REDIS_PREFIX}*")
         loaded = 0
         for key in keys:
@@ -85,7 +89,11 @@ class FillListener:
                 raw = self._redis.get(key)
                 if raw:
                     data = json.loads(raw)
-                    order_id = key.replace(self._REDIS_PREFIX, "") if isinstance(key, str) else key.decode().replace(self._REDIS_PREFIX, "")
+                    order_id = (
+                        key.replace(self._REDIS_PREFIX, "")
+                        if isinstance(key, str)
+                        else key.decode().replace(self._REDIS_PREFIX, "")
+                    )
                     self._last_applied[order_id] = (
                         float(data.get("filled_qty", 0)),
                         data.get("avg_price"),
@@ -97,11 +105,12 @@ class FillListener:
         if loaded:
             logger.info("Loaded %d fill dedup entries from Redis", loaded)
 
-    def _persist_dedup_to_redis(self, order_id: str, filled_qty: float, avg_price: Optional[float], status: str) -> None:
+    def _persist_dedup_to_redis(self, order_id: str, filled_qty: float, avg_price: float | None, status: str) -> None:
         """Persist fill dedup state to Redis with TTL."""
         if not self._redis:
             return
         import json
+
         try:
             key = f"{self._REDIS_PREFIX}{order_id}"
             data = json.dumps({"filled_qty": filled_qty, "avg_price": avg_price, "status": status})
@@ -116,7 +125,7 @@ class FillListener:
                 timeout=10.0,
             )
             return orders or []
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Fill listener fetch orders timed out (10s)")
             return []
         except Exception as e:
@@ -128,7 +137,7 @@ class FillListener:
         order: Order,
         delta_qty: float,
         fill_type: FillType,
-        fill_ts: Optional[datetime] = None,
+        fill_ts: datetime | None = None,
     ) -> FillEvent:
         return FillEvent(
             order_id=order.order_id or "",
@@ -140,7 +149,7 @@ class FillListener:
             filled_qty=delta_qty,
             remaining_qty=order.quantity - order.filled_qty,
             avg_price=order.avg_price,
-            ts=fill_ts or datetime.now(timezone.utc),
+            ts=fill_ts or datetime.now(UTC),
             strategy_id=order.strategy_id or "",
             metadata=getattr(order, "metadata", None) or {},
         )
@@ -186,7 +195,11 @@ class FillListener:
                     continue
 
                 delta = filled - prev_filled
-                fill_type = FillType.FILL if status_str in ("complete", "completed", "traded", "filled") else FillType.PARTIAL_FILL
+                fill_type = (
+                    FillType.FILL
+                    if status_str in ("complete", "completed", "traded", "filled")
+                    else FillType.PARTIAL_FILL
+                )
 
                 # Compute marginal fill price for this delta, not the cumulative
                 # average the broker reports.  The broker gives cumulative avg_price
@@ -209,7 +222,7 @@ class FillListener:
                     track_fill_event("fill" if fill_type == FillType.FILL else "partial_fill")
                     if fill_ts := getattr(order, "ts", None):
                         try:
-                            lat = (datetime.now(timezone.utc) - fill_ts).total_seconds()
+                            lat = (datetime.now(UTC) - fill_ts).total_seconds()
                             if lat >= 0:
                                 track_fill_latency(lat)
                         except Exception:
@@ -218,10 +231,10 @@ class FillListener:
                     self._persist_dedup_to_redis(oid, filled, avg_price, status_str)
 
                     # Feed outcome back to ensemble for IC weight learning
-                    ensemble = getattr(self, '_ensemble', None)
-                    if ensemble and hasattr(order, 'metadata') and order.metadata:
-                        pred_dir = order.metadata.get('predicted_direction')
-                        entry_price = order.metadata.get('entry_price', order.limit_price)
+                    ensemble = getattr(self, "_ensemble", None)
+                    if ensemble and hasattr(order, "metadata") and order.metadata:
+                        pred_dir = order.metadata.get("predicted_direction")
+                        entry_price = order.metadata.get("entry_price", order.limit_price)
                         if pred_dir is not None and avg_price and entry_price and entry_price > 0:
                             actual_return = (avg_price - entry_price) / entry_price
                             try:

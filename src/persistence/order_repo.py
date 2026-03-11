@@ -1,13 +1,12 @@
 """Order and OrderEvent repository. Sync API; use from async via executor."""
+
 import logging
-from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from datetime import UTC, datetime
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from src.core.events import Order, OrderStatus, OrderType
-from src.core.events import Exchange, SignalSide
+from src.core.events import Exchange, Order, OrderStatus, OrderType, SignalSide
 from src.execution.lifecycle_transitions import is_allowed_transition
 
 from .database import session_scope
@@ -54,7 +53,7 @@ def _order_model_to_domain(m: OrderModel) -> Order:
         status=_db_to_status(m.status),
         filled_qty=m.filled_qty or 0.0,
         avg_price=m.avg_price,
-        ts=m.created_at or datetime.now(timezone.utc),
+        ts=m.created_at or datetime.now(UTC),
         broker_order_id=m.broker_order_id,
         metadata={},
     )
@@ -65,12 +64,13 @@ class OrderRepository:
 
     def __init__(self, session_factory=None):
         from .database import get_session_factory
+
         self._session_factory = session_factory or get_session_factory()
 
     def create_order(
         self,
         order: Order,
-        idempotency_key: Optional[str] = None,
+        idempotency_key: str | None = None,
         initial_status: str = "NEW",
     ) -> None:
         """Insert Order. initial_status NEW or SUBMITTING (write-ahead). Fails if order_id already exists."""
@@ -113,11 +113,12 @@ class OrderRepository:
     def update_order_after_broker_ack(
         self,
         order_id: str,
-        broker_order_id: Optional[str],
+        broker_order_id: str | None,
         new_status: str = "NEW",
-        session: Optional[Session] = None,
+        session: Session | None = None,
     ) -> bool:
         """Transition SUBMITTING -> NEW after broker accepts. Sets broker_order_id."""
+
         def _up(sess: Session) -> bool:
             m = sess.query(OrderModel).filter(OrderModel.order_id == order_id).first()
             if not m or m.status != "SUBMITTING":
@@ -126,7 +127,7 @@ class OrderRepository:
                 return False
             m.status = new_status
             m.broker_order_id = broker_order_id
-            m.updated_at = datetime.now(timezone.utc)
+            m.updated_at = datetime.now(UTC)
             ev = OrderEventModel(
                 order_id_ref=m.order_id,
                 event_type=new_status,
@@ -137,14 +138,16 @@ class OrderRepository:
             )
             sess.add(ev)
             return True
+
         if session is not None:
             return _up(session)
         with session_scope() as sess:
             return _up(sess)
 
-    def get_by_order_id(self, order_id: str, session: Optional[Session] = None) -> Optional[Order]:
+    def get_by_order_id(self, order_id: str, session: Session | None = None) -> Order | None:
         """Return domain Order by order_id. If session given, use it; else new scope."""
-        def _get(sess: Session) -> Optional[Order]:
+
+        def _get(sess: Session) -> Order | None:
             m = sess.query(OrderModel).filter(OrderModel.order_id == order_id).first()
             return _order_model_to_domain(m) if m else None
 
@@ -153,7 +156,7 @@ class OrderRepository:
         with session_scope() as sess:
             return _get(sess)
 
-    def list_active_orders(self) -> List[Order]:
+    def list_active_orders(self) -> list[Order]:
         """Return all orders with status SUBMITTING, NEW, ACK, or PARTIAL. For cold start recovery and write-ahead reconcile."""
         with session_scope() as session:
             rows = (
@@ -164,7 +167,7 @@ class OrderRepository:
             )
             return [_order_model_to_domain(r) for r in rows]
 
-    def list_submitting_orders(self) -> List[Order]:
+    def list_submitting_orders(self) -> list[Order]:
         """Return orders with status SUBMITTING (write-ahead; need broker reconcile)."""
         with session_scope() as session:
             rows = (
@@ -179,9 +182,9 @@ class OrderRepository:
         self,
         limit: int = 50,
         offset: int = 0,
-        status: Optional[str] = None,
-        strategy_id: Optional[str] = None,
-    ) -> Tuple[List[Order], int]:
+        status: str | None = None,
+        strategy_id: str | None = None,
+    ) -> tuple[list[Order], int]:
         """Return (list of Order, total count). Status filter uses DB status (e.g. NEW, FILLED)."""
         with session_scope() as session:
             q = session.query(OrderModel)
@@ -198,8 +201,8 @@ class OrderRepository:
         order_id: str,
         status: OrderStatus,
         filled_qty: float = 0.0,
-        avg_price: Optional[float] = None,
-        session: Optional[Session] = None,
+        avg_price: float | None = None,
+        session: Session | None = None,
     ) -> bool:
         """Update order status and append OrderEvent. Returns True if order was found and updated."""
         db_status = _status_to_db(status)
@@ -210,13 +213,15 @@ class OrderRepository:
                 return False
             from_status = m.status
             if not is_allowed_transition(from_status, db_status):
-                logger.warning("Order %s: illegal status transition %s -> %s; rejecting update", order_id, from_status, db_status)
+                logger.warning(
+                    "Order %s: illegal status transition %s -> %s; rejecting update", order_id, from_status, db_status
+                )
                 return False
             m.status = db_status
             m.filled_qty = filled_qty
             if avg_price is not None:
                 m.avg_price = avg_price
-            m.updated_at = datetime.now(timezone.utc)
+            m.updated_at = datetime.now(UTC)
             ev = OrderEventModel(
                 order_id_ref=m.order_id,
                 event_type=db_status,

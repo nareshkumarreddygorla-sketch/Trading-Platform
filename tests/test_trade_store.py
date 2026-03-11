@@ -6,21 +6,19 @@ daily filters, concurrent access, and cross-instance persistence.
 
 Each test uses a unique temp directory to avoid cross-test contamination.
 """
-import os
+
 import sqlite3
-import tempfile
 import threading
-import time
-from datetime import datetime, timezone, date
+from datetime import UTC, date, datetime
 
 import pytest
 
 from src.persistence.trade_store import TradeStore
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -37,6 +35,7 @@ def store(db_path) -> TradeStore:
 # =========================================================================
 # 1. Create and load trade
 # =========================================================================
+
 
 class TestCreateAndLoad:
     def test_upsert_and_load_all(self, store):
@@ -97,14 +96,16 @@ class TestCreateAndLoad:
 
     def test_save_trade_dict(self, store):
         """save_trade accepts a dict and persists it."""
-        ok = store.save_trade({
-            "symbol": "INFY",
-            "exchange": "NSE",
-            "side": "SELL",
-            "qty": 20,
-            "entry_price": 1500.0,
-            "strategy_id": "rsi",
-        })
+        ok = store.save_trade(
+            {
+                "symbol": "INFY",
+                "exchange": "NSE",
+                "side": "SELL",
+                "qty": 20,
+                "entry_price": 1500.0,
+                "strategy_id": "rsi",
+            }
+        )
         assert ok is True
 
         all_trades = store.get_all_trades()
@@ -116,6 +117,7 @@ class TestCreateAndLoad:
 # =========================================================================
 # 2. Update stop loss / take profit
 # =========================================================================
+
 
 class TestUpdateSLTP:
     def test_update_stop_loss(self, store):
@@ -189,6 +191,7 @@ class TestUpdateSLTP:
 # =========================================================================
 # 3. Close trade calculates PnL
 # =========================================================================
+
 
 class TestCloseTrade:
     def test_close_trade_buy_calculates_pnl(self, store):
@@ -282,6 +285,7 @@ class TestCloseTrade:
 # 4. Daily trades filter
 # =========================================================================
 
+
 class TestDailyTrades:
     def test_get_daily_trades_returns_today(self, store):
         """get_daily_trades returns only trades opened today."""
@@ -337,6 +341,7 @@ class TestDailyTrades:
 # 5. Concurrent access
 # =========================================================================
 
+
 class TestConcurrentAccess:
     def test_concurrent_writes(self, store):
         """Multiple threads writing simultaneously should not corrupt the DB."""
@@ -370,9 +375,7 @@ class TestConcurrentAccess:
         # Verify all trades were written
         all_trades = store.load_all()
         expected_count = n_threads * trades_per_thread
-        assert len(all_trades) == expected_count, (
-            f"Expected {expected_count} trades, got {len(all_trades)}"
-        )
+        assert len(all_trades) == expected_count, f"Expected {expected_count} trades, got {len(all_trades)}"
 
     def test_concurrent_read_write(self, store):
         """Concurrent reads and writes should not cause corruption."""
@@ -431,6 +434,7 @@ class TestConcurrentAccess:
 # 6. Persistence across instances
 # =========================================================================
 
+
 class TestCrossInstancePersistence:
     def test_persist_across_instances(self, db_path):
         """Data written by one TradeStore instance is visible from a new instance
@@ -486,6 +490,7 @@ class TestCrossInstancePersistence:
 # 7. Delete trade (soft delete)
 # =========================================================================
 
+
 class TestDeleteTrade:
     def test_delete_trade_marks_closed(self, store):
         """delete_trade soft-deletes by setting status=CLOSED."""
@@ -516,6 +521,7 @@ class TestDeleteTrade:
 # =========================================================================
 # 8. Edge cases
 # =========================================================================
+
 
 class TestEdgeCases:
     def test_get_open_trades_alias(self, store):
@@ -591,9 +597,17 @@ class TestEdgeCases:
                (trade_key, symbol, exchange, side, qty, entry_price,
                 entry_time, status, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("CORRUPT:trade", "CORRUPT", "NSE", "BUY", 5, 0,
-             datetime.now(timezone.utc).isoformat(), "OPEN",
-             datetime.now(timezone.utc).isoformat()),
+            (
+                "CORRUPT:trade",
+                "CORRUPT",
+                "NSE",
+                "BUY",
+                5,
+                0,
+                datetime.now(UTC).isoformat(),
+                "OPEN",
+                datetime.now(UTC).isoformat(),
+            ),
         )
         conn.commit()
         conn.close()

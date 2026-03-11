@@ -3,8 +3,8 @@ Lifespan: RiskManager, circuit breaker, institutional risk modules (VaR, correla
 sector classifier, gap risk, tail risk, vol targeting), freeze qty, market impact,
 alert notifier, SEBI audit, daily report, ADV cache.
 """
+
 import logging
-import os
 
 from fastapi import FastAPI
 
@@ -17,6 +17,7 @@ async def init_risk(app: FastAPI) -> None:
     # ── Institutional Risk Modules ──
     try:
         from src.risk_engine.var import PortfolioVaR
+
         app.state.portfolio_var = PortfolioVaR(horizon_days=1)
         logger.info("PortfolioVaR initialized (95%%/99%% parametric VaR)")
     except Exception as e:
@@ -24,6 +25,7 @@ async def init_risk(app: FastAPI) -> None:
 
     try:
         from src.risk_engine.correlation import CorrelationGuard
+
         app.state.correlation_guard = CorrelationGuard(max_pairwise_correlation=0.70, max_portfolio_vol_pct=15.0)
         logger.info("CorrelationGuard initialized (max_corr=0.70, max_port_vol=15%%)")
     except Exception as e:
@@ -31,6 +33,7 @@ async def init_risk(app: FastAPI) -> None:
 
     try:
         from src.risk_engine.sector_map import SectorClassifier
+
         app.state.sector_classifier = SectorClassifier()
         logger.info("SectorClassifier initialized (%d sectors)", len(app.state.sector_classifier.list_sectors()))
     except Exception as e:
@@ -41,6 +44,7 @@ async def init_risk(app: FastAPI) -> None:
 
     try:
         from src.risk_engine.tail_risk import TailRiskProtector
+
         app.state.tail_risk_protector = TailRiskProtector()
         logger.info("TailRiskProtector initialized (VIX + rapid drawdown defense)")
     except Exception as e:
@@ -48,6 +52,7 @@ async def init_risk(app: FastAPI) -> None:
 
     try:
         from src.risk_engine.vol_targeting import VolatilityTargeter
+
         app.state.vol_targeter = VolatilityTargeter(target_vol_annual=12.0)
         logger.info("VolatilityTargeter initialized (target=12%% annualized)")
     except Exception as e:
@@ -55,6 +60,7 @@ async def init_risk(app: FastAPI) -> None:
 
     try:
         from src.execution.freeze_qty import FreezeQuantityManager
+
         app.state.freeze_qty_manager = FreezeQuantityManager()
         logger.info("FreezeQuantityManager initialized")
     except Exception as e:
@@ -62,6 +68,7 @@ async def init_risk(app: FastAPI) -> None:
 
     try:
         from src.execution.market_impact import MarketImpactModel
+
         app.state.market_impact_model = MarketImpactModel(gamma=0.25)
         logger.info("MarketImpactModel initialized (Almgren-Chriss)")
     except Exception as e:
@@ -69,6 +76,7 @@ async def init_risk(app: FastAPI) -> None:
 
     try:
         from src.alerts.notifier import AlertNotifier
+
         app.state.alert_notifier = AlertNotifier()
         logger.info("AlertNotifier initialized (channels: %s)", app.state.alert_notifier.config.enabled_channels)
     except Exception as e:
@@ -80,7 +88,9 @@ async def init_risk(app: FastAPI) -> None:
         rm._portfolio_var = getattr(app.state, "portfolio_var", None)
         rm._correlation_guard = getattr(app.state, "correlation_guard", None)
         rm._tail_risk_protector = getattr(app.state, "tail_risk_protector", None)
-        wired = [n for n in ("portfolio_var", "correlation_guard", "tail_risk_protector") if getattr(rm, f"_{n}") is not None]
+        wired = [
+            n for n in ("portfolio_var", "correlation_guard", "tail_risk_protector") if getattr(rm, f"_{n}") is not None
+        ]
         if wired:
             logger.info("RiskManager: institutional modules wired: %s", wired)
 
@@ -99,6 +109,7 @@ async def init_risk(app: FastAPI) -> None:
 
     try:
         from src.compliance.audit_trail import SEBIAuditTrail
+
         app.state.sebi_audit = SEBIAuditTrail()
         app.state.audit_trail = app.state.sebi_audit  # Alias for audit router
         logger.info("SEBI audit trail initialized (append-only)")
@@ -107,6 +118,7 @@ async def init_risk(app: FastAPI) -> None:
 
     try:
         from src.reporting.daily_report import DailyReportGenerator
+
         app.state.daily_report_generator = DailyReportGenerator(
             risk_manager=getattr(app.state, "risk_manager", None),
             persistence_service=getattr(app.state, "persistence_service", None),
@@ -118,6 +130,7 @@ async def init_risk(app: FastAPI) -> None:
     # ── ADV Cache (Sprint 7.7) ──
     try:
         from src.market_data.adv_cache import ADVCache
+
         _adv_cache = ADVCache()
         app.state.adv_cache = _adv_cache
         logger.info("ADVCache initialized")
@@ -127,6 +140,7 @@ async def init_risk(app: FastAPI) -> None:
     # ── Stress Testing Engine (Sprint 10.12) ──
     try:
         from src.risk_engine.stress_testing import StressTestEngine
+
         _sector_clf = getattr(app.state, "sector_classifier", None)
         app.state.stress_test_engine = StressTestEngine(sector_classifier=_sector_clf)
         logger.info("StressTestEngine initialized (10 scenarios: 4 historical + 6 hypothetical)")
@@ -136,6 +150,7 @@ async def init_risk(app: FastAPI) -> None:
     # ── Data Archival Manager (Sprint 10.13) ──
     try:
         from src.persistence.archival import DataArchivalManager
+
         app.state.archival_manager = DataArchivalManager()
         logger.info("DataArchivalManager initialized (SEBI 7yr audit retention)")
     except Exception as e:
@@ -144,6 +159,7 @@ async def init_risk(app: FastAPI) -> None:
     # ── Gap Risk Manager (Sprint 7.3) ──
     try:
         from src.risk_engine.gap_risk import GapRiskManager
+
         _gap_risk_mgr = GapRiskManager()
         app.state.gap_risk_manager = _gap_risk_mgr
         logger.info("GapRiskManager initialized")

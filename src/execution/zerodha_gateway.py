@@ -30,8 +30,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 from uuid import uuid4
 
 from src.core.events import (
@@ -53,7 +53,7 @@ audit_logger = logging.getLogger("audit.zerodha.token")
 # Lazy SDK import
 # ---------------------------------------------------------------------------
 
-_kiteconnect_available: Optional[bool] = None
+_kiteconnect_available: bool | None = None
 
 
 def _import_kite():
@@ -63,13 +63,13 @@ def _import_kite():
         return None
     try:
         from kiteconnect import KiteConnect
+
         _kiteconnect_available = True
         return KiteConnect
     except ImportError:
         _kiteconnect_available = False
         logger.warning(
-            "kiteconnect package not installed. Live trading unavailable. "
-            "Install with: pip install kiteconnect"
+            "kiteconnect package not installed. Live trading unavailable. Install with: pip install kiteconnect"
         )
         return None
 
@@ -82,7 +82,7 @@ def _import_kite():
 class KiteGatewayError(Exception):
     """Raised for Kite Connect API errors with optional error code."""
 
-    def __init__(self, message: str, *, errorcode: Optional[str] = None):
+    def __init__(self, message: str, *, errorcode: str | None = None):
         super().__init__(message)
         self.errorcode = errorcode
 
@@ -110,13 +110,13 @@ _CIRCUIT_BREAKER_MESSAGES = {
 }
 
 # Per-symbol circuit halt tracking: symbol -> monotonic timestamp
-_circuit_halted_symbols: Dict[str, float] = {}
+_circuit_halted_symbols: dict[str, float] = {}
 _CIRCUIT_HALT_WINDOW: float = 300.0  # 5 minutes
 
 # Token constants (Kite tokens expire daily at ~06:00 IST next day)
-_TOKEN_MAX_AGE: float = 18 * 3600          # conservative 18h (tokens last ~24h)
+_TOKEN_MAX_AGE: float = 18 * 3600  # conservative 18h (tokens last ~24h)
 _TOKEN_REFRESH_HEADROOM: float = 1 * 3600  # warn 1h before assumed expiry
-_MAX_CONSECUTIVE_FAILURES: int = 3         # critical alert threshold
+_MAX_CONSECUTIVE_FAILURES: int = 3  # critical alert threshold
 
 # Retry configuration
 _MAX_RETRIES: int = 2
@@ -128,33 +128,33 @@ _RETRY_BACKOFF_BASE: float = 0.5  # seconds
 # ---------------------------------------------------------------------------
 
 # Order type mapping: internal -> Kite
-_ORDER_TYPE_TO_KITE: Dict[str, str] = {
+_ORDER_TYPE_TO_KITE: dict[str, str] = {
     "MARKET": "MARKET",
     "LIMIT": "LIMIT",
-    "SL": "SL",          # stop-loss limit
-    "SL-M": "SL-M",      # stop-loss market
+    "SL": "SL",  # stop-loss limit
+    "SL-M": "SL-M",  # stop-loss market
 }
 
 # Side mapping: internal -> Kite transaction type
-_SIDE_TO_KITE: Dict[str, str] = {
+_SIDE_TO_KITE: dict[str, str] = {
     "BUY": "BUY",
     "SELL": "SELL",
 }
 
 # Product type mapping: internal -> Kite product
-_PRODUCT_TYPE_TO_KITE: Dict[str, str] = {
-    "INTRADAY": "MIS",   # Margin Intraday Square-off
+_PRODUCT_TYPE_TO_KITE: dict[str, str] = {
+    "INTRADAY": "MIS",  # Margin Intraday Square-off
     "MIS": "MIS",
-    "CNC": "CNC",        # Cash and Carry (delivery)
-    "NRML": "NRML",      # Normal (F&O overnight)
+    "CNC": "CNC",  # Cash and Carry (delivery)
+    "NRML": "NRML",  # Normal (F&O overnight)
     "DELIVERY": "CNC",
 }
 
 # Reverse maps: Kite -> internal
-_KITE_PRODUCT_MAP: Dict[str, str] = {"MIS": "INTRADAY", "CNC": "CNC", "NRML": "NRML"}
+_KITE_PRODUCT_MAP: dict[str, str] = {"MIS": "INTRADAY", "CNC": "CNC", "NRML": "NRML"}
 
 # Kite order status -> our canonical OrderStatus
-_KITE_STATUS_MAP: Dict[str, OrderStatus] = {
+_KITE_STATUS_MAP: dict[str, OrderStatus] = {
     "OPEN": OrderStatus.LIVE,
     "COMPLETE": OrderStatus.FILLED,
     "CANCELLED": OrderStatus.CANCELLED,
@@ -169,14 +169,14 @@ _KITE_STATUS_MAP: Dict[str, OrderStatus] = {
 }
 
 # Exchange mapping: our Exchange names -> Kite exchange strings
-_EXCHANGE_TO_KITE: Dict[str, str] = {
+_EXCHANGE_TO_KITE: dict[str, str] = {
     "NSE": "NSE",
     "BSE": "BSE",
-    "NFO": "NFO",        # NSE F&O
-    "BFO": "BFO",        # BSE F&O
-    "CDS": "CDS",        # Currency
+    "NFO": "NFO",  # NSE F&O
+    "BFO": "BFO",  # BSE F&O
+    "CDS": "CDS",  # Currency
     "BCD": "BCD",
-    "MCX": "MCX",        # Commodity
+    "MCX": "MCX",  # Commodity
 }
 
 
@@ -252,9 +252,9 @@ class ZerodhaGateway(BrokerInterface):
         access_token: str = "",
         *,
         paper: bool = True,
-        request_token: Optional[str] = None,
+        request_token: str | None = None,
         request_timeout: float = 10.0,
-        on_health_failure: Optional[Callable[[], None]] = None,
+        on_health_failure: Callable[[], None] | None = None,
     ) -> None:
         self._api_key = api_key
         self._api_secret = api_secret
@@ -276,9 +276,9 @@ class ZerodhaGateway(BrokerInterface):
         self._refresh_lock: asyncio.Lock = asyncio.Lock()
 
         # Paper-mode bookkeeping
-        self._paper_orders: List[Dict[str, Any]] = []
-        self._paper_positions: List[Dict[str, Any]] = []
-        self._paper_holdings: List[Dict[str, Any]] = []
+        self._paper_orders: list[dict[str, Any]] = []
+        self._paper_positions: list[dict[str, Any]] = []
+        self._paper_holdings: list[dict[str, Any]] = []
 
     # -- BrokerInterface properties -----------------------------------------
 
@@ -315,10 +315,7 @@ class ZerodhaGateway(BrokerInterface):
 
         KiteConnect = _import_kite()
         if KiteConnect is None:
-            raise ConnectionError(
-                "kiteconnect package is not installed. "
-                "Install with: pip install kiteconnect"
-            )
+            raise ConnectionError("kiteconnect package is not installed. Install with: pip install kiteconnect")
 
         self._kite = KiteConnect(api_key=self._api_key)
 
@@ -336,28 +333,21 @@ class ZerodhaGateway(BrokerInterface):
                 self._token_acquired_at = time.monotonic()
                 self._consecutive_failures = 0
                 self._auth_failed = False
-                audit_logger.info(
-                    "Token validated during connect at %.0f", time.time()
-                )
+                audit_logger.info("Token validated during connect at %.0f", time.time())
                 logger.info("Zerodha execution (live): session ready via access_token")
                 return
             except Exception as exc:
                 if _is_token_expired_error(exc):
-                    logger.warning(
-                        "Provided access_token is expired/invalid: %s", exc
-                    )
+                    logger.warning("Provided access_token is expired/invalid: %s", exc)
                     # Fall through to request_token flow or raise
                 else:
-                    raise ConnectionError(
-                        f"Zerodha session validation failed: {exc}"
-                    ) from exc
+                    raise ConnectionError(f"Zerodha session validation failed: {exc}") from exc
 
         if self._request_token and self._api_secret:
             try:
+
                 def _generate_session():
-                    return self._kite.generate_session(
-                        self._request_token, api_secret=self._api_secret
-                    )
+                    return self._kite.generate_session(self._request_token, api_secret=self._api_secret)
 
                 data = await asyncio.wait_for(
                     loop.run_in_executor(None, _generate_session),
@@ -369,30 +359,21 @@ class ZerodhaGateway(BrokerInterface):
                 self._token_acquired_at = time.monotonic()
                 self._consecutive_failures = 0
                 self._auth_failed = False
-                audit_logger.info(
-                    "Token acquired via request_token at %.0f", time.time()
-                )
-                logger.info(
-                    "Zerodha execution (live): session ready via request_token"
-                )
+                audit_logger.info("Token acquired via request_token at %.0f", time.time())
+                logger.info("Zerodha execution (live): session ready via request_token")
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError as texc:
                 logger.error("Zerodha session generation timed out")
                 self._notify_health_failure()
-                raise ConnectionError("Zerodha session generation timed out")
+                raise ConnectionError("Zerodha session generation timed out") from texc
             except Exception as exc:
                 logger.error("Zerodha session generation failed: %s", exc)
                 self._notify_health_failure()
-                raise ConnectionError(
-                    f"Zerodha session generation failed: {exc}"
-                ) from exc
+                raise ConnectionError(f"Zerodha session generation failed: {exc}") from exc
 
         # No valid credentials -- tell the caller what to do
         login_url = self._kite.login_url()
-        raise ConnectionError(
-            f"No valid access_token or request_token. "
-            f"Redirect user to: {login_url}"
-        )
+        raise ConnectionError(f"No valid access_token or request_token. Redirect user to: {login_url}")
 
     async def disconnect(self) -> None:
         """Invalidate the session."""
@@ -461,10 +442,9 @@ class ZerodhaGateway(BrokerInterface):
 
         loop = asyncio.get_running_loop()
         try:
+
             def _generate():
-                return self._kite.generate_session(
-                    request_token, api_secret=self._api_secret
-                )
+                return self._kite.generate_session(request_token, api_secret=self._api_secret)
 
             data = await asyncio.wait_for(
                 loop.run_in_executor(None, _generate),
@@ -476,16 +456,12 @@ class ZerodhaGateway(BrokerInterface):
             self._token_acquired_at = time.monotonic()
             self._consecutive_failures = 0
             self._auth_failed = False
-            audit_logger.info(
-                "Token refreshed via request_token at %.0f", time.time()
-            )
+            audit_logger.info("Token refreshed via request_token at %.0f", time.time())
             return self._access_token
         except Exception as exc:
             logger.error("Token exchange failed: %s", exc)
             self._notify_health_failure()
-            raise KiteGatewayError(
-                f"Token exchange failed: {exc}"
-            ) from exc
+            raise KiteGatewayError(f"Token exchange failed: {exc}") from exc
 
     # -- token lifecycle ----------------------------------------------------
 
@@ -508,15 +484,13 @@ class ZerodhaGateway(BrokerInterface):
 
         if self._auth_failed:
             raise KiteGatewayError(
-                "Zerodha authentication has failed repeatedly. "
-                "Manual re-login required.",
+                "Zerodha authentication has failed repeatedly. Manual re-login required.",
                 errorcode="AUTH_FAILED",
             )
 
         if self._is_token_expiring():
             logger.warning(
-                "Kite access token approaching expiry (acquired %.0fs ago). "
-                "User must re-authenticate via login URL.",
+                "Kite access token approaching expiry (acquired %.0fs ago). User must re-authenticate via login URL.",
                 time.monotonic() - self._token_acquired_at,
             )
             # Don't block -- just warn.  The actual token validation will
@@ -538,7 +512,7 @@ class ZerodhaGateway(BrokerInterface):
         broker_fn: Callable[[], Any],
         *,
         retries: int = _MAX_RETRIES,
-        symbol: Optional[str] = None,
+        symbol: str | None = None,
     ) -> Any:
         """Execute a synchronous Kite SDK call with retry and error handling.
 
@@ -556,14 +530,19 @@ class ZerodhaGateway(BrokerInterface):
             )
         except ImportError:
             # Metrics module may not be available in all environments
-            def track_broker_failure(op, reason): pass  # noqa: E704
-            def track_broker_latency(op, seconds): pass  # noqa: E704
-            def track_broker_session_expired(): pass  # noqa: E704
+            def track_broker_failure(op, reason):
+                pass  # noqa: E704
+
+            def track_broker_latency(op, seconds):
+                pass  # noqa: E704
+
+            def track_broker_session_expired():
+                pass  # noqa: E704
 
         await self._ensure_valid_token()
 
         loop = asyncio.get_running_loop()
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
 
         for attempt in range(max(retries, 1)):
             t0 = time.perf_counter()
@@ -578,13 +557,16 @@ class ZerodhaGateway(BrokerInterface):
                 self._consecutive_failures = 0
                 return result
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 elapsed = time.perf_counter() - t0
                 track_broker_latency(operation_name, elapsed)
                 track_broker_failure(operation_name, "timeout")
                 logger.warning(
                     "Zerodha %s timeout (attempt %d/%d, %.2fs)",
-                    operation_name, attempt + 1, retries, elapsed,
+                    operation_name,
+                    attempt + 1,
+                    retries,
+                    elapsed,
                 )
                 last_exc = KiteGatewayError(
                     f"{operation_name} timeout after {elapsed:.2f}s",
@@ -601,7 +583,9 @@ class ZerodhaGateway(BrokerInterface):
                     self._consecutive_failures += 1
                     audit_logger.warning(
                         "Token expired during %s (attempt %d): %s",
-                        operation_name, attempt + 1, exc,
+                        operation_name,
+                        attempt + 1,
+                        exc,
                     )
                     if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
                         self._auth_failed = True
@@ -622,12 +606,12 @@ class ZerodhaGateway(BrokerInterface):
                 if _is_circuit_breaker_error(exc):
                     if symbol:
                         _circuit_halted_symbols[symbol] = time.monotonic()
-                    track_broker_failure(
-                        operation_name, "circuit_breaker"
-                    )
+                    track_broker_failure(operation_name, "circuit_breaker")
                     logger.warning(
                         "Exchange circuit breaker during %s for %s: %s",
-                        operation_name, symbol or "unknown", exc,
+                        operation_name,
+                        symbol or "unknown",
+                        exc,
                     )
                     raise KiteGatewayError(
                         f"Exchange circuit breaker halt: {exc}",
@@ -651,18 +635,19 @@ class ZerodhaGateway(BrokerInterface):
                     ) from exc
 
                 # Transient / network errors -- retry with backoff
-                track_broker_failure(
-                    operation_name, type(exc).__name__
-                )
+                track_broker_failure(operation_name, type(exc).__name__)
                 logger.warning(
                     "Zerodha %s failed (attempt %d/%d): %s",
-                    operation_name, attempt + 1, retries, exc,
+                    operation_name,
+                    attempt + 1,
+                    retries,
+                    exc,
                 )
                 last_exc = exc
 
             # Exponential backoff before retry
             if attempt < retries - 1:
-                backoff = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                backoff = _RETRY_BACKOFF_BASE * (2**attempt)
                 await asyncio.sleep(backoff)
 
         # All retries exhausted
@@ -680,9 +665,7 @@ class ZerodhaGateway(BrokerInterface):
     def _require_live_session(self) -> None:
         """Raise if live mode but no active session."""
         if not self._connected or self._kite is None:
-            raise ConnectionError(
-                "Zerodha gateway is not connected. Call connect() first."
-            )
+            raise ConnectionError("Zerodha gateway is not connected. Call connect() first.")
 
     def _check_circuit_halt(self, symbol: str) -> None:
         """Raise if the symbol is under a circuit halt cooldown."""
@@ -691,22 +674,20 @@ class ZerodhaGateway(BrokerInterface):
             elapsed = time.monotonic() - halt_time
             if elapsed < _CIRCUIT_HALT_WINDOW:
                 raise KiteGatewayError(
-                    f"Symbol {symbol} under circuit halt ({elapsed:.0f}s ago, "
-                    f"cooldown {_CIRCUIT_HALT_WINDOW:.0f}s)",
+                    f"Symbol {symbol} under circuit halt ({elapsed:.0f}s ago, cooldown {_CIRCUIT_HALT_WINDOW:.0f}s)",
                     errorcode="CIRCUIT_HALT",
                 )
         # BUG 29 FIX: Don't delete during iteration. Snapshot keys first,
         # then delete expired entries safely.
         symbols_to_clear = [
-            k for k, v in _circuit_halted_symbols.items()
-            if time.monotonic() - v >= _CIRCUIT_HALT_WINDOW
+            k for k, v in _circuit_halted_symbols.items() if time.monotonic() - v >= _CIRCUIT_HALT_WINDOW
         ]
         for k in symbols_to_clear:
             del _circuit_halted_symbols[k]
 
     # -- parse helpers (Kite response -> domain models) ---------------------
 
-    def _order_from_kite(self, row: Dict[str, Any], strategy_id: str = "") -> Order:
+    def _order_from_kite(self, row: dict[str, Any], strategy_id: str = "") -> Order:
         """Convert a Kite order dict to our Order domain model."""
         status_str = row.get("status", "")
         filled_qty = float(row.get("filled_quantity", 0) or 0)
@@ -714,11 +695,7 @@ class ZerodhaGateway(BrokerInterface):
 
         # If partially filled, update status
         total_qty = float(row.get("quantity", 0) or 0)
-        if (
-            filled_qty > 0
-            and filled_qty < total_qty
-            and order_status == OrderStatus.LIVE
-        ):
+        if filled_qty > 0 and filled_qty < total_qty and order_status == OrderStatus.LIVE:
             order_status = OrderStatus.PARTIALLY_FILLED
 
         return Order(
@@ -745,7 +722,7 @@ class ZerodhaGateway(BrokerInterface):
             },
         )
 
-    def _position_from_kite(self, row: Dict[str, Any]) -> Position:
+    def _position_from_kite(self, row: dict[str, Any]) -> Position:
         """Convert a Kite position dict to our Position domain model."""
         net_qty = int(row.get("quantity", 0) or 0)
         side = SignalSide.BUY if net_qty >= 0 else SignalSide.SELL
@@ -775,20 +752,28 @@ class ZerodhaGateway(BrokerInterface):
     # -- orders -------------------------------------------------------------
 
     @staticmethod
-    def _dict_to_order(record: Dict[str, Any], kwargs: Dict[str, Any] = {}) -> Order:
+    def _dict_to_order(record: dict[str, Any], kwargs: dict[str, Any] | None = None) -> Order:
         """Convert a raw order dict (paper or live) to an Order object."""
+        if kwargs is None:
+            kwargs = {}
         _KITE_SIDE_MAP = {"BUY": SignalSide.BUY, "SELL": SignalSide.SELL}
         _KITE_EXCHANGE_MAP = {
-            "NSE": Exchange.NSE, "BSE": Exchange.BSE,
-            "NFO": Exchange.NFO, "BFO": Exchange.BFO,
-            "CDS": Exchange.CDS, "MCX": Exchange.MCX,
+            "NSE": Exchange.NSE,
+            "BSE": Exchange.BSE,
+            "NFO": Exchange.NFO,
+            "BFO": Exchange.BFO,
+            "CDS": Exchange.CDS,
+            "MCX": Exchange.MCX,
         }
         _KITE_ORDER_TYPE_MAP = {
-            "MARKET": OrderType.MARKET, "LIMIT": OrderType.LIMIT,
+            "MARKET": OrderType.MARKET,
+            "LIMIT": OrderType.LIMIT,
         }
         _KITE_STATUS_MAP = {
-            "PENDING": OrderStatus.PENDING, "COMPLETE": OrderStatus.FILLED,
-            "CANCELLED": OrderStatus.CANCELLED, "REJECTED": OrderStatus.REJECTED,
+            "PENDING": OrderStatus.PENDING,
+            "COMPLETE": OrderStatus.FILLED,
+            "CANCELLED": OrderStatus.CANCELLED,
+            "REJECTED": OrderStatus.REJECTED,
         }
         raw_exchange = record.get("exchange", "NSE")
         return Order(
@@ -813,18 +798,14 @@ class ZerodhaGateway(BrokerInterface):
         side: str,
         quantity: float,
         order_type: str,
-        price: Optional[float] = None,
+        price: float | None = None,
         product_type: str = "INTRADAY",
         **kwargs: Any,
     ) -> Order:
         kite_exchange = _EXCHANGE_TO_KITE.get(exchange.upper(), exchange.upper())
         kite_side = _SIDE_TO_KITE.get(side.upper(), side.upper())
-        kite_order_type = _ORDER_TYPE_TO_KITE.get(
-            order_type.upper(), order_type.upper()
-        )
-        kite_product = _PRODUCT_TYPE_TO_KITE.get(
-            product_type.upper(), product_type.upper()
-        )
+        kite_order_type = _ORDER_TYPE_TO_KITE.get(order_type.upper(), order_type.upper())
+        kite_product = _PRODUCT_TYPE_TO_KITE.get(product_type.upper(), product_type.upper())
 
         # Check circuit halt before placing
         self._check_circuit_halt(symbol)
@@ -857,14 +838,22 @@ class ZerodhaGateway(BrokerInterface):
                 order_record["average_price"] = fill_price
                 # Track in paper positions
                 self._update_paper_position(
-                    symbol, kite_exchange, kite_side, int(quantity), fill_price,
+                    symbol,
+                    kite_exchange,
+                    kite_side,
+                    int(quantity),
+                    fill_price,
                     kite_product,
                 )
 
             logger.info(
                 "Paper order placed: %s %s %s x%d @ %s [%s]",
-                kite_side, symbol, kite_order_type, int(quantity),
-                fill_price or "MKT", order_id[:8],
+                kite_side,
+                symbol,
+                kite_order_type,
+                int(quantity),
+                fill_price or "MKT",
+                order_id[:8],
             )
             return self._dict_to_order(order_record, kwargs)
 
@@ -874,7 +863,7 @@ class ZerodhaGateway(BrokerInterface):
         # Build Kite Connect place_order params
         # https://kite.trade/docs/connect/v3/orders/#regular-order-parameters
         variety = kwargs.get("variety", "regular")
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "variety": variety,
             "exchange": kite_exchange,
             "tradingsymbol": symbol,
@@ -896,8 +885,13 @@ class ZerodhaGateway(BrokerInterface):
 
         logger.info(
             "Placing live order: %s %s %s x%d @ %s (product=%s, variety=%s)",
-            kite_side, symbol, kite_order_type, int(quantity),
-            price or "MKT", kite_product, variety,
+            kite_side,
+            symbol,
+            kite_order_type,
+            int(quantity),
+            price or "MKT",
+            kite_product,
+            variety,
         )
 
         order_id = await self._execute_broker_call(
@@ -918,9 +912,7 @@ class ZerodhaGateway(BrokerInterface):
             "price": price or 0.0,
             "broker": "zerodha",
         }
-        logger.info(
-            "Live order placed: %s (kite order_id=%s)", symbol, order_id
-        )
+        logger.info("Live order placed: %s (kite order_id=%s)", symbol, order_id)
         return self._dict_to_order(result, kwargs)
 
     async def cancel_order(self, order_id: str, **kwargs: Any) -> bool:
@@ -938,15 +930,14 @@ class ZerodhaGateway(BrokerInterface):
         self._require_live_session()
         variety = kwargs.get("variety", "regular")
 
-        logger.info(
-            "Cancelling live order: %s (variety=%s)", order_id, variety
-        )
+        logger.info("Cancelling live order: %s (variety=%s)", order_id, variety)
 
         try:
             await self._execute_broker_call(
                 "cancel_order",
                 lambda: self._kite.cancel_order(
-                    variety=variety, order_id=order_id,
+                    variety=variety,
+                    order_id=order_id,
                 ),
             )
             logger.info("Live order cancelled: %s", order_id)
@@ -971,7 +962,7 @@ class ZerodhaGateway(BrokerInterface):
         # Kite returns {"net": [...], "day": [...]}
         net_positions = raw.get("net", []) if isinstance(raw, dict) else raw
         positions = []
-        for row in (net_positions or []):
+        for row in net_positions or []:
             qty = int(row.get("quantity", 0) or 0)
             if qty != 0:
                 positions.append(self._position_from_kite(row))
@@ -997,9 +988,7 @@ class ZerodhaGateway(BrokerInterface):
         logger.debug("Fetched %d orders from Kite", len(orders))
         return orders
 
-    async def get_order_status(
-        self, order_id: str, broker_order_id: Optional[str] = None
-    ) -> OrderStatus:
+    async def get_order_status(self, order_id: str, broker_order_id: str | None = None) -> OrderStatus:
         """Check the status of a specific order.
 
         In paper mode, looks up the in-memory order book.
@@ -1030,12 +1019,10 @@ class ZerodhaGateway(BrokerInterface):
             return _to_order_status(status_str)
 
         except KiteGatewayError:
-            logger.warning(
-                "Failed to get order status for %s", target_id
-            )
+            logger.warning("Failed to get order status for %s", target_id)
             return OrderStatus.PENDING
 
-    async def health_check(self) -> Dict[str, object]:
+    async def health_check(self) -> dict[str, object]:
         """Verify Zerodha gateway connectivity.
 
         Paper mode: always healthy.
@@ -1107,20 +1094,22 @@ class ZerodhaGateway(BrokerInterface):
         )
 
         holdings = []
-        for row in (raw_holdings or []):
+        for row in raw_holdings or []:
             qty = int(row.get("quantity", 0) or 0)
             if qty != 0:
-                holdings.append({
-                    "symbol": row.get("tradingsymbol", ""),
-                    "exchange": row.get("exchange", ""),
-                    "quantity": qty,
-                    "avg_price": float(row.get("average_price", 0) or 0),
-                    "ltp": float(row.get("last_price", 0) or 0),
-                    "pnl": float(row.get("pnl", 0) or 0),
-                    "isin": row.get("isin", ""),
-                    "product": row.get("product", ""),
-                    "broker": "zerodha",
-                })
+                holdings.append(
+                    {
+                        "symbol": row.get("tradingsymbol", ""),
+                        "exchange": row.get("exchange", ""),
+                        "quantity": qty,
+                        "avg_price": float(row.get("average_price", 0) or 0),
+                        "ltp": float(row.get("last_price", 0) or 0),
+                        "pnl": float(row.get("pnl", 0) or 0),
+                        "isin": row.get("isin", ""),
+                        "product": row.get("product", ""),
+                        "broker": "zerodha",
+                    }
+                )
 
         logger.debug("Fetched %d holdings from Kite", len(holdings))
         return holdings
@@ -1163,23 +1152,25 @@ class ZerodhaGateway(BrokerInterface):
                 return
 
         # New position
-        self._paper_positions.append({
-            "tradingsymbol": symbol,
-            "exchange": exchange,
-            "quantity": signed_qty,
-            "average_price": price,
-            "product": product,
-            "last_price": price,
-            "pnl": 0.0,
-            "broker": "zerodha",
-            "paper": True,
-        })
+        self._paper_positions.append(
+            {
+                "tradingsymbol": symbol,
+                "exchange": exchange,
+                "quantity": signed_qty,
+                "average_price": price,
+                "product": product,
+                "last_price": price,
+                "pnl": 0.0,
+                "broker": "zerodha",
+                "paper": True,
+            }
+        )
 
     def paper_fill_order(
         self,
         order_id: str,
         fill_price: float,
-        fill_qty: Optional[int] = None,
+        fill_qty: int | None = None,
     ) -> bool:
         """
         Simulate a fill on a paper order (for use by the paper-mode engine).
@@ -1202,7 +1193,10 @@ class ZerodhaGateway(BrokerInterface):
                 )
                 logger.info(
                     "Paper fill: %s x%d @ %.2f [%s]",
-                    o["tradingsymbol"], qty, fill_price, order_id[:8],
+                    o["tradingsymbol"],
+                    qty,
+                    fill_price,
+                    order_id[:8],
                 )
                 return True
         return False

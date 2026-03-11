@@ -1,7 +1,7 @@
 """Position repository. Sync API; merge fills by symbol+exchange+side. OCC via version column."""
+
 import logging
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import and_, delete, update
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 class PositionConcurrentUpdateError(Exception):
     """Raised when position update fails due to version mismatch (optimistic lock conflict)."""
+
     pass
 
 
@@ -36,6 +37,7 @@ class PositionRepository:
 
     def __init__(self, session_factory=None):
         from .database import get_session_factory
+
         self._session_factory = session_factory or get_session_factory()
 
     def upsert_from_fill(
@@ -45,22 +47,26 @@ class PositionRepository:
         side: str,
         fill_qty: float,
         avg_price: float,
-        strategy_id: Optional[str] = None,
-        session: Optional[Session] = None,
+        strategy_id: str | None = None,
+        session: Session | None = None,
     ) -> None:
         """Merge a fill into position (symbol, exchange, side). New position or add to existing (VWAP). If session given, use it (caller commits)."""
         if fill_qty <= 0 or avg_price <= 0:
             return
 
         def _upsert(sess: Session) -> None:
-            m = sess.query(PositionModel).filter(
-                and_(
-                    PositionModel.symbol == symbol,
-                    PositionModel.exchange == exchange,
-                    PositionModel.side == side,
+            m = (
+                sess.query(PositionModel)
+                .filter(
+                    and_(
+                        PositionModel.symbol == symbol,
+                        PositionModel.exchange == exchange,
+                        PositionModel.side == side,
+                    )
                 )
-            ).first()
-            now = datetime.now(timezone.utc)
+                .first()
+            )
+            now = datetime.now(UTC)
             if m is None:
                 sess.add(
                     PositionModel(
@@ -116,9 +122,10 @@ class PositionRepository:
             with session_scope() as sess:
                 _upsert(sess)
 
-    def list_positions(self, session: Optional[Session] = None) -> List[Position]:
+    def list_positions(self, session: Session | None = None) -> list[Position]:
         """Return all positions. unrealized_pnl left 0 (computed elsewhere if needed)."""
-        def _list(sess: Session) -> List[Position]:
+
+        def _list(sess: Session) -> list[Position]:
             rows = sess.query(PositionModel).filter(PositionModel.quantity > 0).all()
             return [_model_to_domain(r) for r in rows]
 

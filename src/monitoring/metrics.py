@@ -1,6 +1,6 @@
 """Prometheus metrics for latency, P&L, orders, risk."""
+
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +11,8 @@ def get_metrics_registry():
     global _registry
     if _registry is None:
         try:
-            from prometheus_client import Counter, Histogram, Gauge, REGISTRY
+            from prometheus_client import REGISTRY, Counter, Gauge, Histogram
+
             _registry = REGISTRY
             _registry.order_total = Counter("trading_orders_total", "Total orders", ["strategy_id", "status"])
             _registry.order_latency = Histogram("trading_order_latency_seconds", "Order latency")
@@ -23,7 +24,9 @@ def get_metrics_registry():
             _registry.drift_detected = Counter("trading_ai_drift_detected_total", "Concept drift events")
             _registry.retrain_total = Counter("trading_ai_retrain_total", "Retrain runs", ["model_id", "replaced"])
             # Execution layer
-            _registry.order_submission_latency = Histogram("order_submission_latency_seconds", "Order entry pipeline latency")
+            _registry.order_submission_latency = Histogram(
+                "order_submission_latency_seconds", "Order entry pipeline latency"
+            )
             _registry.risk_rejection_total = Counter("risk_rejection_total", "Orders rejected by risk", ["reason"])
             _registry.duplicate_order_prevented_total = Counter("duplicate_order_prevented_total", "Idempotency hit")
             _registry.exposure_reserved_total = Counter("exposure_reserved_total", "Exposure reservations")
@@ -34,15 +37,25 @@ def get_metrics_registry():
                 ["operation"],
                 buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
             )
-            _registry.broker_failure_total = Counter("broker_failure_total", "Broker call failures", ["operation", "reason"])
-            _registry.broker_session_expired_total = Counter("broker_session_expired_total", "Broker session expiry events")
+            _registry.broker_failure_total = Counter(
+                "broker_failure_total", "Broker call failures", ["operation", "reason"]
+            )
+            _registry.broker_session_expired_total = Counter(
+                "broker_session_expired_total", "Broker session expiry events"
+            )
             _registry.fill_mismatch_total = Counter("fill_mismatch_total", "Reconciliation mismatches")
             _registry.orders_total = Counter("orders_total", "Total orders submitted (accepted)")
             _registry.orders_rejected_total = Counter("orders_rejected_total", "Total orders rejected")
             _registry.orders_filled_total = Counter("orders_filled_total", "Total orders filled")
-            _registry.orders_persist_failed_total = Counter("orders_persist_failed_total", "Order persistence failures after retries")
-            _registry.orders_fill_persist_failed_total = Counter("orders_fill_persist_failed_total", "Fill persistence failures (order/position update)")
-            _registry.reconciliation_mismatches_total = Counter("reconciliation_mismatches_total", "Position reconciliation mismatches")
+            _registry.orders_persist_failed_total = Counter(
+                "orders_persist_failed_total", "Order persistence failures after retries"
+            )
+            _registry.orders_fill_persist_failed_total = Counter(
+                "orders_fill_persist_failed_total", "Fill persistence failures (order/position update)"
+            )
+            _registry.reconciliation_mismatches_total = Counter(
+                "reconciliation_mismatches_total", "Position reconciliation mismatches"
+            )
             # Fill pipeline
             _registry.fill_events_total = Counter("fill_events_total", "Fill events processed", ["fill_type"])
             _registry.duplicate_fill_total = Counter("duplicate_fill_total", "Duplicate fills skipped")
@@ -51,17 +64,27 @@ def get_metrics_registry():
                 "Time from fill at broker to applied",
                 buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0),
             )
-            _registry.fill_reconciliation_mismatch_total = Counter("fill_reconciliation_mismatch_total", "Fill vs position reconciliation mismatches")
+            _registry.fill_reconciliation_mismatch_total = Counter(
+                "fill_reconciliation_mismatch_total", "Fill vs position reconciliation mismatches"
+            )
             _registry.startup_recovery_duration_seconds = Histogram(
                 "startup_recovery_duration_seconds",
                 "Cold start recovery duration in seconds",
                 buckets=(0.5, 1.0, 2.0, 5.0, 10.0, 30.0),
             )
-            _registry.startup_recovery_failures_total = Counter("startup_recovery_failures_total", "Cold start recovery failures (e.g. broker unreachable)")
-            _registry.startup_recovery_mismatches_total = Counter("startup_recovery_mismatches_total", "Cold start reconciliation mismatches")
-            _registry.kill_switch_triggered_total = Counter("kill_switch_triggered_total", "Kill switch armed", ["reason"])
+            _registry.startup_recovery_failures_total = Counter(
+                "startup_recovery_failures_total", "Cold start recovery failures (e.g. broker unreachable)"
+            )
+            _registry.startup_recovery_mismatches_total = Counter(
+                "startup_recovery_mismatches_total", "Cold start reconciliation mismatches"
+            )
+            _registry.kill_switch_triggered_total = Counter(
+                "kill_switch_triggered_total", "Kill switch armed", ["reason"]
+            )
             _registry.idempotency_hit_ratio = Gauge("idempotency_hit_ratio", "Idempotency hits / total requests")
-            _registry.concurrent_order_wait_seconds = Histogram("concurrent_order_wait_seconds", "Wait time for global order lock")
+            _registry.concurrent_order_wait_seconds = Histogram(
+                "concurrent_order_wait_seconds", "Wait time for global order lock"
+            )
             # Phase 14: portfolio heat, drawdown, execution quality, drift/sharpe
             _registry.portfolio_heat = Gauge("trading_portfolio_heat", "Portfolio heat (sum |position|/equity)")
             _registry.drawdown_pct = Gauge("trading_drawdown_pct", "Current drawdown %")

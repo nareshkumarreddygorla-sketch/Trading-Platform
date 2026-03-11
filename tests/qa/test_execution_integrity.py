@@ -4,6 +4,7 @@ QA Phase 1 — Execution pipeline break tests.
 2) Kill switch mid-submit: arm during submit → order respects kill / reduce-only.
 3) Circuit open during allocation: no new orders; loop skips; manual blocked.
 """
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,11 +12,10 @@ import pytest
 
 from src.core.events import Exchange, Order, OrderStatus, OrderType, Position, Signal, SignalSide
 from src.execution.angel_one_gateway import AngelOneExecutionGateway
-from src.execution.order_entry.kill_switch import KillReason
 from src.execution.lifecycle import OrderLifecycle
 from src.execution.order_entry import OrderEntryService
 from src.execution.order_entry.idempotency import IdempotencyStore
-from src.execution.order_entry.kill_switch import KillSwitch
+from src.execution.order_entry.kill_switch import KillReason, KillSwitch
 from src.execution.order_entry.request import OrderEntryRequest
 from src.execution.order_entry.reservation import ExposureReservation
 from src.execution.order_router import OrderRouter
@@ -101,7 +101,7 @@ async def test_idempotency_storm_100_concurrent_same_key_broker_called_once(
     except Exception as e:
         err_msg = str(e).lower()
         if any(x in err_msg for x in ("connection", "refused", "timeout", "redis", "econnrefused")):
-            pytest.skip("Redis not available: %s" % e)
+            pytest.skip(f"Redis not available: {e}")
         raise
 
     service = OrderEntryService(
@@ -234,8 +234,8 @@ async def test_kill_switch_armed_allow_reduce_only_sell_when_long(
 async def test_circuit_open_blocks_new_orders():
     """Force drawdown breach (circuit open). OrderEntryService must reject; no broker call."""
     from src.risk_engine import RiskManager
-    from src.risk_engine.limits import RiskLimits
     from src.risk_engine.circuit_breaker import CircuitBreaker
+    from src.risk_engine.limits import RiskLimits
 
     limits = RiskLimits(max_open_positions=10, circuit_breaker_drawdown_pct=5.0)
     rm = RiskManager(equity=100_000.0, limits=limits)

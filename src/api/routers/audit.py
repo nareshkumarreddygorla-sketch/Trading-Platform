@@ -8,8 +8,9 @@ Endpoints:
   - GET /audit/regulatory-report   - Generate SEBI format regulatory report
   - GET /audit/algo-registry       - List registered algorithms with SEBI IDs
 """
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
@@ -23,49 +24,50 @@ router = APIRouter()
 # Response models
 # ---------------------------------------------------------------------------
 
+
 class AuditEventResponse(BaseModel):
     id: str
     ts: str
     event_type: str
     actor: str
-    payload: Optional[dict] = None
+    payload: dict | None = None
 
 
 class AuditLogsResponse(BaseModel):
-    events: List[AuditEventResponse]
+    events: list[AuditEventResponse]
 
 
 class OTRReportResponse(BaseModel):
-    algo_reports: List[Dict[str, Any]]
-    alerts: List[Dict[str, Any]]
-    thresholds: Dict[str, float]
+    algo_reports: list[dict[str, Any]]
+    alerts: list[dict[str, Any]]
+    thresholds: dict[str, float]
 
 
 class SurveillanceAlertsResponse(BaseModel):
-    alerts: List[Dict[str, Any]]
-    summary: Dict[str, Any]
+    alerts: list[dict[str, Any]]
+    summary: dict[str, Any]
 
 
 class RegulatoryReportResponse(BaseModel):
-    report: Dict[str, Any]
+    report: dict[str, Any]
 
 
 class AlgoRegistryResponse(BaseModel):
-    algorithms: List[Dict[str, Any]]
+    algorithms: list[dict[str, Any]]
     total: int
     active: int
-
 
 
 # ---------------------------------------------------------------------------
 # Existing endpoint: audit logs
 # ---------------------------------------------------------------------------
 
+
 @router.get("/audit/logs", response_model=AuditLogsResponse)
 async def get_audit_logs(
     request: Request,
     limit: int = 500,
-    event_type: Optional[str] = None,
+    event_type: str | None = None,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -75,9 +77,7 @@ async def get_audit_logs(
     audit_repo = getattr(request.app.state, "audit_repo", None)
     if audit_repo is not None:
         events = audit_repo.list_events(limit=min(limit, 1000), event_type=event_type or None)
-        return AuditLogsResponse(
-            events=[AuditEventResponse(**e) for e in events] if events else []
-        )
+        return AuditLogsResponse(events=[AuditEventResponse(**e) for e in events] if events else [])
 
     # No audit repository configured — return empty, not fake data
     return AuditLogsResponse(events=[])
@@ -87,10 +87,11 @@ async def get_audit_logs(
 # New endpoint: OTR report
 # ---------------------------------------------------------------------------
 
+
 @router.get("/audit/otr-report", response_model=OTRReportResponse)
 async def get_otr_report(
     request: Request,
-    algo_id: Optional[str] = Query(None, description="Filter by algorithm ID"),
+    algo_id: str | None = Query(None, description="Filter by algorithm ID"),
     limit: int = Query(50, description="Max alerts to return"),
     current_user: dict = Depends(get_current_user),
 ):
@@ -130,12 +131,13 @@ async def get_otr_report(
 # New endpoint: surveillance alerts
 # ---------------------------------------------------------------------------
 
+
 @router.get("/audit/surveillance-alerts", response_model=SurveillanceAlertsResponse)
 async def get_surveillance_alerts(
     request: Request,
-    pattern: Optional[str] = Query(None, description="Filter by pattern: LAYERING, SPOOFING, WASH_TRADE"),
-    severity: Optional[str] = Query(None, description="Filter by severity: LOW, MEDIUM, HIGH, CRITICAL"),
-    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+    pattern: str | None = Query(None, description="Filter by pattern: LAYERING, SPOOFING, WASH_TRADE"),
+    severity: str | None = Query(None, description="Filter by severity: LOW, MEDIUM, HIGH, CRITICAL"),
+    symbol: str | None = Query(None, description="Filter by symbol"),
     unacknowledged_only: bool = Query(False, description="Only unacknowledged alerts"),
     limit: int = Query(100, description="Max alerts to return"),
     current_user: dict = Depends(get_current_user),
@@ -149,7 +151,7 @@ async def get_surveillance_alerts(
     surveillance = getattr(request.app.state, "surveillance_engine", None)
 
     if surveillance is not None:
-        from src.compliance.surveillance import ManipulationPattern, AlertSeverity
+        from src.compliance.surveillance import AlertSeverity, ManipulationPattern
 
         pattern_enum = None
         severity_enum = None
@@ -192,6 +194,7 @@ async def get_surveillance_alerts(
 # New endpoint: regulatory report
 # ---------------------------------------------------------------------------
 
+
 @router.get("/audit/regulatory-report", response_model=RegulatoryReportResponse)
 async def get_regulatory_report(
     request: Request,
@@ -211,7 +214,7 @@ async def get_regulatory_report(
         return RegulatoryReportResponse(report=report)
 
     # No audit trail configured - return minimal report structure
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return RegulatoryReportResponse(
         report={
             "report_metadata": {
@@ -240,11 +243,12 @@ async def get_regulatory_report(
 # New endpoint: algo registry
 # ---------------------------------------------------------------------------
 
+
 @router.get("/audit/algo-registry", response_model=AlgoRegistryResponse)
 async def get_algo_registry(
     request: Request,
     active_only: bool = Query(False, description="Only show active algorithms"),
-    algo_name: Optional[str] = Query(None, description="Filter by algorithm name"),
+    algo_name: str | None = Query(None, description="Filter by algorithm name"),
     current_user: dict = Depends(get_current_user),
 ):
     """

@@ -8,16 +8,16 @@ Features produced:
   - nifty_volatility: 20-bar rolling volatility of NIFTY50
   - market_breadth: proxy — NIFTY daily return direction
 """
+
 import logging
 import time
-from typing import Dict
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 # Cache context data to avoid repeated API calls within same scan cycle
-_cache: Dict[str, any] = {}
+_cache: dict[str, any] = {}
 _cache_ts: float = 0.0
 _CACHE_TTL = 300  # 5 minutes
 
@@ -25,7 +25,7 @@ _CACHE_TTL = 300  # 5 minutes
 def _rsi_calc(closes: np.ndarray, period: int = 14) -> float:
     if len(closes) < period + 1:
         return 50.0
-    deltas = np.diff(closes[-period - 1:])
+    deltas = np.diff(closes[-period - 1 :])
     gains = np.where(deltas > 0, deltas, 0.0)
     losses = np.where(deltas < 0, -deltas, 0.0)
     avg_gain = np.mean(gains)
@@ -39,11 +39,11 @@ def _rsi_calc(closes: np.ndarray, period: int = 14) -> float:
 def _rolling_vol(closes: np.ndarray, window: int = 20) -> float:
     if len(closes) < window + 1:
         return 0.0
-    ret = np.diff(closes[-window - 1:]) / (closes[-window - 1:-1] + 1e-12)
+    ret = np.diff(closes[-window - 1 :]) / (closes[-window - 1 : -1] + 1e-12)
     return float(np.std(ret))
 
 
-def fetch_market_context(interval: str = "5m", period: str = "5d") -> Dict[str, float]:
+def fetch_market_context(interval: str = "5m", period: str = "5d") -> dict[str, float]:
     """
     Fetch NIFTY50 index data and compute market context features.
     Returns dict with market-level features. Cached for 5 minutes.
@@ -75,13 +75,21 @@ def fetch_market_context(interval: str = "5m", period: str = "5d") -> Dict[str, 
             "nifty_return_5": float((closes[-1] - closes[-6]) / (closes[-6] + 1e-12)) if len(closes) >= 6 else 0.0,
             "nifty_rsi": _rsi_calc(closes, 14),
             "nifty_volatility": _rolling_vol(closes, 20),
-            "nifty_trend": 1.0 if closes[-1] > closes[-5] else (-1.0 if closes[-1] < closes[-5] else 0.0) if len(closes) >= 6 else 0.0,
+            "nifty_trend": 1.0
+            if closes[-1] > closes[-5]
+            else (-1.0 if closes[-1] < closes[-5] else 0.0)
+            if len(closes) >= 6
+            else 0.0,
         }
 
         _cache = ctx
         _cache_ts = now
-        logger.debug("Market context refreshed: NIFTY RSI=%.1f vol=%.4f trend=%.0f",
-                      ctx["nifty_rsi"], ctx["nifty_volatility"], ctx["nifty_trend"])
+        logger.debug(
+            "Market context refreshed: NIFTY RSI=%.1f vol=%.4f trend=%.0f",
+            ctx["nifty_rsi"],
+            ctx["nifty_volatility"],
+            ctx["nifty_trend"],
+        )
         return ctx
 
     except Exception as e:
@@ -89,7 +97,7 @@ def fetch_market_context(interval: str = "5m", period: str = "5d") -> Dict[str, 
         return _default_context()
 
 
-def _default_context() -> Dict[str, float]:
+def _default_context() -> dict[str, float]:
     """Neutral defaults when market data unavailable."""
     return {
         "nifty_return_1": 0.0,

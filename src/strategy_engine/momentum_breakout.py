@@ -2,12 +2,13 @@
 Momentum Breakout Strategy: volume breakout + ADX trend confirmation.
 Best in: TRENDING_UP, TRENDING_DOWN regimes.
 """
-from datetime import datetime, timezone
-from typing import List
+
+from datetime import UTC, datetime
 
 import numpy as np
 
 from src.core.events import Signal, SignalSide
+
 from .base import MarketState, StrategyBase
 
 
@@ -16,6 +17,7 @@ class MomentumBreakoutStrategy(StrategyBase):
     BUY when price breaks above 20-bar high on volume surge + strong ADX.
     SELL when price breaks below 20-bar low on volume surge + strong ADX.
     """
+
     strategy_id = "momentum_breakout"
     description = "Volume breakout with ADX trend confirmation"
 
@@ -27,7 +29,7 @@ class MomentumBreakoutStrategy(StrategyBase):
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= self.lookback + 15
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         if not self.warm(state):
             return []
 
@@ -39,11 +41,11 @@ class MomentumBreakoutStrategy(StrategyBase):
         price = state.latest_price or closes[-1]
 
         # 20-bar channel breakout
-        channel_high = np.max(highs[-self.lookback - 1:-1])
-        channel_low = np.min(lows[-self.lookback - 1:-1])
+        channel_high = np.max(highs[-self.lookback - 1 : -1])
+        channel_low = np.min(lows[-self.lookback - 1 : -1])
 
         # Volume surge check
-        avg_vol = np.mean(volumes[-self.lookback - 1:-1])
+        avg_vol = np.mean(volumes[-self.lookback - 1 : -1])
         current_vol = volumes[-1]
         vol_surge = current_vol > avg_vol * self.volume_mult
 
@@ -55,37 +57,41 @@ class MomentumBreakoutStrategy(StrategyBase):
 
         if price > channel_high:
             score = min(1.0, 0.5 + (price - channel_high) / (channel_high * 0.01 + 1e-12))
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.BUY,
-                score=score,
-                portfolio_weight=0.15,
-                risk_level="NORMAL",
-                reason=f"breakout_high adx={adx:.0f} vol_surge={current_vol/avg_vol:.1f}x",
-                price=price,
-                stop_loss=round(channel_low, 2),
-                target=round(price + 2 * (price - channel_low), 2),
-                ts=datetime.now(timezone.utc),
-                metadata={"adx": adx, "vol_ratio": current_vol / avg_vol},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.BUY,
+                    score=score,
+                    portfolio_weight=0.15,
+                    risk_level="NORMAL",
+                    reason=f"breakout_high adx={adx:.0f} vol_surge={current_vol / avg_vol:.1f}x",
+                    price=price,
+                    stop_loss=round(channel_low, 2),
+                    target=round(price + 2 * (price - channel_low), 2),
+                    ts=datetime.now(UTC),
+                    metadata={"adx": adx, "vol_ratio": current_vol / avg_vol},
+                )
+            ]
 
         if price < channel_low:
             score = min(1.0, 0.5 + (channel_low - price) / (channel_low * 0.01 + 1e-12))
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.SELL,
-                score=score,
-                portfolio_weight=0.15,
-                risk_level="NORMAL",
-                reason=f"breakout_low adx={adx:.0f} vol_surge={current_vol/avg_vol:.1f}x",
-                price=price,
-                ts=datetime.now(timezone.utc),
-                metadata={"adx": adx, "vol_ratio": current_vol / avg_vol},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.SELL,
+                    score=score,
+                    portfolio_weight=0.15,
+                    risk_level="NORMAL",
+                    reason=f"breakout_low adx={adx:.0f} vol_surge={current_vol / avg_vol:.1f}x",
+                    price=price,
+                    ts=datetime.now(UTC),
+                    metadata={"adx": adx, "vol_ratio": current_vol / avg_vol},
+                )
+            ]
 
         return []
 
@@ -94,14 +100,9 @@ class MomentumBreakoutStrategy(StrategyBase):
         n = len(close)
         if n < period + 1:
             return 0.0
-        tr = np.maximum(
-            high[1:] - low[1:],
-            np.maximum(np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1]))
-        )
-        plus_dm = np.where((high[1:] - high[:-1]) > (low[:-1] - low[1:]),
-                           np.maximum(high[1:] - high[:-1], 0), 0.0)
-        minus_dm = np.where((low[:-1] - low[1:]) > (high[1:] - high[:-1]),
-                            np.maximum(low[:-1] - low[1:], 0), 0.0)
+        tr = np.maximum(high[1:] - low[1:], np.maximum(np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1])))
+        plus_dm = np.where((high[1:] - high[:-1]) > (low[:-1] - low[1:]), np.maximum(high[1:] - high[:-1], 0), 0.0)
+        minus_dm = np.where((low[:-1] - low[1:]) > (high[1:] - high[:-1]), np.maximum(low[:-1] - low[1:], 0), 0.0)
         atr_s = np.mean(tr[:period])
         p_s = np.mean(plus_dm[:period])
         m_s = np.mean(minus_dm[:period])

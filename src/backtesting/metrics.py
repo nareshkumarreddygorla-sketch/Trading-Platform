@@ -1,6 +1,6 @@
 """Backtest performance metrics: CAGR, Sharpe, max DD, win rate, etc."""
+
 from dataclasses import dataclass
-from typing import List
 
 import numpy as np
 
@@ -18,11 +18,15 @@ class BacktestMetrics:
     risk_metrics: RiskMetrics
 
 
-def compute_backtest_metrics(equity_curve: List[float], initial_capital: float) -> BacktestMetrics:
+def compute_backtest_metrics(equity_curve: list[float], initial_capital: float) -> BacktestMetrics:
     if not equity_curve or initial_capital <= 0:
         return BacktestMetrics(
-            total_return_pct=0.0, cagr_pct=0.0, sharpe=0.0, max_drawdown_pct=0.0,
-            win_rate_pct=0.0, num_trades=0,
+            total_return_pct=0.0,
+            cagr_pct=0.0,
+            sharpe=0.0,
+            max_drawdown_pct=0.0,
+            win_rate_pct=0.0,
+            num_trades=0,
             risk_metrics=RiskMetrics(0.0, 0.0, 0.0, 0, 0.0, 0.0, 0.0),
         )
     arr = np.array(equity_curve)

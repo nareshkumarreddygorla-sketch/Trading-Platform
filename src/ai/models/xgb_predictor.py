@@ -1,10 +1,11 @@
 """XGBoost classifier for directional probability. Calibrated with walk-forward."""
+
 import json
 import logging
 import math
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -29,7 +30,7 @@ class FeatureMetaMissingError(RuntimeError):
     """
 
 
-def _load_feature_names_from_meta(meta_path: str = _META_PATH) -> Optional[List[str]]:
+def _load_feature_names_from_meta(meta_path: str = _META_PATH) -> list[str] | None:
     """Load saved feature_names from the XGB meta JSON file.
 
     Returns the list of feature names, or None if the meta file does not exist.
@@ -38,18 +39,14 @@ def _load_feature_names_from_meta(meta_path: str = _META_PATH) -> Optional[List[
     if not os.path.exists(meta_path):
         return None
     try:
-        with open(meta_path, "r") as f:
+        with open(meta_path) as f:
             meta = json.load(f)
         names = meta.get("feature_names")
         if isinstance(names, list) and len(names) > 0:
             return list(names)
-        raise FeatureMetaMissingError(
-            f"XGB meta file {meta_path} exists but 'feature_names' is empty or invalid"
-        )
+        raise FeatureMetaMissingError(f"XGB meta file {meta_path} exists but 'feature_names' is empty or invalid")
     except json.JSONDecodeError as e:
-        raise FeatureMetaMissingError(
-            f"XGB meta file {meta_path} is corrupt (invalid JSON): {e}"
-        ) from e
+        raise FeatureMetaMissingError(f"XGB meta file {meta_path} is corrupt (invalid JSON): {e}") from e
 
 
 class XGBPredictor(BasePredictor):
@@ -79,16 +76,17 @@ class XGBPredictor(BasePredictor):
                 "Cannot predict without knowing training feature order. "
                 "Re-train or restore the meta file."
             )
-        self._feature_names: List[str] = loaded_names if loaded_names is not None else []
+        self._feature_names: list[str] = loaded_names if loaded_names is not None else []
         if self._feature_names:
             logger.info("XGBPredictor: loaded %d feature names from meta file", len(self._feature_names))
-        self._feature_importance: Dict[str, float] = {}
+        self._feature_importance: dict[str, float] = {}
         self._prediction_count: int = 0
 
         # P1-7: Load empirical returns calibration data if available
         _calibration_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-            "models", "xgb_calibration.npz",
+            "models",
+            "xgb_calibration.npz",
         )
         if os.path.exists(_calibration_path):
             try:
@@ -105,7 +103,7 @@ class XGBPredictor(BasePredictor):
             except Exception as e:
                 logger.warning("XGBPredictor: calibration data load failed: %s", e)
 
-    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> Optional[PredictionOutput]:
+    def predict(self, features: dict[str, float], context: dict[str, Any] | None = None) -> PredictionOutput | None:
         if self._model is None:
             return None
         try:
@@ -125,7 +123,7 @@ class XGBPredictor(BasePredictor):
                 f"the meta file at {_META_PATH}"
             )
 
-        names: List[str] = self._feature_names
+        names: list[str] = self._feature_names
 
         # Feature validation: check that incoming features contain expected features
         incoming_keys = set(features.keys())
@@ -137,23 +135,25 @@ class XGBPredictor(BasePredictor):
             # Warn but allow: missing features become NaN (XGBoost handles NaN natively)
             if len(missing_features) > len(names) * 0.3:
                 logger.error(
-                    "XGB: >30%% features missing (%d/%d). Prediction unreliable. "
-                    "Missing: %s",
-                    len(missing_features), len(names),
+                    "XGB: >30%% features missing (%d/%d). Prediction unreliable. Missing: %s",
+                    len(missing_features),
+                    len(names),
                     list(missing_features)[:10],
                 )
                 return None
             else:
                 logger.warning(
                     "XGB: %d/%d features missing (will use NaN): %s",
-                    len(missing_features), len(names),
+                    len(missing_features),
+                    len(names),
                     list(missing_features)[:5],
                 )
 
         if unexpected_features and self._prediction_count == 0:
             logger.info(
                 "XGB: %d unexpected features in input (ignored): %s",
-                len(unexpected_features), list(unexpected_features)[:5],
+                len(unexpected_features),
+                list(unexpected_features)[:5],
             )
 
         X = np.array([[features.get(n, np.nan) for n in names]], dtype=np.float32)
@@ -197,7 +197,9 @@ class XGBPredictor(BasePredictor):
                 "feature_count": len(names),
                 "missing_features": len(missing_features),
                 "feature_validation": "strict",
-                "top_features": dict(sorted(self._feature_importance.items(), key=lambda x: x[1], reverse=True)[:5]) if self._feature_importance else {},
+                "top_features": dict(sorted(self._feature_importance.items(), key=lambda x: x[1], reverse=True)[:5])
+                if self._feature_importance
+                else {},
                 "predict_latency_ms": predict_latency_ms,
             },
         )

@@ -2,8 +2,8 @@
 Concept drift detection and data distribution monitoring.
 Triggers retrain when feature or target distribution shifts.
 """
+
 import logging
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -16,18 +16,18 @@ class ConceptDriftDetector:
     Simple approach: compare mean/std of key features; or use KS test / PSI.
     """
 
-    def __init__(self, threshold: float = 0.3, reference_stats: Optional[Dict[str, Dict[str, float]]] = None):
+    def __init__(self, threshold: float = 0.3, reference_stats: dict[str, dict[str, float]] | None = None):
         self.threshold = threshold
         self.reference_stats = reference_stats or {}  # feature_name -> {mean, std}
 
-    def set_reference(self, feature_matrix: np.ndarray, feature_names: List[str]) -> None:
+    def set_reference(self, feature_matrix: np.ndarray, feature_names: list[str]) -> None:
         """Set reference stats from training data."""
         for i, name in enumerate(feature_names):
             if i < feature_matrix.shape[1]:
                 col = feature_matrix[:, i]
                 self.reference_stats[name] = {"mean": float(np.mean(col)), "std": float(np.std(col)) or 1e-12}
 
-    def detect(self, features: Dict[str, float]) -> tuple[bool, str]:
+    def detect(self, features: dict[str, float]) -> tuple[bool, str]:
         """
         Return (drift_detected, reason). Drift if current feature stats
         deviate from reference beyond threshold.
@@ -45,7 +45,7 @@ class ConceptDriftDetector:
                 return True, f"feature_{name}_drift_z={z:.2f}"
         return False, ""
 
-    def detect_batch(self, feature_matrix: np.ndarray, feature_names: List[str]) -> tuple[bool, str]:
+    def detect_batch(self, feature_matrix: np.ndarray, feature_names: list[str]) -> tuple[bool, str]:
         """Drift on batch: compare current batch stats to reference."""
         if not self.reference_stats:
             return False, ""
@@ -68,9 +68,9 @@ class DataDistributionMonitor:
 
     def __init__(self, window: int = 100):
         self.window = window
-        self._samples: Dict[str, List[float]] = {}
+        self._samples: dict[str, list[float]] = {}
 
-    def add(self, features: Dict[str, float]) -> None:
+    def add(self, features: dict[str, float]) -> None:
         for k, v in features.items():
             if isinstance(v, (int, float)):
                 if k not in self._samples:

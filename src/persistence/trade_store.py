@@ -5,12 +5,12 @@ Lightweight alternative to PostgreSQL for trade tracking.
 Works without any external database server -- trades survive server restarts.
 Implements the same interface as OpenTradeRepository so AutonomousLoop can use either.
 """
+
 import logging
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone, date
-from typing import Dict, List, Optional
+from datetime import UTC, date, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -95,13 +95,13 @@ class TradeStore:
         side: str,
         quantity: float,
         entry_price: float,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None,
-        trailing_stop: Optional[float] = None,
-        strategy_id: Optional[str] = None,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        trailing_stop: float | None = None,
+        strategy_id: str | None = None,
     ) -> bool:
         """Insert or update an open trade. Returns True on success."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self._lock:
             try:
                 with self._connect() as conn:
@@ -120,8 +120,20 @@ class TradeStore:
                                strategy_id=excluded.strategy_id,
                                updated_at=excluded.updated_at
                         """,
-                        (trade_key, symbol, exchange, side, quantity, entry_price,
-                         now, strategy_id, stop_loss, take_profit, trailing_stop, now),
+                        (
+                            trade_key,
+                            symbol,
+                            exchange,
+                            side,
+                            quantity,
+                            entry_price,
+                            now,
+                            strategy_id,
+                            stop_loss,
+                            take_profit,
+                            trailing_stop,
+                            now,
+                        ),
                     )
                     conn.commit()
                 return True
@@ -132,12 +144,12 @@ class TradeStore:
     def update_sl_tp(
         self,
         trade_key: str,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None,
-        trailing_stop: Optional[float] = None,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        trailing_stop: float | None = None,
     ) -> bool:
         """Update SL/TP/trailing stop for an existing open trade."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self._lock:
             try:
                 with self._connect() as conn:
@@ -165,7 +177,7 @@ class TradeStore:
 
     def delete_trade(self, trade_key: str) -> bool:
         """Mark an open trade as CLOSED (soft delete). Used on SL/TP/kill-switch close."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self._lock:
             try:
                 with self._connect() as conn:
@@ -179,33 +191,34 @@ class TradeStore:
                 logger.error("TradeStore.delete_trade failed for %s: %s", trade_key, e)
                 return False
 
-    def load_all(self) -> List[Dict]:
+    def load_all(self) -> list[dict]:
         """Load all OPEN trades from SQLite. Used for cold-start recovery."""
         with self._lock:
             try:
                 with self._connect() as conn:
-                    rows = conn.execute(
-                        "SELECT * FROM trades WHERE status='OPEN'"
-                    ).fetchall()
+                    rows = conn.execute("SELECT * FROM trades WHERE status='OPEN'").fetchall()
                 trades = []
                 for r in rows:
                     entry_price = r["entry_price"]
                     if entry_price is None or entry_price <= 0:
-                        logger.warning("Skipping corrupt trade row: trade_key=%s entry_price=%s",
-                                       r["trade_key"], entry_price)
+                        logger.warning(
+                            "Skipping corrupt trade row: trade_key=%s entry_price=%s", r["trade_key"], entry_price
+                        )
                         continue
-                    trades.append({
-                        "trade_key": r["trade_key"],
-                        "symbol": r["symbol"],
-                        "exchange": r["exchange"] or "NSE",
-                        "side": r["side"],
-                        "entry_price": entry_price,
-                        "qty": r["qty"],
-                        "strategy_id": r["strategy_id"],
-                        "stop_loss": r["stop_loss"],
-                        "take_profit": r["take_profit"],
-                        "trailing_stop": r["trailing_stop"],
-                    })
+                    trades.append(
+                        {
+                            "trade_key": r["trade_key"],
+                            "symbol": r["symbol"],
+                            "exchange": r["exchange"] or "NSE",
+                            "side": r["side"],
+                            "entry_price": entry_price,
+                            "qty": r["qty"],
+                            "strategy_id": r["strategy_id"],
+                            "stop_loss": r["stop_loss"],
+                            "take_profit": r["take_profit"],
+                            "trailing_stop": r["trailing_stop"],
+                        }
+                    )
                 logger.info("TradeStore: loaded %d open trades from SQLite", len(trades))
                 return trades
             except Exception as e:
@@ -224,7 +237,7 @@ class TradeStore:
         trade_key is auto-generated as symbol:strategy_id if not provided.
         """
         trade_key = trade_dict.get("trade_key") or f"{trade_dict['symbol']}:{trade_dict.get('strategy_id', 'manual')}"
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         status = trade_dict.get("status", "OPEN")
         with self._lock:
             try:
@@ -272,13 +285,13 @@ class TradeStore:
                 logger.error("TradeStore.save_trade failed: %s", e)
                 return False
 
-    def close_trade(self, trade_id: str, exit_price: float, exit_time: Optional[str] = None) -> bool:
+    def close_trade(self, trade_id: str, exit_price: float, exit_time: str | None = None) -> bool:
         """
         Close a trade by trade_key. Computes PnL from entry_price and exit_price.
         """
         if exit_time is None:
-            exit_time = datetime.now(timezone.utc).isoformat()
-        now = datetime.now(timezone.utc).isoformat()
+            exit_time = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self._lock:
             try:
                 with self._connect() as conn:
@@ -305,11 +318,11 @@ class TradeStore:
                 logger.error("TradeStore.close_trade failed for %s: %s", trade_id, e)
                 return False
 
-    def get_open_trades(self) -> List[dict]:
+    def get_open_trades(self) -> list[dict]:
         """Return all currently open trades."""
         return self.load_all()
 
-    def get_daily_trades(self, day: Optional[str] = None) -> List[dict]:
+    def get_daily_trades(self, day: str | None = None) -> list[dict]:
         """
         Return trades opened on a given date (YYYY-MM-DD).
         Defaults to today (UTC).
@@ -328,7 +341,7 @@ class TradeStore:
                 logger.error("TradeStore.get_daily_trades failed: %s", e)
                 return []
 
-    def get_all_trades(self, limit: int = 100) -> List[dict]:
+    def get_all_trades(self, limit: int = 100) -> list[dict]:
         """Return the most recent trades (both open and closed), newest first."""
         with self._lock:
             try:

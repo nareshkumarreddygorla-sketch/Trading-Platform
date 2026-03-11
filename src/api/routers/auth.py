@@ -4,13 +4,13 @@ When DATABASE_URL is set, users are persisted (UserRepository). Else hashed in-m
 Access tokens: 1 hour. Refresh tokens: 7 days.
 Logout blacklists the token. Refresh rotation blacklists old refresh tokens.
 """
-import os
+
 import hmac
 import logging
+import os
 import re
 import threading
 import time
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -33,14 +33,15 @@ _users: dict[str, dict] = {}
 _users_lock = threading.Lock()
 
 # Account lockout: 5 failures in 15 minutes
-from collections import defaultdict
-import time as _time
+import time as _time  # noqa: E402
+from collections import defaultdict  # noqa: E402
 
 _failed_attempts: dict = defaultdict(list)
 _MAX_FAILED_ATTEMPTS = 5
 _LOCKOUT_DURATION_SECONDS = 900  # 15 minutes
 _MAX_TRACKED_USERNAMES = 10_000  # Bound the dict to prevent unbounded memory growth
 _last_cleanup_time: float = 0.0
+
 
 def _cleanup_failed_attempts() -> None:
     """Remove entries where all timestamps are older than the lockout window."""
@@ -56,10 +57,13 @@ def _cleanup_failed_attempts() -> None:
         _failed_attempts.pop(k, None)
     # Safety valve: if still over capacity, evict oldest entries
     if len(_failed_attempts) > _MAX_TRACKED_USERNAMES:
-        sorted_keys = sorted(_failed_attempts.keys(), key=lambda uname: max(_failed_attempts[uname]) if _failed_attempts[uname] else 0)
+        sorted_keys = sorted(
+            _failed_attempts.keys(), key=lambda uname: max(_failed_attempts[uname]) if _failed_attempts[uname] else 0
+        )
         evict_count = len(_failed_attempts) - _MAX_TRACKED_USERNAMES
         for k in sorted_keys[0:evict_count]:
             _failed_attempts.pop(k, None)
+
 
 def _check_lockout(username: str) -> bool:
     """Return True if account is locked out."""
@@ -69,8 +73,10 @@ def _check_lockout(username: str) -> bool:
     _cleanup_failed_attempts()
     return len(_failed_attempts[username]) >= _MAX_FAILED_ATTEMPTS
 
+
 def _record_failed_attempt(username: str) -> None:
     _failed_attempts[username].append(_time.time())
+
 
 def _clear_failed_attempts(username: str) -> None:
     _failed_attempts.pop(username, None)
@@ -80,6 +86,7 @@ async def _blacklist_token_persistent(token: str, ttl: int = 1800):
     """Persist token to Redis blacklist for cross-restart survival."""
     try:
         import redis.asyncio as aioredis
+
         r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), socket_connect_timeout=2)
         await r.set(f"blacklist:{token}", "1", ex=ttl)
         await r.aclose()
@@ -91,25 +98,31 @@ def _hash_inmemory(password: str) -> str:
     """Hash password for in-memory store using bcrypt (salted, secure)."""
     try:
         from passlib.hash import bcrypt as _bcrypt
+
         # bcrypt has a 72-byte limit; truncate safely
         return _bcrypt.hash(password[:72])
     except Exception:
         # Fallback: use PBKDF2 from stdlib (works everywhere)
         import hashlib as _hl
         import os
+
         salt = os.urandom(16).hex()
         return f"pbkdf2:{salt}:{_hl.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000).hex()}"
+
 
 def _verify_inmemory(password: str, hashed: str) -> bool:
     """Verify password against bcrypt or PBKDF2 hash."""
     if hashed.startswith("pbkdf2:"):
         _, salt, expected = hashed.split(":", 2)
         import hashlib as _hl
+
         actual = _hl.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000).hex()
         import hmac
+
         return hmac.compare_digest(actual, expected)
     try:
         from passlib.hash import bcrypt as _bcrypt
+
         return _bcrypt.verify(password, hashed)
     except Exception:
         return False
@@ -118,10 +131,11 @@ def _verify_inmemory(password: str, hashed: str) -> bool:
 def _get_secret() -> str:
     """Return JWT secret via the centralized auth module (never None)."""
     from ..auth import _get_secret as _central_get_secret
+
     return _central_get_secret()
 
 
-def _validate_password_strength(password: str) -> Optional[str]:
+def _validate_password_strength(password: str) -> str | None:
     """
     Validate password meets production security requirements.
     Returns an error message if invalid, None if valid.
@@ -139,12 +153,14 @@ def _validate_password_strength(password: str) -> Optional[str]:
     return None
 
 
-def _issue_token(username: str, roles: list[str], token_type: str = "access") -> str:
-    import jwt
+def _issue_token(username: str, roles: list[str], token_type: str = "access") -> str:  # noqa: S107
     import time
     import uuid as _uuid
+
+    import jwt
+
     secret = _get_secret()
-    expiry = ACCESS_TOKEN_EXPIRY_SECONDS if token_type == "access" else REFRESH_TOKEN_EXPIRY_SECONDS
+    expiry = ACCESS_TOKEN_EXPIRY_SECONDS if token_type == "access" else REFRESH_TOKEN_EXPIRY_SECONDS  # noqa: S105
     now = int(time.time())
     payload = {
         "sub": username,
@@ -166,9 +182,13 @@ class LoginRequest(BaseModel):
 
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=128, pattern=r"^[a-zA-Z0-9._@-]+$")
-    email: Optional[str] = Field(None, max_length=256, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-    password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=256,
-                          description="Min 12 chars, must include upper, lower, digit, and special char")
+    email: str | None = Field(None, max_length=256, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(
+        ...,
+        min_length=MIN_PASSWORD_LENGTH,
+        max_length=256,
+        description="Min 12 chars, must include upper, lower, digit, and special char",
+    )
 
 
 class RefreshRequest(BaseModel):
@@ -248,9 +268,12 @@ async def refresh_token(body: RefreshRequest):
     secret = _get_secret()
     try:
         import jwt
+
         payload = jwt.decode(body.refresh_token, secret, algorithms=["HS256"])
     except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
+        ) from None
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not a refresh token")
     username = payload.get("sub") or payload.get("user_id")
@@ -305,7 +328,7 @@ def register(request: Request, body: RegisterRequest):
 
 @router.post("/logout")
 async def logout(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ):
     """
     Logout: blacklist the current access token so it cannot be reused.
@@ -323,6 +346,7 @@ async def logout(
     secret = _get_secret()
     try:
         import jwt
+
         payload = jwt.decode(token, secret, algorithms=["HS256"], options={"verify_exp": False})
         expires_at = float(payload.get("exp", time.time() + ACCESS_TOKEN_EXPIRY_SECONDS))
     except Exception:

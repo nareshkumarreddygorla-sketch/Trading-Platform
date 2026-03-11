@@ -218,9 +218,14 @@ jobs:
 
   # -- PR Quality Gate --
   pr-quality:
-    if: github.event_name == 'pull_request'
+    if: always() && github.event_name == 'pull_request'
     needs: [backend-lint-test, frontend-lint-build]
     runs-on: ubuntu-latest
     steps:
+      - name: Check for failures
+        if: contains(needs.*.result, 'failure')
+        run: |
+          echo "One or more required checks failed"
+          exit 1
       - name: All checks passed
-        run: echo "All quality gates passed"
+        run: echo "All quality gates passed (skipped jobs are OK)"

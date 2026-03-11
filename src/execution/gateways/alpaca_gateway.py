@@ -1,13 +1,18 @@
 """Alpaca Markets gateway for US equity trading (commission-free)."""
+
 import logging
 import os
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import (
-    BaseBrokerGateway, BrokerHealth, BrokerOrder, BrokerPosition,
-    BrokerType, GatewayStatus,
+    BaseBrokerGateway,
+    BrokerHealth,
+    BrokerOrder,
+    BrokerPosition,
+    BrokerType,
+    GatewayStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,12 +31,9 @@ class AlpacaGateway(BaseBrokerGateway):
         self.paper = paper
         self._api_key = os.environ.get("ALPACA_API_KEY", "")
         self._api_secret = os.environ.get("ALPACA_API_SECRET", "")
-        self._base_url = (
-            "https://paper-api.alpaca.markets" if paper
-            else "https://api.alpaca.markets"
-        )
+        self._base_url = "https://paper-api.alpaca.markets" if paper else "https://api.alpaca.markets"
         self._status = GatewayStatus.DISCONNECTED
-        self._last_heartbeat: Optional[float] = None
+        self._last_heartbeat: float | None = None
         self._error_count = 0
         self._orders_today = 0
         self._client = None  # httpx.AsyncClient, lazily created
@@ -45,6 +47,7 @@ class AlpacaGateway(BaseBrokerGateway):
             return True
         try:
             import httpx
+
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 headers={
@@ -58,7 +61,9 @@ class AlpacaGateway(BaseBrokerGateway):
             account = resp.json()
             logger.info(
                 "Alpaca connected: equity=$%s buying_power=$%s paper=%s",
-                account.get("equity"), account.get("buying_power"), self.paper,
+                account.get("equity"),
+                account.get("buying_power"),
+                self.paper,
             )
             self._status = GatewayStatus.CONNECTED
             self._last_heartbeat = time.time()
@@ -76,23 +81,34 @@ class AlpacaGateway(BaseBrokerGateway):
         self._status = GatewayStatus.DISCONNECTED
 
     async def place_order(
-        self, symbol: str, exchange: str, side: str, quantity: int,
-        order_type: str = "MARKET", limit_price: Optional[float] = None,
+        self,
+        symbol: str,
+        exchange: str,
+        side: str,
+        quantity: int,
+        order_type: str = "MARKET",
+        limit_price: float | None = None,
         **kwargs,
     ) -> BrokerOrder:
         if self.paper and self._client is None:
             order_id = f"paper-alp-{uuid.uuid4().hex[:12]}"
             self._orders_today += 1
             return BrokerOrder(
-                broker_order_id=order_id, symbol=symbol, exchange=exchange,
-                side=side, quantity=quantity, order_type=order_type,
-                limit_price=limit_price, status="FILLED",
-                filled_qty=quantity, avg_price=limit_price or 0.0,
+                broker_order_id=order_id,
+                symbol=symbol,
+                exchange=exchange,
+                side=side,
+                quantity=quantity,
+                order_type=order_type,
+                limit_price=limit_price,
+                status="FILLED",
+                filled_qty=quantity,
+                avg_price=limit_price or 0.0,
                 timestamp=str(time.time()),
             )
         if self._client is None:
             raise RuntimeError("Alpaca client not connected")
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "symbol": symbol,
             "qty": str(quantity),
             "side": side.lower(),
@@ -107,9 +123,12 @@ class AlpacaGateway(BaseBrokerGateway):
         self._orders_today += 1
         self._last_heartbeat = time.time()
         return BrokerOrder(
-            broker_order_id=data["id"], symbol=data["symbol"],
-            exchange="NYSE", side=data["side"].upper(),
-            quantity=int(data["qty"]), order_type=data["type"].upper(),
+            broker_order_id=data["id"],
+            symbol=data["symbol"],
+            exchange="NYSE",
+            side=data["side"].upper(),
+            quantity=int(data["qty"]),
+            order_type=data["type"].upper(),
             limit_price=float(data.get("limit_price") or 0),
             status=data["status"].upper(),
             filled_qty=int(data.get("filled_qty") or 0),
@@ -130,15 +149,24 @@ class AlpacaGateway(BaseBrokerGateway):
     async def get_order_status(self, broker_order_id: str) -> BrokerOrder:
         if self._client is None:
             return BrokerOrder(
-                broker_order_id=broker_order_id, symbol="", exchange="",
-                side="", quantity=0, order_type="", limit_price=None, status="UNKNOWN",
+                broker_order_id=broker_order_id,
+                symbol="",
+                exchange="",
+                side="",
+                quantity=0,
+                order_type="",
+                limit_price=None,
+                status="UNKNOWN",
             )
         resp = await self._client.get(f"/v2/orders/{broker_order_id}")
         resp.raise_for_status()
         d = resp.json()
         return BrokerOrder(
-            broker_order_id=d["id"], symbol=d["symbol"], exchange="NYSE",
-            side=d["side"].upper(), quantity=int(d["qty"]),
+            broker_order_id=d["id"],
+            symbol=d["symbol"],
+            exchange="NYSE",
+            side=d["side"].upper(),
+            quantity=int(d["qty"]),
             order_type=d["type"].upper(),
             limit_price=float(d.get("limit_price") or 0),
             status=d["status"].upper(),
@@ -146,7 +174,7 @@ class AlpacaGateway(BaseBrokerGateway):
             avg_price=float(d.get("filled_avg_price") or 0),
         )
 
-    async def get_positions(self) -> List[BrokerPosition]:
+    async def get_positions(self) -> list[BrokerPosition]:
         if self._client is None:
             return []
         try:
@@ -154,7 +182,8 @@ class AlpacaGateway(BaseBrokerGateway):
             resp.raise_for_status()
             return [
                 BrokerPosition(
-                    symbol=p["symbol"], exchange="NYSE",
+                    symbol=p["symbol"],
+                    exchange="NYSE",
                     quantity=int(p["qty"]),
                     avg_price=float(p["avg_entry_price"]),
                     current_price=float(p["current_price"]),
@@ -169,13 +198,15 @@ class AlpacaGateway(BaseBrokerGateway):
 
     def health(self) -> BrokerHealth:
         return BrokerHealth(
-            broker=self.broker_type, status=self._status,
+            broker=self.broker_type,
+            status=self._status,
             last_heartbeat=str(self._last_heartbeat) if self._last_heartbeat else None,
-            error_count=self._error_count, orders_today=self._orders_today,
+            error_count=self._error_count,
+            orders_today=self._orders_today,
             supported_exchanges=self.supported_exchanges(),
             supported_order_types=["MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"],
             paper_mode=self.paper,
         )
 
-    def supported_exchanges(self) -> List[str]:
+    def supported_exchanges(self) -> list[str]:
         return ["NYSE", "NASDAQ", "ARCA"]

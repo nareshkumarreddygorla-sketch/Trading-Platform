@@ -5,18 +5,16 @@ QA Phase 2 — Autonomous loop validation.
 6) Strategy disable feedback: 5 consecutive losses → strategy_disabled; no further signals.
 7) Market feed death: unhealthy → safe_mode; loop pauses; manual still works.
 """
-import asyncio
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 
+from src.ai.performance_tracker import PerformanceTracker
 from src.core.events import Bar, Exchange, Signal, SignalSide
 from src.execution.autonomous_loop import AutonomousLoop, stable_idempotency_key
-from src.execution.order_entry.idempotency import IdempotencyStore
 from src.execution.order_entry.request import OrderEntryRequest, OrderEntryResult
-from src.ai.feature_engine import FeatureEngine
-from src.ai.performance_tracker import PerformanceTracker
 
 
 # --- 4) Duplicate bar protection ---
@@ -31,17 +29,38 @@ async def test_duplicate_bar_same_ts_submits_once():
 
     bar_ts = "2025-01-15T10:00:00Z"
     get_bar_ts = lambda: bar_ts
+
     def get_bars(s, e, i, n):
         return [
-            Bar(symbol=s, exchange=e, interval="1m", open=100, high=101, low=99, close=100.5, volume=1000, ts=datetime.now(timezone.utc), source="test")
+            Bar(
+                symbol=s,
+                exchange=e,
+                interval="1m",
+                open=100,
+                high=101,
+                low=99,
+                close=100.5,
+                volume=1000,
+                ts=datetime.now(UTC),
+                source="test",
+            )
             for _ in range(25)
         ]
+
     get_symbols = lambda: [("RELIANCE", Exchange.NSE)]
     all_signals = []
 
     def run_strategy(state):
         sigs = [
-            Signal(strategy_id="s1", symbol=state.symbol, exchange=state.exchange, side=SignalSide.BUY, score=0.8, portfolio_weight=0.1, price=100.5)
+            Signal(
+                strategy_id="s1",
+                symbol=state.symbol,
+                exchange=state.exchange,
+                side=SignalSide.BUY,
+                score=0.8,
+                portfolio_weight=0.1,
+                price=100.5,
+            )
         ]
         all_signals.extend(sigs)
         return sigs
@@ -58,7 +77,13 @@ async def test_duplicate_bar_same_ts_submits_once():
         get_symbols=get_symbols,
         strategy_runner=MagicMock(run=run_strategy),
         allocator=Allocator(),
-        get_risk_state=lambda: {"equity": 100000, "exposure_multiplier": 1.0, "max_position_pct": 5.0, "drawdown_scale": 1.0, "regime_scale": 1.0},
+        get_risk_state=lambda: {
+            "equity": 100000,
+            "exposure_multiplier": 1.0,
+            "max_position_pct": 5.0,
+            "drawdown_scale": 1.0,
+            "regime_scale": 1.0,
+        },
         get_positions=lambda: [],
         poll_interval_seconds=999,
     )
@@ -105,7 +130,21 @@ async def test_market_feed_unhealthy_loop_skips_tick():
         get_safe_mode=lambda: False,
         get_market_feed_healthy=lambda: False,
         get_bar_ts=lambda: "2025-01-15T10:00:00Z",
-        get_bars=lambda s, e, i, n: [Bar(symbol=s, exchange=e, interval="1m", open=100, high=101, low=99, close=100, volume=1000, ts=datetime.now(timezone.utc), source="test") for _ in range(25)],
+        get_bars=lambda s, e, i, n: [
+            Bar(
+                symbol=s,
+                exchange=e,
+                interval="1m",
+                open=100,
+                high=101,
+                low=99,
+                close=100,
+                volume=1000,
+                ts=datetime.now(UTC),
+                source="test",
+            )
+            for _ in range(25)
+        ],
         get_symbols=lambda: [("X", Exchange.NSE)],
         strategy_runner=MagicMock(run=lambda s: []),
         allocator=MagicMock(allocate=lambda *a, **k: []),

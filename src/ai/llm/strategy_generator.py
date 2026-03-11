@@ -3,13 +3,14 @@
 Converts plain English descriptions (e.g. "buy when RSI < 30 and MACD crosses up")
 into validated Python strategy code that plugs into the StrategyRunner pipeline.
 """
+
 import json
 import logging
 import re
 import textwrap
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +75,11 @@ class GeneratedStrategy:
     name: str
     description: str
     code: str
-    config: Dict[str, Any]
+    config: dict[str, Any]
     prompt: str
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     validated: bool = False
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 class StrategyGenerator:
@@ -86,15 +87,18 @@ class StrategyGenerator:
 
     def __init__(self, llm_client=None):
         self._llm = llm_client
-        self._generated: Dict[str, GeneratedStrategy] = {}
+        self._generated: dict[str, GeneratedStrategy] = {}
 
     async def generate(self, prompt: str) -> GeneratedStrategy:
         """Convert a natural-language strategy description to executable code."""
         config = await self._get_strategy_config(prompt)
         if not config:
             return GeneratedStrategy(
-                name="error", description="Failed to parse",
-                code="", config={}, prompt=prompt,
+                name="error",
+                description="Failed to parse",
+                code="",
+                config={},
+                prompt=prompt,
                 errors=["LLM did not return valid config"],
             )
 
@@ -104,13 +108,16 @@ class StrategyGenerator:
         strat = GeneratedStrategy(
             name=config.get("name", "unnamed"),
             description=config.get("description", prompt[:80]),
-            code=code, config=config, prompt=prompt,
-            validated=len(errors) == 0, errors=errors,
+            code=code,
+            config=config,
+            prompt=prompt,
+            validated=len(errors) == 0,
+            errors=errors,
         )
         self._generated[strat.name] = strat
         return strat
 
-    async def _get_strategy_config(self, prompt: str) -> Optional[Dict]:
+    async def _get_strategy_config(self, prompt: str) -> dict | None:
         """Ask LLM to parse the prompt into structured config."""
         if self._llm is None:
             return self._fallback_parse(prompt)
@@ -128,7 +135,7 @@ class StrategyGenerator:
             logger.warning("LLM strategy parse failed: %s — using fallback", e)
             return self._fallback_parse(prompt)
 
-    def _fallback_parse(self, prompt: str) -> Dict:
+    def _fallback_parse(self, prompt: str) -> dict:
         """Rule-based fallback when LLM is unavailable."""
         prompt_lower = prompt.lower()
         indicators = []
@@ -211,7 +218,7 @@ class StrategyGenerator:
             "timeframe": timeframe,
         }
 
-    def _build_code(self, config: Dict, prompt: str) -> str:
+    def _build_code(self, config: dict, prompt: str) -> str:
         """Build executable Python code from parsed config."""
         name = config.get("name", "custom")
         class_name = "".join(w.capitalize() for w in name.split("_")) + "Strategy"
@@ -251,7 +258,7 @@ class StrategyGenerator:
             exit_code=exit_code,
         )
 
-    def _validate(self, code: str, config: Dict) -> List[str]:
+    def _validate(self, code: str, config: dict) -> list[str]:
         """Validate generated strategy code."""
         errors = []
 
@@ -282,10 +289,10 @@ class StrategyGenerator:
 
         return errors
 
-    def list_generated(self) -> List[GeneratedStrategy]:
+    def list_generated(self) -> list[GeneratedStrategy]:
         return list(self._generated.values())
 
-    def get_strategy(self, name: str) -> Optional[GeneratedStrategy]:
+    def get_strategy(self, name: str) -> GeneratedStrategy | None:
         return self._generated.get(name)
 
     def delete_strategy(self, name: str) -> bool:

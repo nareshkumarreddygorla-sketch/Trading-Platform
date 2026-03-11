@@ -4,14 +4,15 @@ exponential reconnect, health status. Triggers safe_mode on feed unhealthy.
 Does NOT remove REST broker logic. Autonomous loop pauses when feed unhealthy;
 manual trading remains available.
 """
+
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Callable, List, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
 
-from src.core.events import Exchange, Tick
-from src.market_data.timestamp import normalize_ts
+from src.core.events import Tick
 from src.data_pipeline.tick_validator import TickValidator
+from src.market_data.timestamp import normalize_ts
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +35,11 @@ class MarketDataService:
         connector,
         bar_cache,
         aggregator,
-        symbols: List[str],
+        symbols: list[str],
         *,
-        on_feed_unhealthy: Optional[Callable[[], None]] = None,
+        on_feed_unhealthy: Callable[[], None] | None = None,
         feed_stale_seconds: float = FEED_STALE_SECONDS,
-        tick_validator: Optional[TickValidator] = None,
+        tick_validator: TickValidator | None = None,
     ):
         self.connector = connector
         self.bar_cache = bar_cache
@@ -48,12 +49,12 @@ class MarketDataService:
         self.feed_stale_seconds = feed_stale_seconds
         self._tick_validator = tick_validator or TickValidator()
         self._connected = False
-        self._last_tick_ts: Optional[datetime] = None
+        self._last_tick_ts: datetime | None = None
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._reconnect_delay = RECONNECT_BASE_DELAY
-        self._health_check_task: Optional[asyncio.Task] = None
-        self._started_at: Optional[datetime] = None
+        self._health_check_task: asyncio.Task | None = None
+        self._started_at: datetime | None = None
 
     def is_healthy(self) -> bool:
         if not self._connected:
@@ -62,16 +63,16 @@ class MarketDataService:
             # No tick ever received — check if we've exceeded the grace period
             started = self._started_at
             if started is not None:
-                elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                elapsed = (datetime.now(UTC) - started).total_seconds()
                 if elapsed > SILENT_CONNECTION_GRACE_SECONDS:
                     logger.warning(
-                        "Silent connection detected: connected but no ticks received "
-                        "after %.0fs (grace=%ds)",
-                        elapsed, int(SILENT_CONNECTION_GRACE_SECONDS),
+                        "Silent connection detected: connected but no ticks received after %.0fs (grace=%ds)",
+                        elapsed,
+                        int(SILENT_CONNECTION_GRACE_SECONDS),
                     )
                     return False
             return True  # still within grace period
-        age = (datetime.now(timezone.utc) - self._last_tick_ts).total_seconds()
+        age = (datetime.now(UTC) - self._last_tick_ts).total_seconds()
         return age < self.feed_stale_seconds
 
     def get_status(self) -> dict:
@@ -154,7 +155,7 @@ class MarketDataService:
         if self._running:
             return
         self._running = True
-        self._started_at = datetime.now(timezone.utc)
+        self._started_at = datetime.now(UTC)
         self._task = asyncio.create_task(self._run())
         self._health_check_task = asyncio.create_task(self._health_loop())
         logger.info("MarketDataService started for symbols=%s", self.symbols)

@@ -3,8 +3,8 @@ Cluster-wide reservation count in Redis. Ensures max_open_positions not exceeded
 Reserve: only if (current_count + 1) <= max_allowed; then INCR and SADD order_id.
 Release: SREM order_id, DECR (only if member was present).
 """
+
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ class RedisClusterReservation:
         if self._redis is None:
             try:
                 import redis.asyncio as redis
+
                 self._redis = redis.from_url(self.redis_url, decode_responses=True)
             except ImportError:
                 return None
@@ -61,7 +62,9 @@ class RedisClusterReservation:
             end
             return 0
             """
-            result = await client.eval(script, 2, RESERVATION_COUNT_KEY, RESERVATION_IDS_KEY, str(max_allowed), order_id)
+            result = await client.eval(
+                script, 2, RESERVATION_COUNT_KEY, RESERVATION_IDS_KEY, str(max_allowed), order_id
+            )
             return result == 1
         except Exception as e:
             logger.warning("Redis cluster reserve failed: %s", e)

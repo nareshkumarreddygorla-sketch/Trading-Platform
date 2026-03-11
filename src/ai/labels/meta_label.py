@@ -2,8 +2,8 @@
 Meta-labeling: given primary prediction (e.g. +1/-1), meta-label = 1 if actual trade
 would have been profitable after costs, else 0. Trained only on samples where primary predicted a trade.
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -20,7 +20,7 @@ class MetaLabeler:
     Primary gives direction (e.g. +1 or -1); meta = 1 if realized PnL after cost > 0.
     """
 
-    def __init__(self, config: Optional[MetaLabelConfig] = None):
+    def __init__(self, config: MetaLabelConfig | None = None):
         self.config = config or MetaLabelConfig()
 
     def meta_label(
@@ -42,7 +42,7 @@ class MetaLabeler:
         self,
         prices: np.ndarray,
         primary_labels: np.ndarray,
-        entry_indices: Optional[np.ndarray] = None,
+        entry_indices: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         For each bar t where primary_labels[t] != 0, compute exit (first touch or H)

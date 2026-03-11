@@ -7,13 +7,13 @@ Pre-market gap detection and overnight exposure management:
   - Closes all positions if gap > 5%
   - Enforces overnight exposure limits
 """
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, time, timezone, timedelta
+from datetime import UTC, datetime, time, timedelta
 from enum import Enum
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,18 +21,19 @@ IST_OFFSET = timedelta(hours=5, minutes=30)
 
 
 class GapSeverity(str, Enum):
-    NORMAL = "normal"         # gap < 1%
-    MODERATE = "moderate"     # 1% <= gap < 3%
-    HIGH = "high"             # 3% <= gap < 5%
-    SEVERE = "severe"         # gap >= 5%
+    NORMAL = "normal"  # gap < 1%
+    MODERATE = "moderate"  # 1% <= gap < 3%
+    HIGH = "high"  # 3% <= gap < 5%
+    SEVERE = "severe"  # gap >= 5%
 
 
 @dataclass
 class GapAssessment:
     """Pre-market gap assessment result."""
+
     expected_gap_pct: float = 0.0
     severity: GapSeverity = GapSeverity.NORMAL
-    action: str = "none"         # "none", "reduce_50", "close_all"
+    action: str = "none"  # "none", "reduce_50", "close_all"
     reduce_to_pct: float = 100.0  # target exposure as % of current
     source: str = "unknown"
 
@@ -40,6 +41,7 @@ class GapAssessment:
 @dataclass
 class OvernightExposureCheck:
     """Overnight exposure limit check result."""
+
     current_exposure_pct: float = 0.0
     max_exposure_pct: float = 50.0
     allowed: bool = True
@@ -57,15 +59,15 @@ class GapRiskManager:
         moderate_gap_pct: float = 3.0,
         severe_gap_pct: float = 5.0,
         max_overnight_exposure_pct: float = 50.0,
-        pre_market_start: time = time(8, 45),   # 8:45 IST
-        pre_market_end: time = time(9, 15),      # 9:15 IST
+        pre_market_start: time = time(8, 45),  # 8:45 IST
+        pre_market_end: time = time(9, 15),  # 9:15 IST
     ):
         self.moderate_gap_pct = moderate_gap_pct
         self.severe_gap_pct = severe_gap_pct
         self.max_overnight_exposure_pct = max_overnight_exposure_pct
         self.pre_market_start = pre_market_start
         self.pre_market_end = pre_market_end
-        self._last_close_nifty: Optional[float] = None
+        self._last_close_nifty: float | None = None
 
     def set_previous_close(self, nifty_close: float) -> None:
         """Set previous session Nifty close for gap calculation."""
@@ -149,16 +151,16 @@ class GapRiskManager:
 
     def is_pre_market_window(self) -> bool:
         """Check if current time is in the pre-market analysis window (IST)."""
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         now_ist = now_utc + IST_OFFSET
         current_time = now_ist.time()
         return self.pre_market_start <= current_time <= self.pre_market_end
 
     def positions_to_reduce(
         self,
-        positions: List[dict],
+        positions: list[dict],
         target_pct: float,
-    ) -> List[dict]:
+    ) -> list[dict]:
         """
         Calculate orders needed to reduce positions to target percentage.
 
@@ -180,21 +182,23 @@ class GapRiskManager:
             if reduce_qty > 0:
                 # Close side is opposite of position side
                 close_side = "SELL" if pos.get("side", "BUY").upper() == "BUY" else "BUY"
-                reduction_orders.append({
-                    "symbol": pos["symbol"],
-                    "side": close_side,
-                    "quantity": reduce_qty,
-                    "reason": f"gap_protection_reduce_{int(target_pct)}pct",
-                })
+                reduction_orders.append(
+                    {
+                        "symbol": pos["symbol"],
+                        "side": close_side,
+                        "quantity": reduce_qty,
+                        "reason": f"gap_protection_reduce_{int(target_pct)}pct",
+                    }
+                )
 
         return reduction_orders
 
     async def execute_gap_action(
         self,
         submit_order_fn,
-        positions: List[dict],
-        assessment: Optional[GapAssessment] = None,
-        pre_market_nifty: Optional[float] = None,
+        positions: list[dict],
+        assessment: GapAssessment | None = None,
+        pre_market_nifty: float | None = None,
     ) -> int:
         """
         Execute gap risk action: submit reduce/close orders based on assessment.
@@ -224,14 +228,17 @@ class GapRiskManager:
 
         logger.warning(
             "Gap risk executing: gap=%.1f%% severity=%s action=%s reducing %d positions",
-            assessment.expected_gap_pct, assessment.severity.value, assessment.action, len(reduction_orders),
+            assessment.expected_gap_pct,
+            assessment.severity.value,
+            assessment.action,
+            len(reduction_orders),
         )
 
         submitted = 0
         for order_spec in reduction_orders:
             try:
                 # Import here to avoid circular imports
-                from src.core.events import Signal, SignalSide, Exchange, OrderType
+                from src.core.events import Exchange, OrderType, Signal, SignalSide
                 from src.execution.order_entry.request import OrderEntryRequest
 
                 side = SignalSide.SELL if order_spec["side"] == "SELL" else SignalSide.BUY
@@ -245,7 +252,7 @@ class GapRiskManager:
                     risk_level="EMERGENCY",
                     reason=order_spec.get("reason", f"gap_risk_{assessment.severity.value}"),
                     price=order_spec.get("price", 0),
-                    ts=datetime.now(timezone.utc),
+                    ts=datetime.now(UTC),
                 )
                 req = OrderEntryRequest(
                     signal=signal,
@@ -258,11 +265,20 @@ class GapRiskManager:
                 result = await submit_order_fn(req)
                 if result.success:
                     submitted += 1
-                    logger.info("Gap risk order submitted: %s %s %s qty=%d",
-                                order_spec["side"], order_spec["symbol"], result.order_id, order_spec["quantity"])
+                    logger.info(
+                        "Gap risk order submitted: %s %s %s qty=%d",
+                        order_spec["side"],
+                        order_spec["symbol"],
+                        result.order_id,
+                        order_spec["quantity"],
+                    )
                 else:
-                    logger.warning("Gap risk order rejected: %s %s: %s",
-                                   order_spec["symbol"], result.reject_reason, result.reject_detail)
+                    logger.warning(
+                        "Gap risk order rejected: %s %s: %s",
+                        order_spec["symbol"],
+                        result.reject_reason,
+                        result.reject_detail,
+                    )
             except Exception as e:
                 logger.exception("Gap risk order failed for %s: %s", order_spec.get("symbol"), e)
 

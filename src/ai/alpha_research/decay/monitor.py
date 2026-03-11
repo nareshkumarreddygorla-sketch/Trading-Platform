@@ -3,11 +3,10 @@ Phase G: Decay monitoring.
 Rolling IC, rolling Sharpe, half-life estimate; drift metrics;
 gradual weight reduction on decay; abrupt disable only if catastrophic.
 """
-from dataclasses import dataclass
-from typing import Deque, Dict, List, Optional
 
 import collections
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -33,13 +32,13 @@ class DecayMonitor:
     recommend weight multiplier (gradual) or disable (catastrophic).
     """
 
-    def __init__(self, config: Optional[DecayConfig] = None):
+    def __init__(self, config: DecayConfig | None = None):
         self.config = config or DecayConfig()
-        self._rolling_ic: Dict[str, Deque[float]] = {}
-        self._rolling_sharpe: Dict[str, Deque[float]] = {}
-        self._weight_mult: Dict[str, float] = {}
-        self._signal_buffer: Dict[str, List[float]] = {}
-        self._return_buffer: Dict[str, List[float]] = {}
+        self._rolling_ic: dict[str, collections.deque[float]] = {}
+        self._rolling_sharpe: dict[str, collections.deque[float]] = {}
+        self._weight_mult: dict[str, float] = {}
+        self._signal_buffer: dict[str, list[float]] = {}
+        self._return_buffer: dict[str, list[float]] = {}
 
     def register(self, signal_id: str) -> None:
         self._rolling_ic.setdefault(signal_id, collections.deque(maxlen=self.config.rolling_window))
@@ -53,7 +52,7 @@ class DecayMonitor:
         signal_id: str,
         signal: np.ndarray,
         forward_return: np.ndarray,
-        sharpe_rolling: Optional[float] = None,
+        sharpe_rolling: float | None = None,
     ) -> None:
         """Append latest window IC (and optional Sharpe); detect decay."""
         self.register(signal_id)
@@ -76,7 +75,7 @@ class DecayMonitor:
             return 0.0
         return sum(q) / len(q) if q else 0.0
 
-    def half_life_estimate(self, signal_id: str) -> Optional[float]:
+    def half_life_estimate(self, signal_id: str) -> float | None:
         """Exponential decay: IC(t) = IC_0 * exp(-t/tau). Fit tau; half_life = tau * ln(2)."""
         q = list(self._rolling_ic.get(signal_id, []))
         if len(q) < 5:

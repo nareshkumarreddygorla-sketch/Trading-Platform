@@ -3,12 +3,12 @@ Production-grade idempotency: Redis (or DB) with TTL.
 Duplicate request returns same order_id; broker is NOT called again.
 Falls back to in-memory store for paper trading when Redis is unavailable.
 """
+
 import hashlib
 import json
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ class IdempotencyStore:
             self._redis_checked = True
             try:
                 import redis.asyncio as redis
+
                 client = redis.from_url(self.redis_url, decode_responses=True)
                 await client.ping()
                 self._redis = client
@@ -113,7 +114,7 @@ class IdempotencyStore:
         for k in expired:
             del self._mem_store[k]
 
-    async def get(self, idempotency_key: str) -> Optional[dict]:
+    async def get(self, idempotency_key: str) -> dict | None:
         """Return stored result if any. None if missing or expired."""
         client = await self._get_redis()
         if client:
@@ -134,9 +135,16 @@ class IdempotencyStore:
             del self._mem_store[key]
         return None
 
-    async def set(self, idempotency_key: str, order_id: str, broker_order_id: Optional[str] = None, status: str = "PENDING") -> bool:
+    async def set(
+        self, idempotency_key: str, order_id: str, broker_order_id: str | None = None, status: str = "PENDING"
+    ) -> bool:
         """Store result. Returns False if key already exists (NX semantics)."""
-        payload = {"order_id": order_id, "broker_order_id": broker_order_id or "", "status": status, "ts": datetime.now(timezone.utc).isoformat()}
+        payload = {
+            "order_id": order_id,
+            "broker_order_id": broker_order_id or "",
+            "status": status,
+            "ts": datetime.now(UTC).isoformat(),
+        }
         client = await self._get_redis()
         if client:
             key = self._key(idempotency_key)
@@ -155,9 +163,16 @@ class IdempotencyStore:
         self._mem_cleanup()
         return True
 
-    async def update(self, idempotency_key: str, order_id: str, broker_order_id: Optional[str] = None, status: str = "PENDING") -> None:
+    async def update(
+        self, idempotency_key: str, order_id: str, broker_order_id: str | None = None, status: str = "PENDING"
+    ) -> None:
         """Overwrite existing key."""
-        payload = {"order_id": order_id, "broker_order_id": broker_order_id or "", "status": status, "ts": datetime.now(timezone.utc).isoformat()}
+        payload = {
+            "order_id": order_id,
+            "broker_order_id": broker_order_id or "",
+            "status": status,
+            "ts": datetime.now(UTC).isoformat(),
+        }
         client = await self._get_redis()
         if client:
             key = self._key(idempotency_key)
@@ -170,7 +185,9 @@ class IdempotencyStore:
         key = self._key(idempotency_key)
         self._mem_store[key] = (time.time() + self.ttl_seconds, payload)
 
-    async def set_if_new_or_get(self, idempotency_key: str, order_id: str, broker_order_id: Optional[str], status: str) -> tuple[bool, Optional[dict]]:
+    async def set_if_new_or_get(
+        self, idempotency_key: str, order_id: str, broker_order_id: str | None, status: str
+    ) -> tuple[bool, dict | None]:
         """
         If key does not exist: set and return (True, None).
         If key exists: return (False, stored_value) so caller can return stored order_id.
@@ -187,7 +204,7 @@ class IdempotencyStore:
         return True, None
 
     @staticmethod
-    def derive_key(signal_id: str, symbol: str, side: str, quantity: int, price: Optional[float], ts_iso: str) -> str:
+    def derive_key(signal_id: str, symbol: str, side: str, quantity: int, price: float | None, ts_iso: str) -> str:
         """Derive idempotency key from request if client did not send one."""
         raw = f"{signal_id}|{symbol}|{side}|{quantity}|{price}|{ts_iso}"
         return hashlib.sha256(raw.encode()).hexdigest()[:32]

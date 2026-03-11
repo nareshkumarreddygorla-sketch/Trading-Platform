@@ -1,13 +1,15 @@
 """Async persistence service: symbol-level locking + executor for throughput and no lost updates."""
+
 import asyncio
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Optional
+from typing import Any
 
 from src.core.events import Order, OrderStatus
 
 from .order_repo import OrderRepository
-from .position_repo import PositionRepository, PositionConcurrentUpdateError
+from .position_repo import PositionConcurrentUpdateError, PositionRepository
 from .risk_snapshot_repo import RiskSnapshotRepository
 
 logger = logging.getLogger(__name__)
@@ -27,10 +29,10 @@ class PersistenceService:
 
     def __init__(
         self,
-        order_repo: Optional[OrderRepository] = None,
-        position_repo: Optional[PositionRepository] = None,
-        risk_snapshot_repo: Optional[RiskSnapshotRepository] = None,
-        _write_executor: Optional[ThreadPoolExecutor] = None,
+        order_repo: OrderRepository | None = None,
+        position_repo: PositionRepository | None = None,
+        risk_snapshot_repo: RiskSnapshotRepository | None = None,
+        _write_executor: ThreadPoolExecutor | None = None,
     ):
         self._order_repo = order_repo or OrderRepository()
         self._position_repo = position_repo or PositionRepository()
@@ -48,18 +50,21 @@ class PersistenceService:
         loop = asyncio.get_running_loop()
         return loop.run_in_executor(self._write_executor, sync_fn)
 
-    async def persist_order(self, order: Order, idempotency_key: Optional[str] = None, initial_status: str = "NEW") -> None:
+    async def persist_order(
+        self, order: Order, idempotency_key: str | None = None, initial_status: str = "NEW"
+    ) -> None:
         """Persist order. initial_status NEW or SUBMITTING (write-ahead before broker)."""
+
         def _do():
             self._order_repo.create_order(order, idempotency_key=idempotency_key, initial_status=initial_status)
 
         await self._run_write_sync(_do)
 
-    async def persist_order_submitting(self, order: Order, idempotency_key: Optional[str] = None) -> None:
+    async def persist_order_submitting(self, order: Order, idempotency_key: str | None = None) -> None:
         """Write-ahead: persist order with status SUBMITTING before broker call."""
         await self.persist_order(order, idempotency_key=idempotency_key, initial_status="SUBMITTING")
 
-    def update_order_after_broker_ack_sync(self, order_id: str, broker_order_id: Optional[str]) -> bool:
+    def update_order_after_broker_ack_sync(self, order_id: str, broker_order_id: str | None) -> bool:
         """Transition SUBMITTING -> NEW after broker accepts. Returns True if updated."""
         return self._order_repo.update_order_after_broker_ack(order_id, broker_order_id, new_status="NEW")
 
@@ -67,7 +72,9 @@ class PersistenceService:
         """Return orders in SUBMITTING state (for recovery reconcile)."""
         return self._order_repo.list_submitting_orders()
 
-    def update_order_status_sync(self, order_id: str, status: OrderStatus, filled_qty: float = 0.0, avg_price: Optional[float] = None) -> bool:
+    def update_order_status_sync(
+        self, order_id: str, status: OrderStatus, filled_qty: float = 0.0, avg_price: float | None = None
+    ) -> bool:
         """Sync update order status (e.g. SUBMITTING -> REJECTED on broker failure). Returns True if updated."""
         return self._order_repo.update_order_status(order_id, status, filled_qty=filled_qty, avg_price=avg_price)
 
@@ -76,11 +83,11 @@ class PersistenceService:
         order_id: str,
         status: OrderStatus,
         filled_qty: float,
-        avg_price: Optional[float],
+        avg_price: float | None,
         symbol: str,
         exchange: str,
         side: str,
-        strategy_id: Optional[str] = None,
+        strategy_id: str | None = None,
     ) -> None:
         """Update order status, record event, and upsert position in one transaction. Symbol-level lock for position."""
         from .database import session_scope
@@ -90,13 +97,18 @@ class PersistenceService:
                 self._order_repo.update_order_status(
                     order_id, status, filled_qty=filled_qty, avg_price=avg_price, session=session
                 )
-                if filled_qty > 0 and avg_price is not None and status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
+                if (
+                    filled_qty > 0
+                    and avg_price is not None
+                    and status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED)
+                ):
                     self._position_repo.upsert_from_fill(
                         symbol, exchange, side, filled_qty, avg_price, strategy_id, session=session
                     )
             if status == OrderStatus.FILLED:
                 try:
                     from src.monitoring.metrics import track_orders_filled_total
+
                     track_orders_filled_total()
                 except Exception:
                     pass
@@ -114,6 +126,7 @@ class PersistenceService:
             if last_err:
                 try:
                     from src.monitoring.metrics import track_orders_fill_persist_failed_total
+
                     track_orders_fill_persist_failed_total()
                 except Exception:
                     pass
@@ -122,13 +135,17 @@ class PersistenceService:
     def get_order_sync(self, order_id: str):
         return self._order_repo.get_by_order_id(order_id)
 
-    def list_orders_paginated_sync(self, limit: int = 50, offset: int = 0, status: Optional[str] = None, strategy_id: Optional[str] = None):
-        return self._order_repo.list_orders_paginated(limit=limit, offset=offset, status=status, strategy_id=strategy_id)
+    def list_orders_paginated_sync(
+        self, limit: int = 50, offset: int = 0, status: str | None = None, strategy_id: str | None = None
+    ):
+        return self._order_repo.list_orders_paginated(
+            limit=limit, offset=offset, status=status, strategy_id=strategy_id
+        )
 
     def list_positions_sync(self):
         return self._position_repo.list_positions()
 
-    def get_risk_snapshot_sync(self) -> Optional[tuple]:
+    def get_risk_snapshot_sync(self) -> tuple | None:
         """Return (equity, daily_pnl) for cold start restore, or None."""
         return self._risk_snapshot_repo.get_latest()
 

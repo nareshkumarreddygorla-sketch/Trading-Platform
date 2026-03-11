@@ -2,10 +2,10 @@
 Angel One Historical Data Connector: fetch OHLCV candles via SmartAPI REST.
 Supports: ONE_MINUTE, FIVE_MINUTE, FIFTEEN_MINUTE, THIRTY_MINUTE, ONE_HOUR, ONE_DAY.
 """
+
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
@@ -29,12 +29,12 @@ INTERVAL_MAP = {
 
 # Max records per request (Angel One limit)
 MAX_RECORDS = {
-    "ONE_MINUTE": 30,      # 30 days
-    "FIVE_MINUTE": 90,     # 90 days
+    "ONE_MINUTE": 30,  # 30 days
+    "FIVE_MINUTE": 90,  # 90 days
     "FIFTEEN_MINUTE": 180,  # 180 days
     "THIRTY_MINUTE": 180,
     "ONE_HOUR": 365,
-    "ONE_DAY": 2000,       # ~5.5 years
+    "ONE_DAY": 2000,  # ~5.5 years
 }
 
 
@@ -61,9 +61,9 @@ class AngelOneHistorical:
         symbol: str,
         exchange: str = "NSE",
         interval: str = "1d",
-        from_date: Optional[datetime] = None,
-        to_date: Optional[datetime] = None,
-    ) -> List[Bar]:
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> list[Bar]:
         """
         Fetch historical candles for a symbol.
 
@@ -88,7 +88,7 @@ class AngelOneHistorical:
             return []
 
         if to_date is None:
-            to_date = datetime.now(timezone.utc)
+            to_date = datetime.now(UTC)
         if from_date is None:
             max_days = MAX_RECORDS.get(angel_interval, 365)
             from_date = to_date - timedelta(days=max_days)
@@ -117,7 +117,7 @@ class AngelOneHistorical:
             "X-PrivateKey": self._api_key,
         }
 
-        bars: List[Bar] = []
+        bars: list[Bar] = []
         try:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -144,17 +144,19 @@ class AngelOneHistorical:
                     continue
                 try:
                     ts = datetime.fromisoformat(candle[0].replace("T", " ").split("+")[0])
-                    bars.append(Bar(
-                        symbol=symbol,
-                        exchange=Exchange.NSE if exchange == "NSE" else Exchange.BSE,
-                        interval=interval,
-                        ts=ts,
-                        open=float(candle[1]),
-                        high=float(candle[2]),
-                        low=float(candle[3]),
-                        close=float(candle[4]),
-                        volume=int(candle[5]),
-                    ))
+                    bars.append(
+                        Bar(
+                            symbol=symbol,
+                            exchange=Exchange.NSE if exchange == "NSE" else Exchange.BSE,
+                            interval=interval,
+                            ts=ts,
+                            open=float(candle[1]),
+                            high=float(candle[2]),
+                            low=float(candle[3]),
+                            close=float(candle[4]),
+                            volume=int(candle[5]),
+                        )
+                    )
                 except (ValueError, IndexError) as e:
                     logger.debug("Skipping malformed candle: %s", e)
                     continue
@@ -162,7 +164,7 @@ class AngelOneHistorical:
             logger.info("Fetched %d candles for %s %s %s", len(bars), symbol, exchange, interval)
             return bars
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Historical API timeout for %s", symbol)
             return []
         except Exception as e:
@@ -171,13 +173,13 @@ class AngelOneHistorical:
 
     async def fetch_candles_bulk(
         self,
-        symbols: List[str],
+        symbols: list[str],
         exchange: str = "NSE",
         interval: str = "1d",
-        from_date: Optional[datetime] = None,
-        to_date: Optional[datetime] = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
         max_concurrent: int = 5,
-    ) -> Dict[str, List[Bar]]:
+    ) -> dict[str, list[Bar]]:
         """
         Fetch candles for multiple symbols with rate limiting.
 
@@ -189,7 +191,7 @@ class AngelOneHistorical:
             Dict of symbol -> List[Bar]
         """
         semaphore = asyncio.Semaphore(max_concurrent)
-        results: Dict[str, List[Bar]] = {}
+        results: dict[str, list[Bar]] = {}
 
         async def _fetch_one(sym: str):
             async with semaphore:

@@ -3,6 +3,7 @@ Autonomous trading controller: applies LLM exposure multiplier to risk,
 and meta_alpha recommendation (reduce_size / filter_signal) as scale for allocator.
 Phase 9: meta_alpha influences allocation BEFORE order entry — block, size reduction, Kelly cut.
 """
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ class AutonomousTradingController:
         """
         mult = 1.0 - prob_primary_wrong
         if prob_confidence_inflated > 0.5:
-            mult *= (1.0 - prob_confidence_inflated * 0.5)
+            mult *= 1.0 - prob_confidence_inflated * 0.5
         if recommendation == "filter_signal":
             mult *= 0.5
         return max(0.1, min(1.0, mult))

@@ -1,8 +1,8 @@
+from .advisory import AdvisoryResult, AdvisoryService
 from .client import LLMClient, LLMConfig
-from .sentiment import NewsSentimentService
 from .macro import MacroRiskService
+from .sentiment import NewsSentimentService
 from .strategy_review import StrategyReviewService
-from .advisory import AdvisoryService, AdvisoryResult
 
 __all__ = [
     "LLMClient",

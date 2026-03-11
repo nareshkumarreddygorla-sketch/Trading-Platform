@@ -3,12 +3,12 @@ Paper fill simulator: auto-fills PENDING orders with simulated execution.
 Runs as an async task in paper trading mode, replacing the live FillListener.
 Fills at the order's limit price with realistic dynamic slippage and India transaction costs.
 """
+
 import asyncio
 import logging
 import math
 import random
-from datetime import datetime, timezone
-from typing import Dict, Optional
+from datetime import UTC, datetime
 
 from src.core.events import OrderStatus
 
@@ -88,9 +88,9 @@ class PaperFillSimulator:
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds must be > 0")
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._filled_ids: set = set()
-        self._partial_fills: Dict[str, float] = {}  # order_id -> filled_so_far
+        self._partial_fills: dict[str, float] = {}  # order_id -> filled_so_far
         self._bar_cache = bar_cache
         self._adv_cache = adv_cache
         self._feature_engine = feature_engine
@@ -99,6 +99,7 @@ class PaperFillSimulator:
         if cost_calculator is None:
             try:
                 from src.costs.india_costs import IndiaCostCalculator
+
                 self._cost_calc = IndiaCostCalculator()
             except ImportError:
                 self._cost_calc = None
@@ -141,8 +142,12 @@ class PaperFillSimulator:
                     rejection_rate += min(0.10, participation * 2)  # Up to 15% extra
             if random.random() < rejection_rate:
                 # Simulate rejection: mark as rejected, don't fill
-                logger.info("Paper REJECTION: %s %s (rejection_rate=%.1f%%)",
-                           order.symbol, order.order_id[:8], rejection_rate * 100)
+                logger.info(
+                    "Paper REJECTION: %s %s (rejection_rate=%.1f%%)",
+                    order.symbol,
+                    order.order_id[:8],
+                    rejection_rate * 100,
+                )
                 self._filled_ids.add(order.order_id)
                 # Dispatch rejection event so order lifecycle updates
                 try:
@@ -150,17 +155,17 @@ class PaperFillSimulator:
                         order_id=order.order_id or "",
                         broker_order_id=f"PAPER-REJ-{(order.order_id or '')[:8]}",
                         symbol=order.symbol,
-                        exchange=str(getattr(order.exchange, 'value', order.exchange)),
-                        side=str(getattr(order.side, 'value', order.side)),
+                        exchange=str(getattr(order.exchange, "value", order.exchange)),
+                        side=str(getattr(order.side, "value", order.side)),
                         fill_type=FillType.REJECT,
                         filled_qty=0.0,
                         remaining_qty=order.quantity,
                         avg_price=0.0,
-                        ts=datetime.now(timezone.utc),
+                        ts=datetime.now(UTC),
                         strategy_id=order.strategy_id or "",
                         metadata={"rejection": True, "reason": "paper_simulated_rejection"},
                     )
-                    if hasattr(self, 'fill_handler') and self.fill_handler:
+                    if hasattr(self, "fill_handler") and self.fill_handler:
                         await self.fill_handler.on_fill_event(reject_event)
                 except Exception as e:
                     logger.warning("Failed to dispatch rejection event for order: %s", e)
@@ -177,6 +182,7 @@ class PaperFillSimulator:
                 if self._bar_cache is not None:
                     try:
                         from src.core.events import Exchange
+
                         exchange_val = order.exchange
                         if isinstance(exchange_val, str):
                             exchange_val = Exchange(exchange_val)
@@ -186,7 +192,7 @@ class PaperFillSimulator:
                     except Exception:
                         pass
                 if fill_price is None or fill_price <= 0:
-                    fill_price = getattr(order, 'limit_price', None) or 0.0
+                    fill_price = getattr(order, "limit_price", None) or 0.0
                     if fill_price <= 0:
                         logger.warning("Paper fill: no price data for %s, skipping fill", order.symbol)
                         continue
@@ -209,8 +215,13 @@ class PaperFillSimulator:
                 # Partial fill: fill 30-70% of remaining quantity
                 fill_pct = random.uniform(0.3, 0.7)
                 fill_qty = max(1, int(remaining_qty * fill_pct))
-                logger.info("Paper PARTIAL fill: %s %d/%d shares remaining (%.0f%% of remaining)",
-                           order.symbol, fill_qty, int(remaining_qty), fill_pct * 100)
+                logger.info(
+                    "Paper PARTIAL fill: %s %d/%d shares remaining (%.0f%% of remaining)",
+                    order.symbol,
+                    fill_qty,
+                    int(remaining_qty),
+                    fill_pct * 100,
+                )
 
             side_str = order.side
             if hasattr(side_str, "value"):
@@ -218,7 +229,7 @@ class PaperFillSimulator:
 
             # Source per-symbol ADV and volatility for realistic slippage
             adv = 500_000  # default
-            sigma = 0.02    # default
+            sigma = 0.02  # default
             if self._adv_cache is not None:
                 try:
                     adv = self._adv_cache.get_adv(order.symbol) or adv
@@ -227,6 +238,7 @@ class PaperFillSimulator:
             if self._feature_engine is not None and self._bar_cache is not None:
                 try:
                     from src.core.events import Exchange
+
                     exchange_val = order.exchange
                     if isinstance(exchange_val, str):
                         exchange_val = Exchange(exchange_val)
@@ -287,7 +299,7 @@ class PaperFillSimulator:
                 filled_qty=fill_qty,
                 remaining_qty=max(0.0, order.quantity - cumulative_after),
                 avg_price=fill_price,
-                ts=datetime.now(timezone.utc),
+                ts=datetime.now(UTC),
                 strategy_id=order.strategy_id or "",
                 metadata=metadata,
             )
@@ -304,8 +316,13 @@ class PaperFillSimulator:
                 cost_str = f" | cost=₹{total_cost:.2f}" if total_cost > 0 else ""
                 logger.info(
                     "Paper fill: %s %s %.0f %s @ %.2f (slip=%.1fbps%s)",
-                    side_str, order.symbol, fill_qty, exchange_str, fill_price,
-                    metadata.get("slippage_bps", 0), cost_str,
+                    side_str,
+                    order.symbol,
+                    fill_qty,
+                    exchange_str,
+                    fill_price,
+                    metadata.get("slippage_bps", 0),
+                    cost_str,
                 )
             except Exception as e:
                 logger.warning("Paper fill failed for %s: %s", order.order_id, e)
@@ -337,7 +354,9 @@ class PaperFillSimulator:
         self._task = asyncio.create_task(self._loop())
         logger.info(
             "Paper fill simulator started (delay=%.1fs, poll=%.1fs, india_costs=%s)",
-            self.fill_delay_seconds, self.poll_interval, self._cost_calc is not None,
+            self.fill_delay_seconds,
+            self.poll_interval,
+            self._cost_calc is not None,
         )
 
     async def stop(self) -> None:

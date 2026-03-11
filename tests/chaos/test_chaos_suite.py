@@ -2,20 +2,19 @@
 Chaos tests: assert invariants under failure injection.
 Invariants: no duplicate broker call, no position corruption, no capital leakage.
 """
-import asyncio
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.core.events import Exchange, Order, OrderStatus, Signal, SignalSide
+from src.core.events import Exchange, OrderStatus, SignalSide
 from src.execution.fill_handler import FillHandler, FillListener
+from src.execution.lifecycle import OrderLifecycle
 from src.execution.order_entry.idempotency import IdempotencyStore
 from src.execution.order_entry.redis_cluster_reservation import RedisClusterReservation
 from src.execution.order_entry.redis_distributed_lock import RedisDistributedLock
 from src.risk_engine import RiskManager
 from src.risk_engine.limits import RiskLimits
-from src.execution.lifecycle import OrderLifecycle
 
 
 @pytest.fixture
@@ -33,12 +32,33 @@ async def test_duplicate_fill_flood_no_position_corruption(risk_manager, lifecyc
     """Duplicate fill flood: apply same fill 10x; position must equal single fill qty (dedup)."""
     handler = FillHandler(risk_manager=risk_manager, lifecycle=lifecycle)
     from src.core.events import Order as O
-    o = O(order_id="c1", strategy_id="s1", symbol="INFY", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=10.0, status=OrderStatus.LIVE)
+
+    o = O(
+        order_id="c1",
+        strategy_id="s1",
+        symbol="INFY",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        quantity=10.0,
+        status=OrderStatus.LIVE,
+    )
     lifecycle.register(o)
     gateway = MagicMock()
-    gateway.get_orders = AsyncMock(return_value=[
-        O(order_id="c1", strategy_id="s1", symbol="INFY", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=10.0, filled_qty=5.0, avg_price=100.0, status=OrderStatus.PARTIALLY_FILLED),
-    ])
+    gateway.get_orders = AsyncMock(
+        return_value=[
+            O(
+                order_id="c1",
+                strategy_id="s1",
+                symbol="INFY",
+                exchange=Exchange.NSE,
+                side=SignalSide.BUY,
+                quantity=10.0,
+                filled_qty=5.0,
+                avg_price=100.0,
+                status=OrderStatus.PARTIALLY_FILLED,
+            ),
+        ]
+    )
     listener = FillListener(gateway, handler, poll_interval_seconds=999.0)
     for _ in range(10):
         await listener._process_orders(gateway.get_orders.return_value)

@@ -2,12 +2,12 @@
 News Feed Aggregator: Collect financial news from multiple RSS sources.
 Used for LLM sentiment analysis and pre-market briefing.
 """
+
 import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +26,20 @@ RSS_FEEDS = {
 @dataclass
 class NewsArticle:
     """A single news article."""
+
     title: str
     source: str
     url: str
-    published: Optional[datetime] = None
+    published: datetime | None = None
     summary: str = ""
-    symbols: List[str] = field(default_factory=list)
-    sentiment_score: Optional[float] = None  # -1 to 1
+    symbols: list[str] = field(default_factory=list)
+    sentiment_score: float | None = None  # -1 to 1
     relevance_score: float = 0.0
     _hash: str = ""
 
     def __post_init__(self):
         if not self._hash:
-            self._hash = hashlib.md5(
-                f"{self.title}{self.url}".encode()
-            ).hexdigest()[:16]
+            self._hash = hashlib.md5(f"{self.title}{self.url}".encode()).hexdigest()[:16]
 
 
 class NewsFeedAggregator:
@@ -51,20 +50,20 @@ class NewsFeedAggregator:
 
     def __init__(
         self,
-        feeds: Optional[Dict[str, str]] = None,
+        feeds: dict[str, str] | None = None,
         max_articles: int = 200,
         max_age_hours: int = 24,
     ):
         self._feeds = feeds or RSS_FEEDS
-        self._articles: Dict[str, NewsArticle] = {}  # hash -> article
+        self._articles: dict[str, NewsArticle] = {}  # hash -> article
         self._max_articles = max_articles
         self._max_age_hours = max_age_hours
-        self._last_fetch: Optional[datetime] = None
+        self._last_fetch: datetime | None = None
 
-    async def fetch_all(self) -> List[NewsArticle]:
+    async def fetch_all(self) -> list[NewsArticle]:
         """Fetch from all configured RSS feeds."""
         try:
-            import feedparser
+            import feedparser  # noqa: F401
         except ImportError:
             logger.warning("feedparser not installed, skipping news fetch")
             return []
@@ -86,11 +85,11 @@ class NewsFeedAggregator:
         # Prune old articles
         self._prune_old()
 
-        self._last_fetch = datetime.now(timezone.utc)
+        self._last_fetch = datetime.now(UTC)
         logger.info("News fetch: %d new articles, %d total cached", new_count, len(self._articles))
         return self.get_recent()
 
-    async def _fetch_feed(self, source: str, url: str) -> List[NewsArticle]:
+    async def _fetch_feed(self, source: str, url: str) -> list[NewsArticle]:
         """Fetch a single RSS feed."""
         import feedparser
 
@@ -104,7 +103,7 @@ class NewsFeedAggregator:
                 published = None
                 if hasattr(entry, "published_parsed") and entry.published_parsed:
                     try:
-                        published = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                        published = datetime(*entry.published_parsed[:6], tzinfo=UTC)
                     except Exception:
                         pass
 
@@ -125,20 +124,34 @@ class NewsFeedAggregator:
             logger.debug("Feed %s error: %s", source, e)
             return []
 
-    def _extract_symbols(self, text: str) -> List[str]:
+    def _extract_symbols(self, text: str) -> list[str]:
         """Extract NSE stock symbols mentioned in text."""
         # Common NSE stock names and their symbols
         SYMBOL_MAP = {
-            "reliance": "RELIANCE", "tcs": "TCS", "infosys": "INFY",
-            "hdfc bank": "HDFCBANK", "icici bank": "ICICIBANK",
-            "sbi": "SBIN", "axis bank": "AXISBANK", "kotak": "KOTAKBANK",
-            "hindustan unilever": "HINDUNILVR", "itc": "ITC",
-            "bharti airtel": "BHARTIARTL", "asian paints": "ASIANPAINT",
-            "bajaj finance": "BAJFINANCE", "sun pharma": "SUNPHARMA",
-            "titan": "TITAN", "wipro": "WIPRO", "hcl tech": "HCLTECH",
-            "maruti": "MARUTI", "tata motors": "TATAMOTORS",
-            "larsen": "LT", "nifty": "NIFTY", "sensex": "SENSEX",
-            "adani": "ADANIENT", "ultratech": "ULTRACEMCO",
+            "reliance": "RELIANCE",
+            "tcs": "TCS",
+            "infosys": "INFY",
+            "hdfc bank": "HDFCBANK",
+            "icici bank": "ICICIBANK",
+            "sbi": "SBIN",
+            "axis bank": "AXISBANK",
+            "kotak": "KOTAKBANK",
+            "hindustan unilever": "HINDUNILVR",
+            "itc": "ITC",
+            "bharti airtel": "BHARTIARTL",
+            "asian paints": "ASIANPAINT",
+            "bajaj finance": "BAJFINANCE",
+            "sun pharma": "SUNPHARMA",
+            "titan": "TITAN",
+            "wipro": "WIPRO",
+            "hcl tech": "HCLTECH",
+            "maruti": "MARUTI",
+            "tata motors": "TATAMOTORS",
+            "larsen": "LT",
+            "nifty": "NIFTY",
+            "sensex": "SENSEX",
+            "adani": "ADANIENT",
+            "ultratech": "ULTRACEMCO",
         }
 
         text_lower = text.lower()
@@ -150,7 +163,7 @@ class NewsFeedAggregator:
 
     def _prune_old(self) -> None:
         """Remove articles older than max_age_hours."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=self._max_age_hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=self._max_age_hours)
         to_remove = []
         for h, article in self._articles.items():
             if article.published and article.published < cutoff:
@@ -162,32 +175,26 @@ class NewsFeedAggregator:
         if len(self._articles) > self._max_articles:
             sorted_articles = sorted(
                 self._articles.items(),
-                key=lambda x: x[1].published or datetime.min.replace(tzinfo=timezone.utc),
+                key=lambda x: x[1].published or datetime.min.replace(tzinfo=UTC),
                 reverse=True,
             )
-            self._articles = dict(sorted_articles[:self._max_articles])
+            self._articles = dict(sorted_articles[: self._max_articles])
 
-    def get_recent(self, hours: int = 12, limit: int = 50) -> List[NewsArticle]:
+    def get_recent(self, hours: int = 12, limit: int = 50) -> list[NewsArticle]:
         """Get recent articles sorted by time."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        recent = [
-            a for a in self._articles.values()
-            if a.published is None or a.published >= cutoff
-        ]
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
+        recent = [a for a in self._articles.values() if a.published is None or a.published >= cutoff]
         recent.sort(
-            key=lambda a: a.published or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda a: a.published or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
         return recent[:limit]
 
-    def get_by_symbol(self, symbol: str, limit: int = 20) -> List[NewsArticle]:
+    def get_by_symbol(self, symbol: str, limit: int = 20) -> list[NewsArticle]:
         """Get articles mentioning a specific symbol."""
-        matching = [
-            a for a in self._articles.values()
-            if symbol in a.symbols
-        ]
+        matching = [a for a in self._articles.values() if symbol in a.symbols]
         matching.sort(
-            key=lambda a: a.published or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda a: a.published or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
         return matching[:limit]

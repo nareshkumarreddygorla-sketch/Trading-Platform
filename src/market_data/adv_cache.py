@@ -5,10 +5,10 @@ Fetches ADV per symbol from yfinance with weekly refresh.
 Thread-safe with in-memory cache (7-day TTL).
 Provides `get_adv(symbol)` for market impact model and paper fills.
 """
+
 import logging
 import threading
 import time
-from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,8 @@ class ADVCache:
     """
 
     def __init__(self, default_adv: int = DEFAULT_ADV, ttl_seconds: int = CACHE_TTL_SECONDS):
-        self._cache: Dict[str, int] = {}  # symbol -> ADV
-        self._timestamps: Dict[str, float] = {}  # symbol -> fetch time
+        self._cache: dict[str, int] = {}  # symbol -> ADV
+        self._timestamps: dict[str, float] = {}  # symbol -> fetch time
         self._lock = threading.Lock()
         self._default_adv = default_adv
         self._ttl = ttl_seconds
@@ -53,7 +53,7 @@ class ADVCache:
             self._timestamps[symbol] = time.time()
         return adv
 
-    def get_all(self) -> Dict[str, int]:
+    def get_all(self) -> dict[str, int]:
         """Return all cached ADV values."""
         with self._lock:
             return dict(self._cache)
@@ -64,7 +64,7 @@ class ADVCache:
             self._cache[symbol] = adv
             self._timestamps[symbol] = time.time()
 
-    def refresh(self, symbols: list, exchange: str = "NSE") -> Dict[str, int]:
+    def refresh(self, symbols: list, exchange: str = "NSE") -> dict[str, int]:
         """
         Bulk refresh ADV for multiple symbols from yfinance.
         Returns dict of {symbol: adv}.
@@ -82,6 +82,7 @@ class ADVCache:
         """Fetch ADV for a single symbol from yfinance."""
         try:
             import yfinance as yf
+
             # Map NSE symbols to yfinance format
             yf_symbol = symbol
             if exchange.upper() in ("NSE", "BSE") and "." not in symbol:
@@ -105,6 +106,7 @@ class ADVCache:
 
     def start_background_refresh(self, symbols: list, exchange: str = "NSE", interval_hours: int = 24) -> None:
         """Start a background thread that refreshes ADV periodically."""
+
         def _refresh_loop():
             while True:
                 try:

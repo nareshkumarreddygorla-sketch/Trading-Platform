@@ -1,6 +1,6 @@
 """API router for LLM-powered strategy generation."""
+
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/v1/strategy-builder")
 
 class GenerateRequest(BaseModel):
     prompt: str
-    timeframe: Optional[str] = None
+    timeframe: str | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -27,6 +27,7 @@ def _get_generator(request: Request):
     gen = getattr(request.app.state, "strategy_generator", None)
     if gen is None:
         from src.ai.llm.strategy_generator import StrategyGenerator
+
         gen = StrategyGenerator()
         request.app.state.strategy_generator = gen
     return gen
@@ -41,9 +42,12 @@ async def generate_strategy(body: GenerateRequest, request: Request):
         prompt += f" (timeframe: {body.timeframe})"
     result = await gen.generate(prompt)
     return GenerateResponse(
-        name=result.name, description=result.description,
-        code=result.code, config=result.config,
-        validated=result.validated, errors=result.errors,
+        name=result.name,
+        description=result.description,
+        code=result.code,
+        config=result.config,
+        validated=result.validated,
+        errors=result.errors,
     )
 
 
@@ -53,8 +57,10 @@ async def list_strategies(request: Request):
     gen = _get_generator(request)
     return [
         {
-            "name": s.name, "description": s.description,
-            "validated": s.validated, "created_at": s.created_at,
+            "name": s.name,
+            "description": s.description,
+            "validated": s.validated,
+            "created_at": s.created_at,
             "prompt": s.prompt,
         }
         for s in gen.list_generated()
@@ -69,10 +75,14 @@ async def get_strategy(name: str, request: Request):
     if not s:
         raise HTTPException(status_code=404, detail="Strategy not found")
     return {
-        "name": s.name, "description": s.description,
-        "code": s.code, "config": s.config,
-        "validated": s.validated, "errors": s.errors,
-        "created_at": s.created_at, "prompt": s.prompt,
+        "name": s.name,
+        "description": s.description,
+        "code": s.code,
+        "config": s.config,
+        "validated": s.validated,
+        "errors": s.errors,
+        "created_at": s.created_at,
+        "prompt": s.prompt,
     }
 
 

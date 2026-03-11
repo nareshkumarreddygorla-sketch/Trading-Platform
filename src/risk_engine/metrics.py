@@ -2,13 +2,14 @@
 Risk metrics: VaR, CVaR, max drawdown, Sharpe, Kelly, Optimal f.
 Used for portfolio risk and position sizing.
 """
+
 from dataclasses import dataclass
-from typing import List
 
 import numpy as np
 
 try:
     from scipy import stats as _scipy_stats
+
     _HAS_SCIPY = True
 except ImportError:
     _HAS_SCIPY = False
@@ -21,6 +22,7 @@ _PHI_TABLE = {0.90: 0.1755, 0.95: 0.1031, 0.99: 0.0267}  # pdf at z
 @dataclass
 class RiskMetrics:
     """Computed risk metrics for a series of returns (e.g. strategy or portfolio)."""
+
     var_95: float  # Value at Risk 95%
     cvar_95: float  # Conditional VaR (expected shortfall) 95%
     max_drawdown: float
@@ -107,15 +109,25 @@ def compute_risk_metrics(returns: np.ndarray, confidence: float = 0.95) -> RiskM
     """Compute full risk metrics from return series."""
     if len(returns) < 2:
         return RiskMetrics(
-            var_95=0.0, cvar_95=0.0, max_drawdown=0.0, max_drawdown_duration=0,
-            sharpe=0.0, kelly_fraction=0.0, optimal_f=0.0,
+            var_95=0.0,
+            cvar_95=0.0,
+            max_drawdown=0.0,
+            max_drawdown_duration=0,
+            sharpe=0.0,
+            kelly_fraction=0.0,
+            optimal_f=0.0,
         )
     # Filter NaN values before cumprod to prevent propagation
     clean_returns = returns[~np.isnan(returns)]
     if len(clean_returns) < 2:
         return RiskMetrics(
-            var_95=0.0, cvar_95=0.0, max_drawdown=0.0, max_drawdown_duration=0,
-            sharpe=0.0, kelly_fraction=0.0, optimal_f=0.0,
+            var_95=0.0,
+            cvar_95=0.0,
+            max_drawdown=0.0,
+            max_drawdown_duration=0,
+            sharpe=0.0,
+            kelly_fraction=0.0,
+            optimal_f=0.0,
         )
     prices = np.cumprod(1 + clean_returns)
     md, duration = max_drawdown(prices)

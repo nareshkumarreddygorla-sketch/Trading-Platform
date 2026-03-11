@@ -3,10 +3,10 @@ Redis distributed lock for order submission. Ensures cluster-wide single-writer 
 Lock expiry prevents deadlock on pod crash.
 Falls back to asyncio.Lock for single-process paper trading when Redis is unavailable.
 """
+
 import asyncio
 import logging
 import uuid
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -41,30 +41,29 @@ class RedisDistributedLock:
         self.acquire_timeout_seconds = acquire_timeout_seconds
         self._redis = None
         self._redis_checked = False
-        self._token: Optional[str] = None
+        self._token: str | None = None
         # In-memory fallback lock for paper trading
         self._local_lock = asyncio.Lock()
         self._using_local = False
         # Watchdog task that auto-extends TTL
-        self._watchdog_task: Optional[asyncio.Task] = None
+        self._watchdog_task: asyncio.Task | None = None
 
     async def _get_redis(self):
         if self._redis is None and not self._redis_checked:
             self._redis_checked = True
             try:
                 import redis.asyncio as redis
+
                 client = redis.from_url(self.redis_url, decode_responses=True)
                 await client.ping()
                 self._redis = client
             except ImportError:
                 logger.warning(
-                    "DistributedLock DEGRADED: redis package not installed; "
-                    "using local asyncio.Lock (paper mode only)"
+                    "DistributedLock DEGRADED: redis package not installed; using local asyncio.Lock (paper mode only)"
                 )
             except Exception:
                 logger.warning(
-                    "DistributedLock DEGRADED: Redis unavailable; "
-                    "using local asyncio.Lock (paper mode only)"
+                    "DistributedLock DEGRADED: Redis unavailable; using local asyncio.Lock (paper mode only)"
                 )
         return self._redis
 
@@ -86,9 +85,7 @@ class RedisDistributedLock:
             while True:
                 await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
                 try:
-                    result = await client.eval(
-                        extend_script, 1, self.lock_key, token, str(self.ttl_seconds)
-                    )
+                    result = await client.eval(extend_script, 1, self.lock_key, token, str(self.ttl_seconds))
                     if not result:
                         logger.warning(
                             "Lock watchdog: lock %s lost (token mismatch); stopping watchdog",
@@ -110,7 +107,7 @@ class RedisDistributedLock:
             try:
                 await asyncio.wait_for(self._local_lock.acquire(), timeout=self.acquire_timeout_seconds)
                 return True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(
                     "Failed to acquire local fallback lock (timeout=%.1fs)",
                     self.acquire_timeout_seconds,
@@ -122,14 +119,10 @@ class RedisDistributedLock:
         deadline = loop.time() + self.acquire_timeout_seconds
         while loop.time() < deadline:
             try:
-                ok = await client.set(
-                    self.lock_key, self._token, nx=True, ex=self.ttl_seconds
-                )
+                ok = await client.set(self.lock_key, self._token, nx=True, ex=self.ttl_seconds)
                 if ok:
                     # Start watchdog to auto-extend TTL
-                    self._watchdog_task = asyncio.create_task(
-                        self._watchdog(), name=f"lock-watchdog-{self.lock_key}"
-                    )
+                    self._watchdog_task = asyncio.create_task(self._watchdog(), name=f"lock-watchdog-{self.lock_key}")
                     return True
             except Exception as e:
                 logger.warning("Redis lock acquire failed: %s", e)
@@ -216,8 +209,7 @@ class RedisDistributedLock:
         ok = await self.acquire()
         if not ok:
             raise RuntimeError(
-                f"Failed to acquire distributed lock key={self.lock_key} "
-                f"(timeout={self.acquire_timeout_seconds}s)"
+                f"Failed to acquire distributed lock key={self.lock_key} (timeout={self.acquire_timeout_seconds}s)"
             )
         return self
 

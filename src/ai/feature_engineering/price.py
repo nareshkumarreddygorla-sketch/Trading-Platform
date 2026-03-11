@@ -2,18 +2,17 @@
 Price-based features: returns, volatility, ATR, Bollinger width, momentum, z-score.
 Input: OHLCV series (close, high, low, volume); periods configurable.
 """
-from typing import Dict, List, Optional
 
 import numpy as np
 
 from src.core.events import Bar
 
 
-def _to_series(bars: List[Bar], field: str) -> np.ndarray:
+def _to_series(bars: list[Bar], field: str) -> np.ndarray:
     return np.array([getattr(b, field) for b in bars], dtype=float)
 
 
-def compute_returns(closes: np.ndarray, periods: List[int]) -> Dict[str, float]:
+def compute_returns(closes: np.ndarray, periods: list[int]) -> dict[str, float]:
     out = {}
     n = len(closes)
     for p in periods:
@@ -24,7 +23,7 @@ def compute_returns(closes: np.ndarray, periods: List[int]) -> Dict[str, float]:
     return out
 
 
-def compute_rolling_volatility(closes: np.ndarray, windows: List[int]) -> Dict[str, float]:
+def compute_rolling_volatility(closes: np.ndarray, windows: list[int]) -> dict[str, float]:
     returns = np.diff(closes) / (closes[:-1] + 1e-12)
     out = {}
     for w in windows:
@@ -54,7 +53,7 @@ def compute_bb_width(close: np.ndarray, period: int = 20, k: float = 2.0) -> flo
     return float((upper - lower) / (ma + 1e-12))
 
 
-def compute_momentum(close: np.ndarray, periods: List[int]) -> Dict[str, float]:
+def compute_momentum(close: np.ndarray, periods: list[int]) -> dict[str, float]:
     out = {}
     for p in periods:
         if len(close) > p and close[-1 - p] != 0:
@@ -75,11 +74,11 @@ def compute_zscore(close: np.ndarray, period: int = 20) -> float:
 
 
 def compute_price_features(
-    bars: List[Bar],
-    return_periods: Optional[List[int]] = None,
-    vol_windows: Optional[List[int]] = None,
-    momentum_periods: Optional[List[int]] = None,
-) -> Dict[str, float]:
+    bars: list[Bar],
+    return_periods: list[int] | None = None,
+    vol_windows: list[int] | None = None,
+    momentum_periods: list[int] | None = None,
+) -> dict[str, float]:
     """
     Compute all price-based features. Periods are in number of bars (e.g. 1m=1, 5m=5;
     mapping to real time depends on bar interval).
@@ -94,7 +93,7 @@ def compute_price_features(
     high = _to_series(bars, "high")
     low = _to_series(bars, "low")
 
-    features: Dict[str, float] = {}
+    features: dict[str, float] = {}
     features.update(compute_returns(close, return_periods))
     features.update(compute_rolling_volatility(close, vol_windows))
     features["atr_14"] = compute_atr(high, low, close, 14)

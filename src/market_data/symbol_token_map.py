@@ -3,15 +3,13 @@ Angel One Symbol Token Map: maps NSE symbols to Angel One numeric tokens.
 Downloads and caches the OpenAPI instrument master file.
 Required for: historical data API, WebSocket subscriptions, order placement.
 """
+
 import json
 import logging
-import os
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
 
 import aiohttp
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +32,11 @@ class SymbolTokenMap:
 
     def __init__(self):
         # symbol -> {token, exchange, instrument_type, lot_size, tick_size, expiry}
-        self._nse_eq: Dict[str, Dict] = {}
-        self._nse_fo: Dict[str, Dict] = {}
-        self._bse_eq: Dict[str, Dict] = {}
+        self._nse_eq: dict[str, dict] = {}
+        self._nse_fo: dict[str, dict] = {}
+        self._bse_eq: dict[str, dict] = {}
         # Reverse: token -> symbol
-        self._token_to_symbol: Dict[str, str] = {}
+        self._token_to_symbol: dict[str, str] = {}
         # Full instrument list
         self._instruments: list = []
         self._loaded = False
@@ -148,10 +146,12 @@ class SymbolTokenMap:
         self._load_time = time.time()
         logger.info(
             "Parsed instruments: NSE_EQ=%d, NSE_FO=%d, BSE_EQ=%d",
-            len(self._nse_eq), len(self._nse_fo), len(self._bse_eq),
+            len(self._nse_eq),
+            len(self._nse_fo),
+            len(self._bse_eq),
         )
 
-    def get_token(self, symbol: str, exchange: str = "NSE") -> Optional[str]:
+    def get_token(self, symbol: str, exchange: str = "NSE") -> str | None:
         """Get Angel One token for a trading symbol."""
         symbol = symbol.upper().replace("-EQ", "")
         if exchange == "NSE":
@@ -162,11 +162,11 @@ class SymbolTokenMap:
             return None
         return info["token"] if info else None
 
-    def get_symbol(self, token: str, exchange: str = "NSE") -> Optional[str]:
+    def get_symbol(self, token: str, exchange: str = "NSE") -> str | None:
         """Reverse lookup: token -> symbol."""
         return self._token_to_symbol.get(str(token))
 
-    def get_instrument_info(self, symbol: str, exchange: str = "NSE") -> Optional[Dict]:
+    def get_instrument_info(self, symbol: str, exchange: str = "NSE") -> dict | None:
         """Full instrument info for a symbol."""
         symbol = symbol.upper().replace("-EQ", "")
         if exchange == "NSE":
@@ -200,7 +200,7 @@ class SymbolTokenMap:
 
 
 # Module-level singleton
-_instance: Optional[SymbolTokenMap] = None
+_instance: SymbolTokenMap | None = None
 
 
 def get_symbol_token_map() -> SymbolTokenMap:

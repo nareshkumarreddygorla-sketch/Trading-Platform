@@ -3,9 +3,9 @@ Multi-layer drift: prediction distribution, calibration, rolling Sharpe,
 feature importance, regime frequency, correlation structure.
 Threshold design; avoid false retrains; shadow model evaluation before replace.
 """
+
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
 
 import numpy as np
 
@@ -49,18 +49,18 @@ class MultiLayerDriftDetector:
         self.importance_cosine_min = importance_cosine_min
         self.regime_chi2_threshold = regime_chi2_threshold
         self.corr_frobenius_threshold = corr_frobenius_threshold
-        self._reference_pred: Optional[np.ndarray] = None
-        self._reference_importance: Optional[np.ndarray] = None
-        self._reference_regime_dist: Optional[np.ndarray] = None
-        self._reference_corr: Optional[np.ndarray] = None
+        self._reference_pred: np.ndarray | None = None
+        self._reference_importance: np.ndarray | None = None
+        self._reference_regime_dist: np.ndarray | None = None
+        self._reference_corr: np.ndarray | None = None
         self._peak_sharpe: float = 0.0
 
     def set_reference(
         self,
-        pred: Optional[np.ndarray] = None,
-        importance: Optional[np.ndarray] = None,
-        regime_dist: Optional[np.ndarray] = None,
-        corr: Optional[np.ndarray] = None,
+        pred: np.ndarray | None = None,
+        importance: np.ndarray | None = None,
+        regime_dist: np.ndarray | None = None,
+        corr: np.ndarray | None = None,
     ) -> None:
         self._reference_pred = pred
         self._reference_importance = importance
@@ -87,6 +87,7 @@ class MultiLayerDriftDetector:
     def check_calibration(self, y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> DriftSignal:
         """MSE of binned predicted prob vs realized frequency."""
         from ..calibration.calibrate import reliability_curve
+
         _, mean_pred, mean_real = reliability_curve(y_true, y_prob, n_bins)
         valid = ~np.isnan(mean_real)
         if not np.any(valid):
@@ -129,14 +130,14 @@ class MultiLayerDriftDetector:
 
     def run_all(
         self,
-        current_pred: Optional[np.ndarray] = None,
-        y_true: Optional[np.ndarray] = None,
-        y_prob: Optional[np.ndarray] = None,
-        current_sharpe: Optional[float] = None,
-        current_importance: Optional[np.ndarray] = None,
-    ) -> List[DriftSignal]:
+        current_pred: np.ndarray | None = None,
+        y_true: np.ndarray | None = None,
+        y_prob: np.ndarray | None = None,
+        current_sharpe: float | None = None,
+        current_importance: np.ndarray | None = None,
+    ) -> list[DriftSignal]:
         """Run all applicable checks; return list of DriftSignal."""
-        out: List[DriftSignal] = []
+        out: list[DriftSignal] = []
         if current_pred is not None:
             out.append(self.check_prediction_dist(current_pred))
         if y_true is not None and y_prob is not None:

@@ -3,8 +3,9 @@ Phase A: Alpha hypothesis generation engine.
 Systematic variations from templates; avoid combinatorial explosion;
 apply statistical pre-filter (univariate IC) before expensive backtest.
 """
+
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -17,18 +18,19 @@ class HypothesisSpec:
     name: str
     family: str
     description: str
-    params: Dict[str, Any]
-    feature_refs: List[str]  # base feature names needed to compute
-    univariate_ic: Optional[float] = None  # set after pre-filter
+    params: dict[str, Any]
+    feature_refs: list[str]  # base feature names needed to compute
+    univariate_ic: float | None = None  # set after pre-filter
     passed_pre_filter: bool = False
 
 
-def _expand_template(t: TransformTemplate) -> List[Dict[str, Any]]:
+def _expand_template(t: TransformTemplate) -> list[dict[str, Any]]:
     """Expand param_ranges into list of param dicts; cap at max_combinations."""
     if not t.param_ranges:
         return [{}]
     keys = list(t.param_ranges.keys())
     from itertools import product
+
     combos = list(product(*[t.param_ranges[k] for k in keys]))
     out = [dict(zip(keys, c)) for c in combos[: t.max_combinations]]
     return out
@@ -44,6 +46,7 @@ def _univariate_ic_simple(signal: np.ndarray, forward_return: np.ndarray) -> flo
     if np.sum(mask) < 30:
         return 0.0
     from scipy.stats import spearmanr
+
     r, _ = spearmanr(signal[mask], forward_return[mask])
     return float(r) if np.isfinite(r) else 0.0
 
@@ -60,9 +63,9 @@ class AlphaHypothesisGenerator:
         self.max_total_candidates = max_total_candidates
         self._templates = transform_templates()
 
-    def generate_candidates(self) -> List[HypothesisSpec]:
+    def generate_candidates(self) -> list[HypothesisSpec]:
         """Generate all candidate specs from templates (no pre-filter)."""
-        candidates: List[HypothesisSpec] = []
+        candidates: list[HypothesisSpec] = []
         for t in self._templates:
             param_list = _expand_template(t)
             for i, params in enumerate(param_list):
@@ -83,10 +86,10 @@ class AlphaHypothesisGenerator:
 
     def pre_filter(
         self,
-        candidates: List[HypothesisSpec],
-        signal_fn_by_id: Optional[Dict[str, Any]] = None,
-        forward_returns: Optional[np.ndarray] = None,
-    ) -> List[HypothesisSpec]:
+        candidates: list[HypothesisSpec],
+        signal_fn_by_id: dict[str, Any] | None = None,
+        forward_returns: np.ndarray | None = None,
+    ) -> list[HypothesisSpec]:
         """
         If signal_fn_by_id maps hypothesis_id -> array (signal), and forward_returns given,
         compute univariate IC; set passed_pre_filter = True only if |IC| >= min_univariate_ic.
@@ -110,7 +113,7 @@ class AlphaHypothesisGenerator:
         return out
 
 
-def _feature_refs_for(t: TransformTemplate) -> List[str]:
+def _feature_refs_for(t: TransformTemplate) -> list[str]:
     """Infer base feature refs from template name/family."""
     refs = []
     if "return" in t.description or t.family.value == "price":

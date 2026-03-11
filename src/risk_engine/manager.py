@@ -1,4 +1,5 @@
 """Risk manager: apply limits, block trades, maintain state (positions, daily PnL)."""
+
 import json
 import logging
 import os
@@ -6,15 +7,15 @@ import tempfile
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 
 from src.core.events import Position, Signal
 
 from .limits import LimitCheckResult, RiskLimits
 from .metrics import RiskMetrics, compute_risk_metrics
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,8 @@ class RiskManager:
     def __init__(
         self,
         equity: float,
-        limits: Optional[RiskLimits] = None,
-        symbol_sector_map: Optional[Dict[str, str]] = None,
+        limits: RiskLimits | None = None,
+        symbol_sector_map: dict[str, str] | None = None,
         portfolio_var=None,
         correlation_guard=None,
         tail_risk_protector=None,
@@ -47,7 +48,7 @@ class RiskManager:
     ):
         self.equity = equity
         self.limits = limits or RiskLimits()
-        self.positions: List[Position] = []
+        self.positions: list[Position] = []
         self.daily_pnl: float = 0.0
         self._circuit_open: bool = False
         self._exposure_multiplier: float = 1.0  # 0.5--1.5 from vol or LLM
@@ -66,7 +67,7 @@ class RiskManager:
         # Uses threading.Lock for synchronous contexts (FillHandler, etc.)
         # Async callers should use async_positions_lock for proper coordination
         self._positions_lock = threading.Lock()
-        self._async_positions_lock: Optional[object] = None  # Lazily initialized asyncio.Lock
+        self._async_positions_lock: object | None = None  # Lazily initialized asyncio.Lock
 
         # Restore persisted circuit breaker state on startup
         if load_persisted_state:
@@ -76,9 +77,9 @@ class RiskManager:
         self._intraday_pnl_window: deque = deque(maxlen=60)  # (timestamp, pnl_snapshot)
 
         # Per-position hard stop loss tracking
-        self._forced_close_symbols: List[str] = []
+        self._forced_close_symbols: list[str] = []
 
-    def get_forced_close_symbols(self) -> List[str]:
+    def get_forced_close_symbols(self) -> list[str]:
         """Return symbols flagged for forced close by per-position loss check, then clear the list."""
         with self._positions_lock:
             symbols = list(self._forced_close_symbols)
@@ -151,7 +152,11 @@ class RiskManager:
                     abs_existing = abs(p.quantity)
                     abs_new = abs(pos.quantity)
                     total_abs = abs_existing + abs_new
-                    new_avg = (abs_existing * p.avg_price + abs_new * pos.avg_price) / total_abs if total_abs > 0 else p.avg_price
+                    new_avg = (
+                        (abs_existing * p.avg_price + abs_new * pos.avg_price) / total_abs
+                        if total_abs > 0
+                        else p.avg_price
+                    )
                     self.positions[i] = Position(
                         symbol=p.symbol,
                         exchange=p.exchange,
@@ -164,7 +169,7 @@ class RiskManager:
                     return
             self.positions.append(pos)
 
-    def load_positions_for_recovery(self, positions: List[Position]) -> None:
+    def load_positions_for_recovery(self, positions: list[Position]) -> None:
         """
         Cold start only: replace internal positions with persisted state.
         Must not be used during normal trading. Call only at startup before OrderEntryService is used.
@@ -173,18 +178,27 @@ class RiskManager:
             self.positions = list(positions)
         logger.info("RiskManager warmed with %d positions from persistence", len(self.positions))
 
-    def remove_position(self, symbol: str, exchange: str, side: Optional[str] = None) -> None:
+    def remove_position(self, symbol: str, exchange: str, side: str | None = None) -> None:
         """Remove position(s) for symbol+exchange, optionally filtered by side (BUY/SELL)."""
         with self._positions_lock:
             exch_str = exchange if isinstance(exchange, str) else getattr(exchange, "value", "")
             side_val = side if isinstance(side, str) else getattr(side, "value", None)
             if side_val is not None:
                 self.positions = [
-                    p for p in self.positions
-                    if not (p.symbol == symbol and getattr(p.exchange, "value", "") == exch_str and getattr(p.side, "value", "") == side_val)
+                    p
+                    for p in self.positions
+                    if not (
+                        p.symbol == symbol
+                        and getattr(p.exchange, "value", "") == exch_str
+                        and getattr(p.side, "value", "") == side_val
+                    )
                 ]
             else:
-                self.positions = [p for p in self.positions if not (p.symbol == symbol and getattr(p.exchange, "value", "") == exch_str)]
+                self.positions = [
+                    p
+                    for p in self.positions
+                    if not (p.symbol == symbol and getattr(p.exchange, "value", "") == exch_str)
+                ]
 
     def open_circuit(self, reason: str = "manual") -> None:
         self._circuit_open = True
@@ -205,7 +219,7 @@ class RiskManager:
         """Persist circuit breaker state and daily PnL to JSON using atomic write."""
         state = {
             "circuit_open": self._circuit_open,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
             "reason": reason,
             "equity": self.equity,
             "daily_pnl": self.daily_pnl,
@@ -214,9 +228,7 @@ class RiskManager:
         }
         try:
             _CIRCUIT_STATE_DIR.mkdir(parents=True, exist_ok=True)
-            fd, tmp_path = tempfile.mkstemp(
-                dir=str(_CIRCUIT_STATE_DIR), suffix=".tmp"
-            )
+            fd, tmp_path = tempfile.mkstemp(dir=str(_CIRCUIT_STATE_DIR), suffix=".tmp")
             try:
                 with os.fdopen(fd, "w") as f:
                     json.dump(state, f, indent=2)
@@ -267,9 +279,7 @@ class RiskManager:
                 self._consecutive_losses = int(saved_losses)
                 logger.info("Restored consecutive_losses=%d from persisted state", self._consecutive_losses)
         except Exception:
-            logger.exception(
-                "Failed to load circuit breaker state — defaulting to OPEN for safety"
-            )
+            logger.exception("Failed to load circuit breaker state — defaulting to OPEN for safety")
             self._circuit_open = True
 
     def auto_close_circuit_if_stale(self, max_open_hours: float = 2.0) -> bool:
@@ -286,17 +296,19 @@ class RiskManager:
                 reason = state.get("reason", "")
                 if updated and reason != "manual":
                     from datetime import datetime as _dt
+
                     open_time = _dt.fromisoformat(updated)
-                    now = _dt.now(timezone.utc)
+                    now = _dt.now(UTC)
                     if open_time.tzinfo is None:
-                        open_time = open_time.replace(tzinfo=timezone.utc)
+                        open_time = open_time.replace(tzinfo=UTC)
                     hours_open = (now - open_time).total_seconds() / 3600
                     if hours_open >= max_open_hours:
                         self.close_circuit()
                         logger.warning(
                             "Circuit breaker AUTO-CLOSED after %.1f hours (reason was: %s). "
                             "Review trading logs before resuming.",
-                            hours_open, reason,
+                            hours_open,
+                            reason,
                         )
                         return True
         except Exception as e:
@@ -326,18 +338,18 @@ class RiskManager:
         dd = (peak_equity - current_equity) / peak_equity * 100
         return dd >= self.limits.circuit_breaker_drawdown_pct
 
-    def _position_notional_by_symbol(self) -> Dict[str, float]:
+    def _position_notional_by_symbol(self) -> dict[str, float]:
         """Symbol -> total notional (quantity * avg_price) across positions."""
-        out: Dict[str, float] = {}
+        out: dict[str, float] = {}
         with self._positions_lock:
             for p in list(self.positions):
                 notional = p.quantity * (p.avg_price or 0)
                 out[p.symbol] = out.get(p.symbol, 0) + notional
         return out
 
-    def _position_notional_by_sector(self) -> Dict[str, float]:
+    def _position_notional_by_sector(self) -> dict[str, float]:
         """Sector -> total notional."""
-        out: Dict[str, float] = {}
+        out: dict[str, float] = {}
         with self._positions_lock:
             for p in list(self.positions):
                 sec = self._sector(p.symbol)
@@ -416,13 +428,17 @@ class RiskManager:
             if not r.allowed:
                 logger.warning(
                     "Order rejected: %s (symbol=%s qty=%s price=%s potential_loss=%.2f)",
-                    r.reason, signal.symbol, quantity, price, max_potential_loss,
+                    r.reason,
+                    signal.symbol,
+                    quantity,
+                    price,
+                    max_potential_loss,
                 )
                 return r
 
         # Compute notional maps from the snapshot to avoid re-acquiring _positions_lock
-        by_sym: Dict[str, float] = {}
-        by_sec: Dict[str, float] = {}
+        by_sym: dict[str, float] = {}
+        by_sec: dict[str, float] = {}
         for p in positions_snapshot:
             notional = p.quantity * (p.avg_price or 0)
             by_sym[p.symbol] = by_sym.get(p.symbol, 0) + notional
@@ -444,7 +460,10 @@ class RiskManager:
             if not r.allowed:
                 logger.warning(
                     "Order rejected: %s (symbol=%s qty=%s price=%s)",
-                    r.reason, signal.symbol, quantity, price,
+                    r.reason,
+                    signal.symbol,
+                    quantity,
+                    price,
                 )
                 return r
 
@@ -490,10 +509,14 @@ class RiskManager:
         if self._portfolio_var is not None and self.limits.var_limit_pct:
             try:
                 allowed, var_pct = self._portfolio_var.check_var_limit(
-                    pos_dicts, self.equity, self.limits.var_limit_pct,
+                    pos_dicts,
+                    self.equity,
+                    self.limits.var_limit_pct,
                 )
                 if not allowed:
-                    return LimitCheckResult(False, f"portfolio_var: VaR {var_pct:.2f}% > limit {self.limits.var_limit_pct}%")
+                    return LimitCheckResult(
+                        False, f"portfolio_var: VaR {var_pct:.2f}% > limit {self.limits.var_limit_pct}%"
+                    )
             except Exception as e:
                 logger.error("Portfolio VaR check failed (BLOCKING order — fail-safe): %s", e)
                 return LimitCheckResult(False, f"var_check_error: {e}")
@@ -505,7 +528,9 @@ class RiskManager:
                     pos_dicts, self.equity, self.limits.cvar_limit_pct
                 )
                 if not cvar_allowed:
-                    return LimitCheckResult(False, f"portfolio_cvar: CVaR {cvar_pct:.2f}% > limit {self.limits.cvar_limit_pct}%")
+                    return LimitCheckResult(
+                        False, f"portfolio_cvar: CVaR {cvar_pct:.2f}% > limit {self.limits.cvar_limit_pct}%"
+                    )
             except Exception as e:
                 logger.error("CVaR check failed (BLOCKING order — fail-safe): %s", e)
                 return LimitCheckResult(False, f"cvar_check_error: {e}")
@@ -519,10 +544,10 @@ class RiskManager:
         max_val = self.effective_equity() * (self.limits.max_position_pct / 100.0)
         return int(max_val / price)
 
-    def check_overnight_risk(self, max_overnight_pct: float = 3.0) -> List[Tuple[str, float]]:
+    def check_overnight_risk(self, max_overnight_pct: float = 3.0) -> list[tuple[str, float]]:
         """P2-3: Flag positions exceeding max_overnight_pct of equity for reduction before market close.
         Call at 15:00 IST. Returns list of (symbol, pct_of_equity) that should be reduced."""
-        flagged: List[Tuple[str, float]] = []
+        flagged: list[tuple[str, float]] = []
         if self.equity <= 0:
             return flagged
         with self._positions_lock:
@@ -534,7 +559,9 @@ class RiskManager:
         if flagged:
             logger.warning(
                 "Overnight risk: %d positions exceed %.1f%% of equity: %s",
-                len(flagged), max_overnight_pct, flagged[:5],
+                len(flagged),
+                max_overnight_pct,
+                flagged[:5],
             )
         return flagged
 
@@ -543,12 +570,12 @@ class RiskManager:
         with self._positions_lock:
             self._intraday_pnl_window.append((time.time(), self.daily_pnl))
 
-    def check_position_loss(self, current_prices: Dict[str, float]) -> List[Tuple[str, float, float]]:
+    def check_position_loss(self, current_prices: dict[str, float]) -> list[tuple[str, float, float]]:
         """
         Check per-position unrealized loss against hard stop.
         Returns list of (symbol, loss_pct, position_notional) for positions exceeding limit.
         """
-        flagged: List[Tuple[str, float, float]] = []
+        flagged: list[tuple[str, float, float]] = []
         max_loss_pct = self.limits.max_per_position_loss_pct
         if max_loss_pct <= 0:
             return flagged
@@ -581,6 +608,7 @@ class RiskManager:
         This ensures proper coordination between async OrderEntryService and
         sync FillHandler by using a dual-lock protocol."""
         import asyncio as _asyncio
+
         if self._async_positions_lock is None:
             self._async_positions_lock = _asyncio.Lock()
         await self._async_positions_lock.acquire()
@@ -600,7 +628,7 @@ class RiskManager:
             except RuntimeError:
                 pass
 
-    def get_sector_exposures(self) -> Dict[str, dict]:
+    def get_sector_exposures(self) -> dict[str, dict]:
         """
         Compute real-time sector exposure breakdown from current positions.
 
@@ -609,14 +637,20 @@ class RiskManager:
         """
         with self._positions_lock:
             positions_copy = list(self.positions)
-        sectors: Dict[str, dict] = {}
+        sectors: dict[str, dict] = {}
         total_notional = 0.0
         for p in positions_copy:
             sector = self._sector(p.symbol)
             notional = abs(p.quantity * (p.avg_price or 0))
             total_notional += notional
             if sector not in sectors:
-                sectors[sector] = {"notional": 0.0, "count": 0, "symbols": [], "pct_of_equity": 0.0, "pct_of_portfolio": 0.0}
+                sectors[sector] = {
+                    "notional": 0.0,
+                    "count": 0,
+                    "symbols": [],
+                    "pct_of_equity": 0.0,
+                    "pct_of_portfolio": 0.0,
+                }
             sectors[sector]["notional"] += notional
             sectors[sector]["count"] += 1
             sectors[sector]["symbols"].append(p.symbol)
@@ -674,7 +708,7 @@ class RiskManager:
             consecutive_losses = self._consecutive_losses
 
         snapshot = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "equity": round(self.equity, 2),
             "daily_pnl": round(daily_pnl, 2),
             "circuit_open": self._circuit_open,
@@ -691,16 +725,15 @@ class RiskManager:
             if data["pct_of_equity"] > self._sector_cap_pct * 0.8:
                 logger.warning(
                     "Sector exposure warning: %s at %.1f%% of equity (cap=%.1f%%)",
-                    sector, data["pct_of_equity"], self._sector_cap_pct,
+                    sector,
+                    data["pct_of_equity"],
+                    self._sector_cap_pct,
                 )
 
         # VaR metrics if available
         if self._portfolio_var is not None:
             try:
-                pos_dicts = [
-                    {"symbol": p.symbol, "notional": p.quantity * (p.avg_price or 0)}
-                    for p in positions_copy
-                ]
+                pos_dicts = [{"symbol": p.symbol, "notional": p.quantity * (p.avg_price or 0)} for p in positions_copy]
                 var_result = self._portfolio_var.compute(pos_dicts, self.equity)
                 snapshot["var"] = var_result.as_dict()
             except Exception as e:
@@ -715,7 +748,7 @@ class RiskManager:
 
         return snapshot
 
-    def portfolio_risk_metrics(self, equity_curve: List[float]) -> RiskMetrics:
+    def portfolio_risk_metrics(self, equity_curve: list[float]) -> RiskMetrics:
         """Compute risk metrics from equity curve (e.g. for reporting)."""
         if len(equity_curve) < 2:
             return RiskMetrics(0.0, 0.0, 0.0, 0, 0.0, 0.0, 0.0)

@@ -5,12 +5,13 @@ Replenishes after each partial fill.
 
 Use case: Orders > 10% of ADV. Minimizes market impact.
 """
+
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Callable, Coroutine, Dict, List, Optional
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +19,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class IcebergConfig:
     """Configuration for iceberg execution."""
+
     total_quantity: int
     symbol: str
     side: str
     exchange: str = "NSE"
     display_qty: int = 0  # Visible quantity (0 = auto-calculate)
     display_pct: float = 10.0  # % of total to show
-    limit_price: Optional[float] = None
+    limit_price: float | None = None
     limit_offset_bps: float = 3.0
     replenish_delay_seconds: float = 2.0  # Delay between replenishments
     max_replenish_attempts: int = 100
@@ -33,6 +35,7 @@ class IcebergConfig:
 @dataclass
 class IcebergExecution:
     """Tracks iceberg execution state."""
+
     exec_id: str
     config: IcebergConfig
     status: str = "CREATED"
@@ -42,9 +45,9 @@ class IcebergExecution:
     total_remaining: int = 0
     replenish_count: int = 0
     avg_fill_price: float = 0.0
-    child_orders: List[Dict] = field(default_factory=list)
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
+    child_orders: list[dict] = field(default_factory=list)
+    start_time: datetime | None = None
+    end_time: datetime | None = None
 
 
 class IcebergAlgorithm:
@@ -58,7 +61,7 @@ class IcebergAlgorithm:
 
     def __init__(self, submit_order_fn: Callable[..., Coroutine]):
         self._submit = submit_order_fn
-        self._active: Dict[str, IcebergExecution] = {}
+        self._active: dict[str, IcebergExecution] = {}
 
     def create_execution(self, config: IcebergConfig) -> IcebergExecution:
         """Create iceberg execution plan."""
@@ -78,15 +81,18 @@ class IcebergAlgorithm:
 
         logger.info(
             "Iceberg created: %s %s total=%d display=%d (%.1f%%)",
-            config.side, config.symbol, config.total_quantity,
-            display_qty, config.display_pct,
+            config.side,
+            config.symbol,
+            config.total_quantity,
+            display_qty,
+            config.display_pct,
         )
         return execution
 
     async def execute(
         self,
         execution: IcebergExecution,
-        get_market_price: Optional[Callable] = None,
+        get_market_price: Callable | None = None,
     ) -> IcebergExecution:
         """
         Execute iceberg order with automatic replenishment.
@@ -98,7 +104,7 @@ class IcebergAlgorithm:
 
         config = execution.config
         execution.status = "RUNNING"
-        execution.start_time = datetime.now(timezone.utc)
+        execution.start_time = datetime.now(UTC)
 
         total_cost = 0.0
         total_filled = 0
@@ -157,17 +163,23 @@ class IcebergAlgorithm:
 
                 logger.debug(
                     "Iceberg slice %d: %s %s x%d (remaining: %d)",
-                    attempt + 1, config.side, config.symbol, slice_qty, remaining,
+                    attempt + 1,
+                    config.side,
+                    config.symbol,
+                    slice_qty,
+                    remaining,
                 )
 
             except Exception as e:
                 logger.error("Iceberg slice failed: %s", e)
-                execution.child_orders.append({
-                    "quantity": slice_qty,
-                    "status": "FAILED",
-                    "error": str(e),
-                    "attempt": attempt,
-                })
+                execution.child_orders.append(
+                    {
+                        "quantity": slice_qty,
+                        "status": "FAILED",
+                        "error": str(e),
+                        "attempt": attempt,
+                    }
+                )
 
             # Delay between replenishments (randomized to avoid detection)
             if remaining > 0:
@@ -181,12 +193,15 @@ class IcebergAlgorithm:
         execution.total_remaining = remaining
         execution.avg_fill_price = total_cost / total_filled if total_filled > 0 else 0.0
         execution.status = "SUBMITTED" if remaining == 0 else "PARTIAL"
-        execution.end_time = datetime.now(timezone.utc)
+        execution.end_time = datetime.now(UTC)
 
         logger.info(
             "Iceberg done: %s %s submitted %d/%d in %d slices (fills pending via FillListener)",
-            config.side, config.symbol, total_submitted,
-            config.total_quantity, execution.replenish_count,
+            config.side,
+            config.symbol,
+            total_submitted,
+            config.total_quantity,
+            execution.replenish_count,
         )
         return execution
 

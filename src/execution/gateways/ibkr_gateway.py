@@ -1,13 +1,17 @@
 """Interactive Brokers gateway — global multi-asset trading via TWS/Gateway API."""
+
 import logging
 import os
 import time
 import uuid
-from typing import List, Optional
 
 from .base import (
-    BaseBrokerGateway, BrokerHealth, BrokerOrder, BrokerPosition,
-    BrokerType, GatewayStatus,
+    BaseBrokerGateway,
+    BrokerHealth,
+    BrokerOrder,
+    BrokerPosition,
+    BrokerType,
+    GatewayStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,7 +32,7 @@ class IBKRGateway(BaseBrokerGateway):
         self._port = int(os.environ.get("IBKR_PORT", "7497" if paper else "7496"))
         self._client_id = int(os.environ.get("IBKR_CLIENT_ID", "1"))
         self._status = GatewayStatus.DISCONNECTED
-        self._last_heartbeat: Optional[float] = None
+        self._last_heartbeat: float | None = None
         self._error_count = 0
         self._orders_today = 0
         self._ib = None  # ib_insync.IB instance
@@ -36,6 +40,7 @@ class IBKRGateway(BaseBrokerGateway):
     async def connect(self) -> bool:
         try:
             from ib_insync import IB
+
             self._ib = IB()
             await self._ib.connectAsync(self._host, self._port, clientId=self._client_id)
             logger.info("IBKR connected: paper=%s port=%d", self.paper, self._port)
@@ -61,20 +66,32 @@ class IBKRGateway(BaseBrokerGateway):
         self._status = GatewayStatus.DISCONNECTED
 
     async def place_order(
-        self, symbol: str, exchange: str, side: str, quantity: int,
-        order_type: str = "MARKET", limit_price: Optional[float] = None,
+        self,
+        symbol: str,
+        exchange: str,
+        side: str,
+        quantity: int,
+        order_type: str = "MARKET",
+        limit_price: float | None = None,
         **kwargs,
     ) -> BrokerOrder:
         if self._ib is None or self.paper:
             order_id = f"paper-ibkr-{uuid.uuid4().hex[:12]}"
             self._orders_today += 1
             return BrokerOrder(
-                broker_order_id=order_id, symbol=symbol, exchange=exchange,
-                side=side, quantity=quantity, order_type=order_type,
-                limit_price=limit_price, status="FILLED",
-                filled_qty=quantity, avg_price=limit_price or 0.0,
+                broker_order_id=order_id,
+                symbol=symbol,
+                exchange=exchange,
+                side=side,
+                quantity=quantity,
+                order_type=order_type,
+                limit_price=limit_price,
+                status="FILLED",
+                filled_qty=quantity,
+                avg_price=limit_price or 0.0,
             )
-        from ib_insync import Stock, LimitOrder, MarketOrder
+        from ib_insync import LimitOrder, MarketOrder, Stock
+
         contract = Stock(symbol, exchange or "SMART", kwargs.get("currency", "USD"))
         if order_type.upper() == "LIMIT" and limit_price:
             order = LimitOrder(side.upper(), quantity, limit_price)
@@ -85,8 +102,11 @@ class IBKRGateway(BaseBrokerGateway):
         self._last_heartbeat = time.time()
         return BrokerOrder(
             broker_order_id=str(trade.order.orderId),
-            symbol=symbol, exchange=exchange, side=side,
-            quantity=quantity, order_type=order_type,
+            symbol=symbol,
+            exchange=exchange,
+            side=side,
+            quantity=quantity,
+            order_type=order_type,
             limit_price=limit_price,
             status=trade.orderStatus.status.upper(),
         )
@@ -107,8 +127,14 @@ class IBKRGateway(BaseBrokerGateway):
     async def get_order_status(self, broker_order_id: str) -> BrokerOrder:
         if self._ib is None:
             return BrokerOrder(
-                broker_order_id=broker_order_id, symbol="", exchange="",
-                side="", quantity=0, order_type="", limit_price=None, status="UNKNOWN",
+                broker_order_id=broker_order_id,
+                symbol="",
+                exchange="",
+                side="",
+                quantity=0,
+                order_type="",
+                limit_price=None,
+                status="UNKNOWN",
             )
         for trade in self._ib.trades():
             if str(trade.order.orderId) == broker_order_id:
@@ -125,11 +151,17 @@ class IBKRGateway(BaseBrokerGateway):
                     avg_price=float(trade.orderStatus.avgFillPrice),
                 )
         return BrokerOrder(
-            broker_order_id=broker_order_id, symbol="", exchange="",
-            side="", quantity=0, order_type="", limit_price=None, status="NOT_FOUND",
+            broker_order_id=broker_order_id,
+            symbol="",
+            exchange="",
+            side="",
+            quantity=0,
+            order_type="",
+            limit_price=None,
+            status="NOT_FOUND",
         )
 
-    async def get_positions(self) -> List[BrokerPosition]:
+    async def get_positions(self) -> list[BrokerPosition]:
         if self._ib is None:
             return []
         try:
@@ -149,19 +181,40 @@ class IBKRGateway(BaseBrokerGateway):
 
     def health(self) -> BrokerHealth:
         return BrokerHealth(
-            broker=self.broker_type, status=self._status,
+            broker=self.broker_type,
+            status=self._status,
             last_heartbeat=str(self._last_heartbeat) if self._last_heartbeat else None,
-            error_count=self._error_count, orders_today=self._orders_today,
+            error_count=self._error_count,
+            orders_today=self._orders_today,
             supported_exchanges=self.supported_exchanges(),
             supported_order_types=[
-                "MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP",
-                "MOC", "LOC", "VWAP", "TWAP", "ADAPTIVE",
+                "MARKET",
+                "LIMIT",
+                "STOP",
+                "STOP_LIMIT",
+                "TRAILING_STOP",
+                "MOC",
+                "LOC",
+                "VWAP",
+                "TWAP",
+                "ADAPTIVE",
             ],
             paper_mode=self.paper,
         )
 
-    def supported_exchanges(self) -> List[str]:
+    def supported_exchanges(self) -> list[str]:
         return [
-            "NYSE", "NASDAQ", "ARCA", "LSE", "TSE", "HKEX",
-            "NSE", "BSE", "ASX", "SGX", "EUREX", "CME", "CBOE",
+            "NYSE",
+            "NASDAQ",
+            "ARCA",
+            "LSE",
+            "TSE",
+            "HKEX",
+            "NSE",
+            "BSE",
+            "ASX",
+            "SGX",
+            "EUREX",
+            "CME",
+            "CBOE",
         ]

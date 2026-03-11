@@ -7,9 +7,10 @@ v2 improvements:
   - Improved reward: transaction cost penalty, progressive drawdown, Sharpe shaping
   - predict() uses actual PPO policy action distribution instead of hardcoded probs
 """
+
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -29,17 +30,22 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 RL_SPECIFIC_FEATURES = [
     # Bid-ask spread proxy (2)
-    "bid_ask_spread_proxy", "effective_spread_proxy",
+    "bid_ask_spread_proxy",
+    "effective_spread_proxy",
     # Intraday volatility features (2)
-    "intraday_volatility", "intraday_range_ratio",
+    "intraday_volatility",
+    "intraday_range_ratio",
     # Time-of-day encoding (2)
-    "time_of_day_sin", "time_of_day_cos",
+    "time_of_day_sin",
+    "time_of_day_cos",
     # Position heat: how long current position has been held (1)
     "position_heat",
     # Execution quality proxies (2)
-    "slippage_estimate", "market_impact_estimate",
+    "slippage_estimate",
+    "market_impact_estimate",
     # Urgency / momentum-at-execution (2)
-    "tick_velocity", "quote_intensity",
+    "tick_velocity",
+    "quote_intensity",
     # Inventory risk (1)
     "inventory_risk_score",
 ]
@@ -55,6 +61,7 @@ def _try_import_sb3():
     try:
         import gymnasium as gym
         from stable_baselines3 import PPO
+
         return gym, PPO
     except ImportError:
         return None, None
@@ -73,8 +80,13 @@ class TradingEnv:
       - Small negative reward for excessive holding without position
     """
 
-    def __init__(self, bars_data: np.ndarray, features_data: np.ndarray,
-                 initial_balance: float = 100000.0, commission: float = 0.001):
+    def __init__(
+        self,
+        bars_data: np.ndarray,
+        features_data: np.ndarray,
+        initial_balance: float = 100000.0,
+        commission: float = 0.001,
+    ):
         """
         Args:
             bars_data: (N, 5) array of OHLCV
@@ -142,11 +154,13 @@ class TradingEnv:
             recent_rets = []
             for i in range(max(1, self.current_step - lookback), self.current_step):
                 if i < len(self.bars) and i > 0:
-                    ret = (self.bars[i, 3] - self.bars[i-1, 3]) / (self.bars[i-1, 3] + 1e-10)
+                    ret = (self.bars[i, 3] - self.bars[i - 1, 3]) / (self.bars[i - 1, 3] + 1e-10)
                     recent_rets.append(ret)
             if len(recent_rets) >= 5:
                 recent_vol = float(np.std(recent_rets))
-        extra = np.array([position_side, unrealized_pnl, self.bars_held / 100.0, balance_ratio, recent_vol], dtype=np.float32)
+        extra = np.array(
+            [position_side, unrealized_pnl, self.bars_held / 100.0, balance_ratio, recent_vol], dtype=np.float32
+        )
         return np.concatenate([feats, extra])
 
     def _sharpe_bonus(self) -> float:
@@ -161,7 +175,7 @@ class TradingEnv:
         # Require 2x window before computing to ensure stable estimate
         if len(self._reward_history) < self._sharpe_window * 2:
             return 0.0
-        recent = np.array(self._reward_history[-self._sharpe_window:])
+        recent = np.array(self._reward_history[-self._sharpe_window :])
         mean_r = np.mean(recent)
         std_r = np.std(recent)
         if std_r < 1e-8:
@@ -181,7 +195,7 @@ class TradingEnv:
         current_price = self.bars[min(self.current_step, len(self.bars) - 1), 3]  # close
         reward = 0.0
         done = False
-        traded = False
+        _traded = False
 
         # Execute action
         if action == 1 and self.position <= 0:  # Buy
@@ -190,12 +204,12 @@ class TradingEnv:
                 pnl -= self.commission
                 reward = pnl
                 self.total_pnl += pnl * self.balance
-                self.balance *= (1 + pnl)
+                self.balance *= 1 + pnl
             self.position = 1
             self.entry_price = current_price
             self.bars_held = 0
-            self.balance *= (1 - self.commission)
-            traded = True
+            self.balance *= 1 - self.commission
+            _traded = True
 
         elif action == 2 and self.position >= 0:  # Sell
             if self.position == 1:  # Close long
@@ -203,12 +217,12 @@ class TradingEnv:
                 pnl -= self.commission
                 reward = pnl
                 self.total_pnl += pnl * self.balance
-                self.balance *= (1 + pnl)
+                self.balance *= 1 + pnl
             self.position = -1
             self.entry_price = current_price
             self.bars_held = 0
-            self.balance *= (1 - self.commission)
-            traded = True
+            self.balance *= 1 - self.commission
+            _traded = True
 
         else:  # Hold
             if self.position != 0 and self.entry_price > 0:
@@ -258,8 +272,10 @@ class GymTradingEnv:
                 super().__init__()
                 self_env.env = env
                 self_env.observation_space = gym.spaces.Box(
-                    low=-np.inf, high=np.inf,
-                    shape=env.observation_space_shape, dtype=np.float32,
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=env.observation_space_shape,
+                    dtype=np.float32,
                 )
                 self_env.action_space = gym.spaces.Discrete(env.action_space_n)
 
@@ -288,7 +304,7 @@ class RLPredictor(BasePredictor):
     version = "v2"
 
     @classmethod
-    def get_feature_keys(cls) -> List[str]:
+    def get_feature_keys(cls) -> list[str]:
         """Return the full feature list for this model (base + RL-specific).
 
         This classmethod allows the training pipeline and feature engine to
@@ -322,7 +338,7 @@ class RLPredictor(BasePredictor):
         bars_data: np.ndarray,
         features_data: np.ndarray,
         total_timesteps: int = 500_000,
-        save_path: Optional[str] = None,
+        save_path: str | None = None,
         learning_rate: float = 3e-4,
         n_steps: int = 2048,
         batch_size: int = 64,
@@ -388,14 +404,17 @@ class RLPredictor(BasePredictor):
                 gae_lambda=0.95,
                 clip_range=0.2,
                 max_grad_norm=max_grad_norm,  # Gradient clipping for training stability
-                ent_coef=_ent_coef_schedule,   # Entropy scheduling: explore early, exploit late
+                ent_coef=_ent_coef_schedule,  # Entropy scheduling: explore early, exploit late
                 verbose=verbose,
             )
 
             logger.info(
-                "RL training started (timesteps=%d, bars=%d, max_grad_norm=%.2f, "
-                "ent_coef=%.4f->%.4f)",
-                total_timesteps, len(bars_data), max_grad_norm, ent_coef, ent_coef_final,
+                "RL training started (timesteps=%d, bars=%d, max_grad_norm=%.2f, ent_coef=%.4f->%.4f)",
+                total_timesteps,
+                len(bars_data),
+                max_grad_norm,
+                ent_coef,
+                ent_coef_final,
             )
             model.learn(total_timesteps=total_timesteps)
             logger.info("RL training complete")
@@ -416,7 +435,7 @@ class RLPredictor(BasePredictor):
             logger.exception("RL train_from_bars failed: %s", e)
             return False
 
-    def _get_action_probs(self, obs: np.ndarray) -> Optional[np.ndarray]:
+    def _get_action_probs(self, obs: np.ndarray) -> np.ndarray | None:
         """Extract actual action probabilities from the PPO policy network.
 
         Returns:
@@ -427,16 +446,14 @@ class RLPredictor(BasePredictor):
             if _torch is None:
                 return None
             # PPO policy exposes get_distribution() which gives the Categorical dist
-            dist = self._model.policy.get_distribution(
-                self._model.policy.obs_to_tensor(obs.reshape(1, -1))[0]
-            )
+            dist = self._model.policy.get_distribution(self._model.policy.obs_to_tensor(obs.reshape(1, -1))[0])
             probs = dist.distribution.probs.detach().cpu().numpy().flatten()
             return probs  # shape (3,) for [hold, buy, sell]
         except Exception as e:
             logger.debug("Failed to extract action probs: %s", e)
             return None
 
-    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> Optional[PredictionOutput]:
+    def predict(self, features: dict[str, float], context: dict[str, Any] | None = None) -> PredictionOutput | None:
         if self._model is None:
             return None
 
@@ -488,7 +505,7 @@ class RLPredictor(BasePredictor):
             # Further scale by how decisive the directional bet is
             if directional_total > 1e-8:
                 decisiveness = abs(p_buy - p_sell) / directional_total
-                confidence *= (0.5 + 0.5 * decisiveness)
+                confidence *= 0.5 + 0.5 * decisiveness
 
             metadata = {
                 "action": action,

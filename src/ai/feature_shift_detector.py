@@ -10,21 +10,23 @@ Check interval: configurable, defaults to every 30 minutes during market hours
 (09:15 - 15:30 IST). The trading loop should call ``should_check_now()`` to
 determine if a check is due, and ``check_shift()`` to run it.
 """
+
 import logging
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, time as dtime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
+from datetime import time as dtime
+from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 # PSI thresholds (industry standard)
-PSI_INSIGNIFICANT = 0.10    # < 0.10: no significant shift
-PSI_MODERATE = 0.20         # 0.10-0.20: moderate shift (monitor)
-PSI_SIGNIFICANT = 0.25      # > 0.25: significant shift (alert + potential retrain)
+PSI_INSIGNIFICANT = 0.10  # < 0.10: no significant shift
+PSI_MODERATE = 0.20  # 0.10-0.20: moderate shift (monitor)
+PSI_SIGNIFICANT = 0.25  # > 0.25: significant shift (alert + potential retrain)
 
 # Recommendation thresholds
 RETRAIN_SIGNIFICANT_COUNT = 3
@@ -34,16 +36,17 @@ MONITOR_MODERATE_FRACTION = 0.25
 @dataclass
 class ShiftResult:
     """Result of a distribution shift check for a single feature."""
+
     feature_name: str
-    psi: float                      # Population Stability Index
-    ks_stat: float                  # Kolmogorov-Smirnov statistic
-    ks_pvalue: float                # KS test p-value
+    psi: float  # Population Stability Index
+    ks_stat: float  # Kolmogorov-Smirnov statistic
+    ks_pvalue: float  # KS test p-value
     training_mean: float
     training_std: float
     live_mean: float
     live_std: float
-    shift_level: str                # "none", "moderate", "significant"
-    mean_shift_pct: float           # How much the mean has shifted (%)
+    shift_level: str  # "none", "moderate", "significant"
+    mean_shift_pct: float  # How much the mean has shifted (%)
 
     def as_dict(self) -> dict:
         return {
@@ -61,14 +64,15 @@ class ShiftResult:
 @dataclass
 class HaltDecision:
     """Structured halt decision that the trading loop can act on directly."""
-    should_halt: bool               # True = stop trading immediately
-    should_reduce_size: bool        # True = reduce position sizes (moderate drift)
-    should_retrain: bool            # True = trigger model retraining
-    reason: str                     # Human-readable reason
-    severity: str                   # "none", "moderate", "significant", "critical"
-    max_psi: float                  # Worst PSI score for logging
-    shifted_features_count: int     # Number of features with drift
-    check_timestamp: str            # When this decision was made
+
+    should_halt: bool  # True = stop trading immediately
+    should_reduce_size: bool  # True = reduce position sizes (moderate drift)
+    should_retrain: bool  # True = trigger model retraining
+    reason: str  # Human-readable reason
+    severity: str  # "none", "moderate", "significant", "critical"
+    max_psi: float  # Worst PSI score for logging
+    shifted_features_count: int  # Number of features with drift
+    check_timestamp: str  # When this decision was made
 
     def as_dict(self) -> dict:
         return {
@@ -86,6 +90,7 @@ class HaltDecision:
 @dataclass
 class OverallShiftReport:
     """Aggregate shift report across all features."""
+
     timestamp: str
     total_features: int
     features_shifted: int
@@ -94,9 +99,9 @@ class OverallShiftReport:
     avg_psi: float
     max_psi: float
     max_psi_feature: str
-    recommendation: str             # "ok", "monitor", "retrain", "halt"
-    halt_decision: Optional[HaltDecision] = None
-    details: List[ShiftResult] = field(default_factory=list)
+    recommendation: str  # "ok", "monitor", "retrain", "halt"
+    halt_decision: HaltDecision | None = None
+    details: list[ShiftResult] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         result = {
@@ -138,7 +143,7 @@ class FeatureShiftDetector:
         alert_callback=None,
         halt_threshold: float = 0.30,
         check_interval_minutes: int = 30,
-        market_open: dtime = dtime(9, 15),   # IST market open
+        market_open: dtime = dtime(9, 15),  # IST market open
         market_close: dtime = dtime(15, 30),  # IST market close
     ):
         self.psi_bins = psi_bins
@@ -150,20 +155,20 @@ class FeatureShiftDetector:
         self._market_close = market_close
 
         # Training-time statistics: feature_name -> {mean, std, min, max, percentiles, histogram}
-        self._training_stats: Dict[str, Dict[str, Any]] = {}
+        self._training_stats: dict[str, dict[str, Any]] = {}
 
         # Live feature buffer: feature_name -> list of recent values
-        self._live_buffer: Dict[str, List[float]] = defaultdict(list)
+        self._live_buffer: dict[str, list[float]] = defaultdict(list)
         self._max_buffer_size: int = 5000
 
         # History of shift reports for trend monitoring
-        self._shift_history: List[OverallShiftReport] = []
+        self._shift_history: list[OverallShiftReport] = []
 
         # Last check timestamp for interval scheduling
-        self._last_check_time: Optional[datetime] = None
+        self._last_check_time: datetime | None = None
 
         # Last halt decision (structured response for trading loop)
-        self._last_halt_decision: Optional[HaltDecision] = None
+        self._last_halt_decision: HaltDecision | None = None
 
     def __repr__(self) -> str:
         return (
@@ -173,12 +178,12 @@ class FeatureShiftDetector:
             f"check_interval={self._check_interval_minutes}min>"
         )
 
-    def set_training_stats(self, stats: Dict[str, Dict[str, Any]]) -> None:
+    def set_training_stats(self, stats: dict[str, dict[str, Any]]) -> None:
         """Set training-time feature statistics as baseline for comparison."""
         self._training_stats = dict(stats)
         logger.info("Feature shift detector: loaded training stats for %d features", len(stats))
 
-    def load_training_stats_from_arrays(self, feature_names: List[str], feature_matrix: np.ndarray) -> None:
+    def load_training_stats_from_arrays(self, feature_names: list[str], feature_matrix: np.ndarray) -> None:
         """Compute and store training statistics from a feature matrix (n_samples x n_features)."""
         if feature_matrix.shape[1] != len(feature_names):
             raise ValueError(f"Feature matrix has {feature_matrix.shape[1]} columns but {len(feature_names)} names")
@@ -205,10 +210,13 @@ class FeatureShiftDetector:
                 "bin_edges": bin_edges.tolist(),
                 "n_samples": len(valid),
             }
-        logger.info("Feature shift detector: computed training stats for %d features from %d samples",
-                    len(self._training_stats), feature_matrix.shape[0])
+        logger.info(
+            "Feature shift detector: computed training stats for %d features from %d samples",
+            len(self._training_stats),
+            feature_matrix.shape[0],
+        )
 
-    def record_live_features(self, features: Dict[str, float]) -> None:
+    def record_live_features(self, features: dict[str, float]) -> None:
         """Record a single observation of live features."""
         for name, value in features.items():
             if not math.isfinite(value):
@@ -216,9 +224,9 @@ class FeatureShiftDetector:
             buf = self._live_buffer[name]
             buf.append(value)
             if len(buf) > self._max_buffer_size:
-                self._live_buffer[name] = buf[-self._max_buffer_size:]
+                self._live_buffer[name] = buf[-self._max_buffer_size :]
 
-    def _compute_psi(self, training_hist: List[float], live_values: np.ndarray, bin_edges: List[float]) -> float:
+    def _compute_psi(self, training_hist: list[float], live_values: np.ndarray, bin_edges: list[float]) -> float:
         """Compute Population Stability Index between training histogram and live values."""
         live_hist, _ = np.histogram(live_values, bins=bin_edges, density=False)
         live_hist = live_hist.astype(np.float64)
@@ -244,7 +252,7 @@ class FeatureShiftDetector:
         psi = float(np.sum((live_props - train_props) * np.log(live_props / train_props)))
         return max(0.0, psi)
 
-    def _compute_ks(self, training_stats: Dict, live_values: np.ndarray) -> Tuple[float, float]:
+    def _compute_ks(self, training_stats: dict, live_values: np.ndarray) -> tuple[float, float]:
         """Compute Kolmogorov-Smirnov test statistic using normal approximation."""
         training_mean = training_stats.get("mean", 0.0)
         training_std = training_stats.get("std", 1.0)
@@ -257,7 +265,8 @@ class FeatureShiftDetector:
 
         try:
             from scipy.stats import kstest
-            stat, pvalue = kstest(standardized, 'norm')
+
+            stat, pvalue = kstest(standardized, "norm")
             return float(stat), float(pvalue)
         except ImportError:
             # Fallback: use simple z-test
@@ -270,7 +279,7 @@ class FeatureShiftDetector:
 
     def check_shift(self) -> OverallShiftReport:
         """Run distribution shift analysis on all features with sufficient data."""
-        results: List[ShiftResult] = []
+        results: list[ShiftResult] = []
 
         for feature_name, stats in self._training_stats.items():
             live_values = self._live_buffer.get(feature_name, [])
@@ -305,18 +314,20 @@ class FeatureShiftDetector:
             else:
                 shift_level = "none"
 
-            results.append(ShiftResult(
-                feature_name=feature_name,
-                psi=psi,
-                ks_stat=ks_stat,
-                ks_pvalue=ks_pvalue,
-                training_mean=training_mean,
-                training_std=training_std,
-                live_mean=live_mean,
-                live_std=live_std,
-                shift_level=shift_level,
-                mean_shift_pct=mean_shift_pct,
-            ))
+            results.append(
+                ShiftResult(
+                    feature_name=feature_name,
+                    psi=psi,
+                    ks_stat=ks_stat,
+                    ks_pvalue=ks_pvalue,
+                    training_mean=training_mean,
+                    training_std=training_std,
+                    live_mean=live_mean,
+                    live_std=live_std,
+                    shift_level=shift_level,
+                    mean_shift_pct=mean_shift_pct,
+                )
+            )
 
         # Aggregate
         n_significant = sum(1 for r in results if r.shift_level == "significant")
@@ -338,16 +349,17 @@ class FeatureShiftDetector:
             recommendation = "ok"
 
         # Build structured halt decision for the trading loop
-        now_str = datetime.now(timezone.utc).isoformat()
+        now_str = datetime.now(UTC).isoformat()
         if recommendation == "halt":
             halt_decision = HaltDecision(
                 should_halt=True,
                 should_reduce_size=True,
                 should_retrain=True,
                 reason=f"Critical feature drift: {n_significant}/{len(results)} features "
-                       f"significantly shifted (>{self._halt_threshold*100:.0f}% threshold). "
-                       f"Max PSI={max_psi_result.psi:.4f} on {max_psi_result.feature_name}."
-                       if max_psi_result else "Critical feature drift detected.",
+                f"significantly shifted (>{self._halt_threshold * 100:.0f}% threshold). "
+                f"Max PSI={max_psi_result.psi:.4f} on {max_psi_result.feature_name}."
+                if max_psi_result
+                else "Critical feature drift detected.",
                 severity="critical",
                 max_psi=max_psi_result.psi if max_psi_result else 0.0,
                 shifted_features_count=n_shifted,
@@ -359,7 +371,7 @@ class FeatureShiftDetector:
                 should_reduce_size=True,
                 should_retrain=True,
                 reason=f"Significant feature drift: {n_significant} features significantly "
-                       f"shifted (>={RETRAIN_SIGNIFICANT_COUNT} threshold). Retrain recommended.",
+                f"shifted (>={RETRAIN_SIGNIFICANT_COUNT} threshold). Retrain recommended.",
                 severity="significant",
                 max_psi=max_psi_result.psi if max_psi_result else 0.0,
                 shifted_features_count=n_shifted,
@@ -371,7 +383,7 @@ class FeatureShiftDetector:
                 should_reduce_size=True,
                 should_retrain=False,
                 reason=f"Moderate feature drift: {n_moderate} features moderately shifted. "
-                       f"Consider reducing position sizes.",
+                f"Consider reducing position sizes.",
                 severity="moderate",
                 max_psi=max_psi_result.psi if max_psi_result else 0.0,
                 shifted_features_count=n_shifted,
@@ -390,7 +402,7 @@ class FeatureShiftDetector:
             )
 
         self._last_halt_decision = halt_decision
-        self._last_check_time = datetime.now(timezone.utc)
+        self._last_check_time = datetime.now(UTC)
 
         report = OverallShiftReport(
             timestamp=now_str,
@@ -421,18 +433,21 @@ class FeatureShiftDetector:
         if recommendation != "ok":
             logger.warning(
                 "Feature shift detected: %d/%d features shifted (recommendation=%s, avg_psi=%.4f, max_psi=%.4f on %s)",
-                n_shifted, len(results), recommendation, avg_psi,
+                n_shifted,
+                len(results),
+                recommendation,
+                avg_psi,
                 max_psi_result.psi if max_psi_result else 0.0,
                 max_psi_result.feature_name if max_psi_result else "N/A",
             )
 
         return report
 
-    def get_shift_history(self) -> List[dict]:
+    def get_shift_history(self) -> list[dict]:
         """Return recent shift check history."""
         return [r.as_dict() for r in self._shift_history[-20:]]
 
-    def should_check_now(self, now: Optional[datetime] = None) -> bool:
+    def should_check_now(self, now: datetime | None = None) -> bool:
         """
         Determine if a drift check is due based on the configurable interval.
 
@@ -446,7 +461,7 @@ class FeatureShiftDetector:
             True if a check should be performed now.
         """
         if now is None:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
         # Convert to IST (UTC+5:30) for market hours comparison
         ist_offset = timedelta(hours=5, minutes=30)
@@ -465,7 +480,7 @@ class FeatureShiftDetector:
 
         return True
 
-    def get_last_halt_decision(self) -> Optional[HaltDecision]:
+    def get_last_halt_decision(self) -> HaltDecision | None:
         """
         Return the most recent halt decision for the trading loop to act on.
 
@@ -476,7 +491,7 @@ class FeatureShiftDetector:
         """
         return self._last_halt_decision
 
-    def get_check_schedule(self) -> Dict[str, Any]:
+    def get_check_schedule(self) -> dict[str, Any]:
         """Return the current check schedule configuration."""
         return {
             "check_interval_minutes": self._check_interval_minutes,

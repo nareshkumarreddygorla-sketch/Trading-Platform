@@ -8,26 +8,25 @@ per-strategy and sector caps. Respects RiskManager.can_place_order() for every c
 Returns SizedSignal (signal, quantity). Does NOT call broker.
 All execution goes through OrderEntryService.
 """
+
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
-from src.core.events import Position, Signal
-from src.risk_engine import RiskManager
 from src.ai.position_sizing.sizing import (
     SizingConfig,
-    kelly_binary,
     dynamic_position_fraction,
-    volatility_target_notional,
+    kelly_binary,
 )
+from src.core.events import Position, Signal
+from src.risk_engine import RiskManager
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Defaults for calibrated Kelly
 # ---------------------------------------------------------------------------
-_DEFAULT_WIN_RATE = 0.45       # P1-4: conservative default (was 0.50)
+_DEFAULT_WIN_RATE = 0.45  # P1-4: conservative default (was 0.50)
 _DEFAULT_WIN_LOSS_RATIO = 1.0  # P1-4: conservative default (was 1.5)
 _MIN_TRADES_FOR_CALIBRATION = 50  # Minimum 50 trades for statistically significant win rate (95% CI ±14%)
 _UNCALIBRATED_MAX_POSITION_PCT = 2.0  # P1-4: cap at 2% when uncalibrated (<50 trades)
@@ -40,14 +39,15 @@ _MAX_DRAWDOWN_REDUCTION = 0.50  # at max drawdown, reduce sizing by 50%
 # ---------------------------------------------------------------------------
 # Liquidity-aware sizing constants
 # ---------------------------------------------------------------------------
-_MAX_ADV_FRACTION = 0.05         # 5% of Average Daily Volume
-_MARKET_IMPACT_COEFF = 0.1       # impact = coeff * sqrt(order_size / ADV)
-_DEFAULT_SECTOR_CAP_PCT = 30.0   # no more than 30% of portfolio in any sector
+_MAX_ADV_FRACTION = 0.05  # 5% of Average Daily Volume
+_MARKET_IMPACT_COEFF = 0.1  # impact = coeff * sqrt(order_size / ADV)
+_DEFAULT_SECTOR_CAP_PCT = 30.0  # no more than 30% of portfolio in any sector
 
 
 @dataclass
 class StrategyStats:
     """Calibrated performance statistics for a single strategy."""
+
     win_rate: float = _DEFAULT_WIN_RATE
     win_loss_ratio: float = _DEFAULT_WIN_LOSS_RATIO
     trade_count: int = 0
@@ -67,6 +67,7 @@ class StrategyStats:
 @dataclass
 class SizedSignal:
     """Signal with allocated quantity. Safe to pass to order entry."""
+
     signal: Signal
     quantity: int
 
@@ -74,12 +75,13 @@ class SizedSignal:
 @dataclass
 class AllocationDiagnostics:
     """Optional diagnostics attached to each allocation pass for observability."""
+
     total_signals: int = 0
     candidates_after_confidence: int = 0
     portfolio_vol_scale: float = 1.0
     drawdown_scale: float = 1.0
-    strategy_kelly: Dict[str, float] = field(default_factory=dict)
-    correlation_penalties: Dict[str, float] = field(default_factory=dict)
+    strategy_kelly: dict[str, float] = field(default_factory=dict)
+    correlation_penalties: dict[str, float] = field(default_factory=dict)
     sized_count: int = 0
 
 
@@ -102,7 +104,7 @@ class PortfolioAllocator:
         risk_manager: RiskManager,
         max_concurrent_trades: int = 5,
         max_capital_pct_per_signal: float = 10.0,
-        per_strategy_cap_pct: Optional[dict] = None,
+        per_strategy_cap_pct: dict | None = None,
         min_confidence: float = 0.5,
         volatility_scale: float = 1.0,
         exposure_multiplier: float = 1.0,
@@ -114,7 +116,7 @@ class PortfolioAllocator:
         max_drawdown_pct: float = 10.0,
         max_drawdown_reduction: float = _MAX_DRAWDOWN_REDUCTION,
         correlation_penalty_threshold: float = _CORRELATION_PENALTY_THRESHOLD,
-        sizing_config: Optional[SizingConfig] = None,
+        sizing_config: SizingConfig | None = None,
         # --- liquidity-aware sizing ---
         adv_cache=None,
         sector_classifier=None,
@@ -152,9 +154,9 @@ class PortfolioAllocator:
         self._sector_cap_pct = sector_cap_pct
 
         # Calibrated per-strategy statistics
-        self._strategy_stats: Dict[str, StrategyStats] = {}
+        self._strategy_stats: dict[str, StrategyStats] = {}
         self._peak_equity: float = 0.0
-        self._last_diagnostics: Optional[AllocationDiagnostics] = None
+        self._last_diagnostics: AllocationDiagnostics | None = None
 
         # Calibrate on init if repo is available
         if self._trade_outcome_repo is not None:
@@ -180,8 +182,7 @@ class PortfolioAllocator:
             )
         except Exception:
             logger.warning(
-                "Failed to load trade outcomes for Kelly calibration; "
-                "falling back to defaults",
+                "Failed to load trade outcomes for Kelly calibration; falling back to defaults",
                 exc_info=True,
             )
             return
@@ -191,7 +192,7 @@ class PortfolioAllocator:
             return
 
         # Group by strategy_id
-        by_strategy: Dict[str, List[dict]] = {}
+        by_strategy: dict[str, list[dict]] = {}
         for o in outcomes:
             sid = o.get("strategy_id", "") or "unknown"
             by_strategy.setdefault(sid, []).append(o)
@@ -218,7 +219,7 @@ class PortfolioAllocator:
     @staticmethod
     def _compute_strategy_stats(
         strategy_id: str,
-        trades: List[dict],
+        trades: list[dict],
     ) -> StrategyStats:
         """
         Compute calibrated stats from a list of trade outcome dicts.
@@ -275,7 +276,7 @@ class PortfolioAllocator:
     def _compute_drawdown_scale(
         self,
         equity: float,
-        drawdown_scale_override: Optional[float],
+        drawdown_scale_override: float | None,
     ) -> float:
         """
         Compute drawdown scaling factor.
@@ -311,7 +312,7 @@ class PortfolioAllocator:
 
     def _compute_vol_target_scale(
         self,
-        positions: List[Position],
+        positions: list[Position],
         equity: float,
     ) -> float:
         """
@@ -335,9 +336,11 @@ class PortfolioAllocator:
 
         try:
             # Use public method pattern to avoid accessing private method of another class
-            if hasattr(self._correlation_guard, '_estimate_portfolio_vol'):
+            if hasattr(self._correlation_guard, "_estimate_portfolio_vol"):
                 port_daily_vol = self._correlation_guard._estimate_portfolio_vol(
-                    symbols, notionals, total_notional,
+                    symbols,
+                    notionals,
+                    total_notional,
                 )
             else:
                 return 1.0
@@ -364,7 +367,7 @@ class PortfolioAllocator:
     def _correlation_penalty(
         self,
         symbol: str,
-        existing_symbols: List[str],
+        existing_symbols: list[str],
     ) -> float:
         """
         Compute a sizing penalty in [0, 1] based on the maximum pairwise
@@ -405,7 +408,7 @@ class PortfolioAllocator:
         signal: Signal,
         current_drawdown_pct: float,
         regime_multiplier: float,
-    ) -> Optional[float]:
+    ) -> float | None:
         """
         Compute Kelly-based position fraction using calibrated strategy stats.
 
@@ -454,14 +457,19 @@ class PortfolioAllocator:
             if max_qty_by_adv <= 0:
                 logger.warning(
                     "ADV cap: %s ADV=%.0f too low, max_qty=0 — skipping",
-                    symbol, adv,
+                    symbol,
+                    adv,
                 )
                 return 0
             if raw_qty > max_qty_by_adv:
                 logger.info(
                     "ADV cap: %s qty %d -> %d (%.1f%% of ADV %.0f, limit %.0f%%)",
-                    symbol, raw_qty, max_qty_by_adv,
-                    (raw_qty / adv) * 100, adv, self._max_adv_fraction * 100,
+                    symbol,
+                    raw_qty,
+                    max_qty_by_adv,
+                    (raw_qty / adv) * 100,
+                    adv,
+                    self._max_adv_fraction * 100,
                 )
             return min(raw_qty, max_qty_by_adv)
         except Exception as e:
@@ -494,7 +502,7 @@ class PortfolioAllocator:
         self,
         symbol: str,
         notional: float,
-        positions: List[Position],
+        positions: list[Position],
         equity: float,
     ) -> bool:
         """
@@ -514,7 +522,10 @@ class PortfolioAllocator:
             if projected_pct > self._sector_cap_pct:
                 logger.info(
                     "Sector cap: %s sector=%s projected=%.1f%% > cap=%.1f%% — skipping",
-                    symbol, sector, projected_pct, self._sector_cap_pct,
+                    symbol,
+                    sector,
+                    projected_pct,
+                    self._sector_cap_pct,
                 )
                 return False
             return True
@@ -528,16 +539,16 @@ class PortfolioAllocator:
 
     def allocate(
         self,
-        signals: List[Signal],
+        signals: list[Signal],
         equity: float,
-        positions: List[Position],
+        positions: list[Position],
         *,
-        exposure_multiplier: Optional[float] = None,
-        drawdown_scale: Optional[float] = None,
-        regime_scale: Optional[float] = None,
-        max_position_pct: Optional[float] = None,
-        volatility_scale: Optional[float] = None,
-    ) -> List[SizedSignal]:
+        exposure_multiplier: float | None = None,
+        drawdown_scale: float | None = None,
+        regime_scale: float | None = None,
+        max_position_pct: float | None = None,
+        volatility_scale: float | None = None,
+    ) -> list[SizedSignal]:
         """
         Rank signals (by score), cap count, allocate capital, apply scaling.
         Each (signal, qty) is checked with risk_manager.can_place_order(); only allowed ones returned.
@@ -588,21 +599,23 @@ class PortfolioAllocator:
         sorted_sigs = sorted(candidates, key=lambda s: s.score, reverse=True)
         top = sorted_sigs[: self.max_concurrent_trades]
 
-        max_pct = max_position_pct if max_position_pct is not None else getattr(
-            self.risk_manager.limits, "max_position_pct", 5.0
+        max_pct = (
+            max_position_pct
+            if max_position_pct is not None
+            else getattr(self.risk_manager.limits, "max_position_pct", 5.0)
         )
 
         # Track existing position symbols for correlation penalty
         existing_symbols = [p.symbol for p in positions]
         # Also track symbols we're allocating in this batch
-        batch_symbols: List[str] = []
+        batch_symbols: list[str] = []
 
         # Current drawdown percentage for Kelly
         current_dd_pct = 0.0
         if self._peak_equity > 0 and equity < self._peak_equity:
             current_dd_pct = ((self._peak_equity - equity) / self._peak_equity) * 100.0
 
-        out: List[SizedSignal] = []
+        out: list[SizedSignal] = []
         for signal in top:
             price = signal.price or 0.0
             if price <= 0:
@@ -617,7 +630,9 @@ class PortfolioAllocator:
             )
 
             # --- Deduct market impact from expected return before Kelly ---
-            exchange_str = getattr(signal.exchange, "value", str(signal.exchange)) if hasattr(signal, "exchange") else "NSE"
+            exchange_str = (
+                getattr(signal.exchange, "value", str(signal.exchange)) if hasattr(signal, "exchange") else "NSE"
+            )
 
             if kelly_f is not None:
                 # Kelly-based allocation: fraction of equity
@@ -628,10 +643,7 @@ class PortfolioAllocator:
             else:
                 # Legacy: percentage-based allocation
                 # P1-4: cap uncalibrated strategies at 2% equity (was 5%+)
-                strategy_cap_pct = (
-                    self.per_strategy_cap_pct.get(signal.strategy_id)
-                    or self.max_capital_pct_per_signal
-                )
+                strategy_cap_pct = self.per_strategy_cap_pct.get(signal.strategy_id) or self.max_capital_pct_per_signal
                 strategy_cap_pct = min(strategy_cap_pct, _UNCALIBRATED_MAX_POSITION_PCT)
                 notional = equity * (strategy_cap_pct / 100.0) * scale
 
@@ -675,7 +687,11 @@ class PortfolioAllocator:
                             if max_qty_impact > 0 and max_qty_impact < qty:
                                 logger.info(
                                     "Market impact: %s impact=%.3f (%.1f%%) — reducing qty %d -> %d",
-                                    signal.symbol, impact, impact * 100, qty, max_qty_impact,
+                                    signal.symbol,
+                                    impact,
+                                    impact * 100,
+                                    qty,
+                                    max_qty_impact,
                                 )
                                 qty = max_qty_impact
                     except Exception:
@@ -694,7 +710,9 @@ class PortfolioAllocator:
             if not check.allowed:
                 logger.debug(
                     "Allocator skip: risk can_place_order rejected %s qty=%s: %s",
-                    signal.symbol, qty, check.reason,
+                    signal.symbol,
+                    qty,
+                    check.reason,
                 )
                 continue
 
@@ -707,7 +725,11 @@ class PortfolioAllocator:
         if out:
             logger.info(
                 "Allocated %d/%d signals (dd_scale=%.2f, vol_scale=%.2f, scale=%.3f)",
-                len(out), len(signals), dd_scale, vol_scale, scale,
+                len(out),
+                len(signals),
+                dd_scale,
+                vol_scale,
+                scale,
             )
 
         return out
@@ -717,12 +739,12 @@ class PortfolioAllocator:
     # ------------------------------------------------------------------
 
     @property
-    def last_diagnostics(self) -> Optional[AllocationDiagnostics]:
+    def last_diagnostics(self) -> AllocationDiagnostics | None:
         """Diagnostics from the most recent allocate() call."""
         return self._last_diagnostics
 
     @property
-    def strategy_stats(self) -> Dict[str, StrategyStats]:
+    def strategy_stats(self) -> dict[str, StrategyStats]:
         """Calibrated per-strategy statistics (read-only view)."""
         return dict(self._strategy_stats)
 

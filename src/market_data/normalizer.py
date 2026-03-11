@@ -1,8 +1,9 @@
 """Normalize exchange-specific payloads to core Bar/Tick. Time-sync to UTC."""
+
 from datetime import datetime
 from typing import Any
 
-from src.core.events import Bar, Exchange, OrderBookSnapshot, Tick
+from src.core.events import Bar, Exchange, Tick
 from src.market_data.timestamp import normalize_ts
 
 

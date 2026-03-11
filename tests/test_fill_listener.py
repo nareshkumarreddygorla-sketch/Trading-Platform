@@ -2,17 +2,16 @@
 Fill delivery pipeline tests: dedup, out-of-order, partial aggregation.
 Invariant: no fill may corrupt position state under concurrency.
 """
-from datetime import datetime, timezone
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.core.events import Exchange, Order, OrderStatus, OrderType, SignalSide
 from src.execution.fill_handler import FillHandler, FillListener
-from src.execution.fill_handler.events import FillEvent, FillType
+from src.execution.lifecycle import OrderLifecycle
 from src.risk_engine import RiskManager
 from src.risk_engine.limits import RiskLimits
-from src.execution.lifecycle import OrderLifecycle
 
 
 def _make_order(oid: str, symbol: str, filled_qty: float, avg_price: float, status: OrderStatus):
@@ -92,15 +91,19 @@ async def test_partial_fill_aggregation(fill_handler, lifecycle):
     o = _make_order("o1", "INFY", 0.0, None, OrderStatus.LIVE)
     await lifecycle.register(o)
 
-    await listener._process_orders([
-        _make_order("o1", "INFY", 5.0, 99.0, OrderStatus.PARTIALLY_FILLED),
-    ])
+    await listener._process_orders(
+        [
+            _make_order("o1", "INFY", 5.0, 99.0, OrderStatus.PARTIALLY_FILLED),
+        ]
+    )
     positions = [p for p in fill_handler.risk_manager.positions if p.symbol == "INFY" and p.side == SignalSide.BUY]
     assert len(positions) == 1 and positions[0].quantity == 5.0
 
-    await listener._process_orders([
-        _make_order("o1", "INFY", 10.0, 99.5, OrderStatus.FILLED),
-    ])
+    await listener._process_orders(
+        [
+            _make_order("o1", "INFY", 10.0, 99.5, OrderStatus.FILLED),
+        ]
+    )
     positions2 = [p for p in fill_handler.risk_manager.positions if p.symbol == "INFY" and p.side == SignalSide.BUY]
     assert len(positions2) == 1 and positions2[0].quantity == 10.0
 
@@ -111,10 +114,18 @@ async def test_reject_and_cancel_only_once(fill_handler, lifecycle):
     gateway = MagicMock()
     listener = FillListener(gateway, fill_handler, poll_interval_seconds=60.0)
     o2 = _make_order("o2", "RELIANCE", 0.0, None, OrderStatus.REJECTED)
-    await lifecycle.register(Order(
-        order_id="o2", strategy_id="s1", symbol="RELIANCE", exchange=Exchange.NSE,
-        side=SignalSide.BUY, quantity=10.0, order_type=OrderType.MARKET, status=OrderStatus.LIVE,
-    ))
+    await lifecycle.register(
+        Order(
+            order_id="o2",
+            strategy_id="s1",
+            symbol="RELIANCE",
+            exchange=Exchange.NSE,
+            side=SignalSide.BUY,
+            quantity=10.0,
+            order_type=OrderType.MARKET,
+            status=OrderStatus.LIVE,
+        )
+    )
     orders_rejected = [o2]
     await listener._process_orders(orders_rejected)
     await listener._process_orders(orders_rejected)

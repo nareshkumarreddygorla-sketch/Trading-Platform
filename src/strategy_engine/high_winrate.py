@@ -13,18 +13,19 @@ Strategies:
 5. RSIDivergence          — Multi-TF RSI divergence + candle pattern (82-90%)
 6. BollingerSqueeze       — BB squeeze + Keltner + volume + MACD (80-86%)
 """
-from datetime import datetime, timezone
-from typing import List, Optional
+
+from datetime import UTC, datetime
 
 import numpy as np
 
 from src.core.events import Signal, SignalSide
-from .base import MarketState, StrategyBase
 
+from .base import MarketState, StrategyBase
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Shared indicator utilities (optimized, no pandas dependency)
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def _ema_np(data: np.ndarray, period: int) -> np.ndarray:
     """Exponential moving average using numpy."""
@@ -134,8 +135,9 @@ def _vwap_std(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, volumes: 
     return vwap, float(np.sqrt(var))
 
 
-def _supertrend(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
-                period: int = 10, multiplier: float = 3.0) -> tuple:
+def _supertrend(
+    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 10, multiplier: float = 3.0
+) -> tuple:
     """Returns (direction: 1=up/-1=down, supertrend_value, prev_direction)."""
     n = len(closes)
     if n < period + 1:
@@ -162,9 +164,17 @@ def _supertrend(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
         basic_lower = hl2 - multiplier * atr_arr[i]
 
         # Upper band — take the lower of current & previous (tightens during uptrend)
-        upper_band[i] = min(basic_upper, upper_band[i - 1]) if upper_band[i - 1] != 0 and closes[i - 1] <= upper_band[i - 1] else basic_upper
+        upper_band[i] = (
+            min(basic_upper, upper_band[i - 1])
+            if upper_band[i - 1] != 0 and closes[i - 1] <= upper_band[i - 1]
+            else basic_upper
+        )
         # Lower band — take the higher of current & previous (tightens during downtrend)
-        lower_band[i] = max(basic_lower, lower_band[i - 1]) if lower_band[i - 1] != 0 and closes[i - 1] >= lower_band[i - 1] else basic_lower
+        lower_band[i] = (
+            max(basic_lower, lower_band[i - 1])
+            if lower_band[i - 1] != 0 and closes[i - 1] >= lower_band[i - 1]
+            else basic_lower
+        )
 
         # Direction
         if closes[i] > upper_band[i]:
@@ -190,8 +200,9 @@ def _bollinger_bandwidth(closes: np.ndarray, period: int = 20, std_mult: float =
     return upper, sma, lower, bw
 
 
-def _keltner_channel(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
-                     ema_period: int = 20, atr_mult: float = 1.5) -> tuple:
+def _keltner_channel(
+    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, ema_period: int = 20, atr_mult: float = 1.5
+) -> tuple:
     """Returns (upper, middle, lower)."""
     ema = _ema_np(closes, ema_period)
     atr = _atr_np(highs, lows, closes, ema_period)
@@ -202,6 +213,7 @@ def _keltner_channel(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
 # ═══════════════════════════════════════════════════════════════════════
 #  Strategy 1: Multi-Confluence Trend
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class MultiConfluenceTrendStrategy(StrategyBase):
     """
@@ -214,6 +226,7 @@ class MultiConfluenceTrendStrategy(StrategyBase):
 
     Win rate: 82-88% | Trades/day: 2-5
     """
+
     strategy_id = "multi_confluence_trend"
     description = "5-filter confluence trend follower"
 
@@ -231,7 +244,7 @@ class MultiConfluenceTrendStrategy(StrategyBase):
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= self.ema_slow + 15
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         if not self.warm(state):
             return []
 
@@ -253,7 +266,7 @@ class MultiConfluenceTrendStrategy(StrategyBase):
         _, _, hist, hist_prev = _macd_histogram(closes)
 
         # 4. Volume above average
-        avg_vol = np.mean(volumes[-self.vol_period:])
+        avg_vol = np.mean(volumes[-self.vol_period :])
         cur_vol = volumes[-1]
         vol_ok = cur_vol > avg_vol
 
@@ -275,22 +288,31 @@ class MultiConfluenceTrendStrategy(StrategyBase):
             sl = round(min(ema21, price * 0.985), 2)
             tp = round(price + 2.5 * (price - sl), 2)
 
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.BUY,
-                score=score,
-                portfolio_weight=0.18,
-                risk_level="NORMAL",
-                reason=f"confluence_buy ema={ema9:.0f}>{ema21:.0f}>{ema50:.0f} rsi={rsi:.0f} adx={adx:.0f}",
-                price=price,
-                stop_loss=sl,
-                target=tp,
-                ts=datetime.now(timezone.utc),
-                metadata={"ema9": ema9, "ema21": ema21, "ema50": ema50,
-                          "rsi": rsi, "adx": adx, "macd_hist": hist, "vol_ratio": cur_vol / avg_vol},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.BUY,
+                    score=score,
+                    portfolio_weight=0.18,
+                    risk_level="NORMAL",
+                    reason=f"confluence_buy ema={ema9:.0f}>{ema21:.0f}>{ema50:.0f} rsi={rsi:.0f} adx={adx:.0f}",
+                    price=price,
+                    stop_loss=sl,
+                    target=tp,
+                    ts=datetime.now(UTC),
+                    metadata={
+                        "ema9": ema9,
+                        "ema21": ema21,
+                        "ema50": ema50,
+                        "rsi": rsi,
+                        "adx": adx,
+                        "macd_hist": hist,
+                        "vol_ratio": cur_vol / avg_vol,
+                    },
+                )
+            ]
 
         # ── SELL: mirror conditions ──
         bearish_ema = price < ema9 < ema21 < ema50
@@ -303,20 +325,21 @@ class MultiConfluenceTrendStrategy(StrategyBase):
             score_adx = min(1.0, adx / 50.0)
             score = min(1.0, 0.6 + 0.2 * score_ema + 0.2 * score_adx)
 
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.SELL,
-                score=score,
-                portfolio_weight=0.18,
-                risk_level="NORMAL",
-                reason=f"confluence_sell ema={ema9:.0f}<{ema21:.0f}<{ema50:.0f} rsi={rsi:.0f} adx={adx:.0f}",
-                price=price,
-                ts=datetime.now(timezone.utc),
-                metadata={"ema9": ema9, "ema21": ema21, "ema50": ema50,
-                          "rsi": rsi, "adx": adx, "macd_hist": hist},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.SELL,
+                    score=score,
+                    portfolio_weight=0.18,
+                    risk_level="NORMAL",
+                    reason=f"confluence_sell ema={ema9:.0f}<{ema21:.0f}<{ema50:.0f} rsi={rsi:.0f} adx={adx:.0f}",
+                    price=price,
+                    ts=datetime.now(UTC),
+                    metadata={"ema9": ema9, "ema21": ema21, "ema50": ema50, "rsi": rsi, "adx": adx, "macd_hist": hist},
+                )
+            ]
 
         return []
 
@@ -324,6 +347,7 @@ class MultiConfluenceTrendStrategy(StrategyBase):
 # ═══════════════════════════════════════════════════════════════════════
 #  Strategy 2: VWAP Mean Reversion
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class VWAPMeanReversionStrategy(StrategyBase):
     """
@@ -338,6 +362,7 @@ class VWAPMeanReversionStrategy(StrategyBase):
 
     Win rate: 85-92% | Trades/day: 3-6
     """
+
     strategy_id = "vwap_mean_reversion"
     description = "VWAP band reversal with rejection wicks"
 
@@ -351,7 +376,7 @@ class VWAPMeanReversionStrategy(StrategyBase):
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= 30
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         if not self.warm(state):
             return []
 
@@ -388,43 +413,46 @@ class VWAPMeanReversionStrategy(StrategyBase):
             distance = (lower_band - price) / (vwap_std + 1e-12)
             score = min(1.0, 0.7 + 0.15 * distance)
 
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.BUY,
-                score=score,
-                portfolio_weight=0.15,
-                risk_level="NORMAL",
-                reason=f"vwap_rev_buy rsi={rsi:.0f} vwap={vwap:.0f} wick={wick_ratio:.0%}",
-                price=price,
-                stop_loss=round(lower_band - vwap_std * 0.5, 2),
-                target=round(vwap, 2),
-                ts=datetime.now(timezone.utc),
-                metadata={"vwap": vwap, "rsi": rsi, "wick_ratio": wick_ratio,
-                          "vol_ratio": volumes[-1] / avg_vol},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.BUY,
+                    score=score,
+                    portfolio_weight=0.15,
+                    risk_level="NORMAL",
+                    reason=f"vwap_rev_buy rsi={rsi:.0f} vwap={vwap:.0f} wick={wick_ratio:.0%}",
+                    price=price,
+                    stop_loss=round(lower_band - vwap_std * 0.5, 2),
+                    target=round(vwap, 2),
+                    ts=datetime.now(UTC),
+                    metadata={"vwap": vwap, "rsi": rsi, "wick_ratio": wick_ratio, "vol_ratio": volumes[-1] / avg_vol},
+                )
+            ]
 
         # ── SELL: price at/above upper VWAP band ──
         if price >= upper_band and rsi >= self.rsi_overbought and vol_spike and wick_ratio >= self.min_wick_ratio:
             distance = (price - upper_band) / (vwap_std + 1e-12)
             score = min(1.0, 0.7 + 0.15 * distance)
 
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.SELL,
-                score=score,
-                portfolio_weight=0.15,
-                risk_level="NORMAL",
-                reason=f"vwap_rev_sell rsi={rsi:.0f} vwap={vwap:.0f} wick={wick_ratio:.0%}",
-                price=price,
-                stop_loss=round(upper_band + vwap_std * 0.5, 2),
-                target=round(vwap, 2),
-                ts=datetime.now(timezone.utc),
-                metadata={"vwap": vwap, "rsi": rsi, "wick_ratio": wick_ratio},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.SELL,
+                    score=score,
+                    portfolio_weight=0.15,
+                    risk_level="NORMAL",
+                    reason=f"vwap_rev_sell rsi={rsi:.0f} vwap={vwap:.0f} wick={wick_ratio:.0%}",
+                    price=price,
+                    stop_loss=round(upper_band + vwap_std * 0.5, 2),
+                    target=round(vwap, 2),
+                    ts=datetime.now(UTC),
+                    metadata={"vwap": vwap, "rsi": rsi, "wick_ratio": wick_ratio},
+                )
+            ]
 
         return []
 
@@ -432,6 +460,7 @@ class VWAPMeanReversionStrategy(StrategyBase):
 # ═══════════════════════════════════════════════════════════════════════
 #  Strategy 3: Opening Range Breakout (ORB) — NSE-specific
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class OpeningRangeBreakoutStrategy(StrategyBase):
     """
@@ -446,6 +475,7 @@ class OpeningRangeBreakoutStrategy(StrategyBase):
 
     Win rate: 78-85% | Trades/day: 1-2
     """
+
     strategy_id = "opening_range_breakout"
     description = "NSE 15-min ORB with volume + ADX filters"
 
@@ -457,7 +487,7 @@ class OpeningRangeBreakoutStrategy(StrategyBase):
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= self.or_bars + 10
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         if not self.warm(state):
             return []
 
@@ -470,8 +500,8 @@ class OpeningRangeBreakoutStrategy(StrategyBase):
         # 1. Opening range: find bars near session open (9:15 IST = 3:45 UTC)
         or_idx = []
         for i, b in enumerate(state.bars):
-            if hasattr(b, 'ts') and b.ts is not None:
-                h, m = getattr(b.ts, 'hour', -1), getattr(b.ts, 'minute', -1)
+            if hasattr(b, "ts") and b.ts is not None:
+                h, m = getattr(b.ts, "hour", -1), getattr(b.ts, "minute", -1)
                 # 3:45-4:00 UTC covers first ~3 five-minute bars of NSE session
                 if h == 3 and m >= 45:
                     or_idx.append(i)
@@ -503,40 +533,43 @@ class OpeningRangeBreakoutStrategy(StrategyBase):
         # 4. Breakout with candle close beyond range
         if closes[-1] > or_high and closes[-2] <= or_high:
             score = min(1.0, 0.65 + 0.15 * (adx / 50.0) + 0.1 * (volumes[-1] / avg_vol - 1))
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.BUY,
-                score=min(1.0, score),
-                portfolio_weight=0.20,
-                risk_level="NORMAL",
-                reason=f"orb_breakout_up range=[{or_low:.0f}-{or_high:.0f}] adx={adx:.0f}",
-                price=price,
-                stop_loss=round(or_low, 2),
-                target=round(or_high + 2 * or_range, 2),
-                ts=datetime.now(timezone.utc),
-                metadata={"or_high": or_high, "or_low": or_low, "adx": adx,
-                          "vol_ratio": volumes[-1] / avg_vol},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.BUY,
+                    score=min(1.0, score),
+                    portfolio_weight=0.20,
+                    risk_level="NORMAL",
+                    reason=f"orb_breakout_up range=[{or_low:.0f}-{or_high:.0f}] adx={adx:.0f}",
+                    price=price,
+                    stop_loss=round(or_low, 2),
+                    target=round(or_high + 2 * or_range, 2),
+                    ts=datetime.now(UTC),
+                    metadata={"or_high": or_high, "or_low": or_low, "adx": adx, "vol_ratio": volumes[-1] / avg_vol},
+                )
+            ]
 
         if closes[-1] < or_low and closes[-2] >= or_low:
             score = min(1.0, 0.65 + 0.15 * (adx / 50.0) + 0.1 * (volumes[-1] / avg_vol - 1))
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.SELL,
-                score=min(1.0, score),
-                portfolio_weight=0.20,
-                risk_level="NORMAL",
-                reason=f"orb_breakout_down range=[{or_low:.0f}-{or_high:.0f}] adx={adx:.0f}",
-                price=price,
-                stop_loss=round(or_high, 2),
-                target=round(or_low - 2 * or_range, 2),
-                ts=datetime.now(timezone.utc),
-                metadata={"or_high": or_high, "or_low": or_low, "adx": adx},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.SELL,
+                    score=min(1.0, score),
+                    portfolio_weight=0.20,
+                    risk_level="NORMAL",
+                    reason=f"orb_breakout_down range=[{or_low:.0f}-{or_high:.0f}] adx={adx:.0f}",
+                    price=price,
+                    stop_loss=round(or_high, 2),
+                    target=round(or_low - 2 * or_range, 2),
+                    ts=datetime.now(UTC),
+                    metadata={"or_high": or_high, "or_low": or_low, "adx": adx},
+                )
+            ]
 
         return []
 
@@ -544,6 +577,7 @@ class OpeningRangeBreakoutStrategy(StrategyBase):
 # ═══════════════════════════════════════════════════════════════════════
 #  Strategy 4: SuperTrend + ADX
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class SuperTrendADXStrategy(StrategyBase):
     """
@@ -557,6 +591,7 @@ class SuperTrendADXStrategy(StrategyBase):
 
     Win rate: 80-87% | Trades/day: 1-3
     """
+
     strategy_id = "supertrend_adx"
     description = "SuperTrend reversal with ADX + EMA confirmation"
 
@@ -570,7 +605,7 @@ class SuperTrendADXStrategy(StrategyBase):
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= max(self.st_period, self.ema_period) + 15
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         if not self.warm(state):
             return []
 
@@ -581,9 +616,7 @@ class SuperTrendADXStrategy(StrategyBase):
         price = state.latest_price or closes[-1]
 
         # 1. SuperTrend
-        direction, st_value, prev_direction = _supertrend(
-            highs, lows, closes, self.st_period, self.st_multiplier
-        )
+        direction, st_value, prev_direction = _supertrend(highs, lows, closes, self.st_period, self.st_multiplier)
         just_flipped = direction != prev_direction
 
         if not just_flipped:
@@ -608,42 +641,45 @@ class SuperTrendADXStrategy(StrategyBase):
         if direction == 1 and price > ema50:
             atr = _atr_np(highs, lows, closes, 14)
             score = min(1.0, 0.65 + 0.15 * (adx / 50.0) + 0.1 * (volumes[-1] / avg_vol - 1))
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.BUY,
-                score=min(1.0, score),
-                portfolio_weight=0.18,
-                risk_level="NORMAL",
-                reason=f"supertrend_buy adx={adx:.0f} ema50={ema50:.0f} st={st_value:.0f}",
-                price=price,
-                stop_loss=round(st_value, 2),
-                target=round(price + 2.5 * atr, 2),
-                ts=datetime.now(timezone.utc),
-                metadata={"supertrend": st_value, "direction": direction, "adx": adx,
-                          "ema50": ema50},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.BUY,
+                    score=min(1.0, score),
+                    portfolio_weight=0.18,
+                    risk_level="NORMAL",
+                    reason=f"supertrend_buy adx={adx:.0f} ema50={ema50:.0f} st={st_value:.0f}",
+                    price=price,
+                    stop_loss=round(st_value, 2),
+                    target=round(price + 2.5 * atr, 2),
+                    ts=datetime.now(UTC),
+                    metadata={"supertrend": st_value, "direction": direction, "adx": adx, "ema50": ema50},
+                )
+            ]
 
         # ── SELL: SuperTrend flips to DOWN + price below EMA ──
         if direction == -1 and price < ema50:
             atr = _atr_np(highs, lows, closes, 14)
             score = min(1.0, 0.65 + 0.15 * (adx / 50.0) + 0.1 * (volumes[-1] / avg_vol - 1))
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.SELL,
-                score=min(1.0, score),
-                portfolio_weight=0.18,
-                risk_level="NORMAL",
-                reason=f"supertrend_sell adx={adx:.0f} ema50={ema50:.0f} st={st_value:.0f}",
-                price=price,
-                stop_loss=round(st_value, 2),
-                target=round(price - 2.5 * atr, 2),
-                ts=datetime.now(timezone.utc),
-                metadata={"supertrend": st_value, "direction": direction, "adx": adx},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.SELL,
+                    score=min(1.0, score),
+                    portfolio_weight=0.18,
+                    risk_level="NORMAL",
+                    reason=f"supertrend_sell adx={adx:.0f} ema50={ema50:.0f} st={st_value:.0f}",
+                    price=price,
+                    stop_loss=round(st_value, 2),
+                    target=round(price - 2.5 * atr, 2),
+                    ts=datetime.now(UTC),
+                    metadata={"supertrend": st_value, "direction": direction, "adx": adx},
+                )
+            ]
 
         return []
 
@@ -651,6 +687,7 @@ class SuperTrendADXStrategy(StrategyBase):
 # ═══════════════════════════════════════════════════════════════════════
 #  Strategy 5: Multi-Timeframe RSI Divergence
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class RSIDivergenceStrategy(StrategyBase):
     """
@@ -665,6 +702,7 @@ class RSIDivergenceStrategy(StrategyBase):
 
     Win rate: 82-90% | Trades/day: 1-2
     """
+
     strategy_id = "rsi_divergence"
     description = "RSI divergence + engulfing candle pattern"
 
@@ -677,7 +715,7 @@ class RSIDivergenceStrategy(StrategyBase):
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= self.rsi_period + self.lookback + 5
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         if not self.warm(state):
             return []
 
@@ -701,8 +739,8 @@ class RSIDivergenceStrategy(StrategyBase):
         # ── Bullish divergence: price lower low, RSI higher low ──
         if current_rsi <= self.rsi_oversold and vol_ok:
             # Check if price made lower low vs lookback, but RSI didn't
-            price_window = lows[-self.lookback:]
-            rsi_window = rsi_series[-self.lookback:]
+            price_window = lows[-self.lookback :]
+            rsi_window = rsi_series[-self.lookback :]
 
             # Find previous low (excluding current bar) to compare divergence
             prev_price_window = price_window[:-1]
@@ -717,27 +755,28 @@ class RSIDivergenceStrategy(StrategyBase):
                     score = min(1.0, 0.7 + 0.15 * ((self.rsi_oversold - current_rsi) / self.rsi_oversold))
                     atr = _atr_np(highs, lows, closes, 14)
 
-                    return [Signal(
-                        strategy_id=self.strategy_id,
-                        symbol=state.symbol,
-                        exchange=state.exchange,
-                        side=SignalSide.BUY,
-                        score=score,
-                        portfolio_weight=0.15,
-                        risk_level="NORMAL",
-                        reason=f"rsi_bull_div rsi={current_rsi:.0f} engulfing=yes",
-                        price=price,
-                        stop_loss=round(lows[-1] - atr * 0.5, 2),
-                        target=round(price + 2 * atr, 2),
-                        ts=datetime.now(timezone.utc),
-                        metadata={"rsi": current_rsi, "divergence": "bullish",
-                                  "vol_ratio": volumes[-1] / avg_vol},
-                    )]
+                    return [
+                        Signal(
+                            strategy_id=self.strategy_id,
+                            symbol=state.symbol,
+                            exchange=state.exchange,
+                            side=SignalSide.BUY,
+                            score=score,
+                            portfolio_weight=0.15,
+                            risk_level="NORMAL",
+                            reason=f"rsi_bull_div rsi={current_rsi:.0f} engulfing=yes",
+                            price=price,
+                            stop_loss=round(lows[-1] - atr * 0.5, 2),
+                            target=round(price + 2 * atr, 2),
+                            ts=datetime.now(UTC),
+                            metadata={"rsi": current_rsi, "divergence": "bullish", "vol_ratio": volumes[-1] / avg_vol},
+                        )
+                    ]
 
         # ── Bearish divergence: price higher high, RSI lower high ──
         if current_rsi >= self.rsi_overbought and vol_ok:
-            price_window = highs[-self.lookback:]
-            rsi_window = rsi_series[-self.lookback:]
+            price_window = highs[-self.lookback :]
+            rsi_window = rsi_series[-self.lookback :]
 
             prev_price_window = price_window[:-1]
             prev_rsi_window = rsi_window[:-1]
@@ -749,21 +788,23 @@ class RSIDivergenceStrategy(StrategyBase):
                     score = min(1.0, 0.7 + 0.15 * ((current_rsi - self.rsi_overbought) / (100 - self.rsi_overbought)))
                     atr = _atr_np(highs, lows, closes, 14)
 
-                    return [Signal(
-                        strategy_id=self.strategy_id,
-                        symbol=state.symbol,
-                        exchange=state.exchange,
-                        side=SignalSide.SELL,
-                        score=score,
-                        portfolio_weight=0.15,
-                        risk_level="NORMAL",
-                        reason=f"rsi_bear_div rsi={current_rsi:.0f} engulfing=yes",
-                        price=price,
-                        stop_loss=round(highs[-1] + atr * 0.5, 2),
-                        target=round(price - 2 * atr, 2),
-                        ts=datetime.now(timezone.utc),
-                        metadata={"rsi": current_rsi, "divergence": "bearish"},
-                    )]
+                    return [
+                        Signal(
+                            strategy_id=self.strategy_id,
+                            symbol=state.symbol,
+                            exchange=state.exchange,
+                            side=SignalSide.SELL,
+                            score=score,
+                            portfolio_weight=0.15,
+                            risk_level="NORMAL",
+                            reason=f"rsi_bear_div rsi={current_rsi:.0f} engulfing=yes",
+                            price=price,
+                            stop_loss=round(highs[-1] + atr * 0.5, 2),
+                            target=round(price - 2 * atr, 2),
+                            ts=datetime.now(UTC),
+                            metadata={"rsi": current_rsi, "divergence": "bearish"},
+                        )
+                    ]
 
         return []
 
@@ -820,6 +861,7 @@ class RSIDivergenceStrategy(StrategyBase):
 #  Strategy 6: Bollinger Squeeze Breakout
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class BollingerSqueezeStrategy(StrategyBase):
     """
     Bollinger Band squeeze (tight bands inside Keltner Channel) followed
@@ -834,6 +876,7 @@ class BollingerSqueezeStrategy(StrategyBase):
 
     Win rate: 80-86% | Trades/day: 1-2
     """
+
     strategy_id = "bollinger_squeeze"
     description = "Volatility squeeze breakout with Keltner confirmation"
 
@@ -848,7 +891,7 @@ class BollingerSqueezeStrategy(StrategyBase):
     def warm(self, state: MarketState) -> bool:
         return len(state.bars) >= max(self.bb_period, self.keltner_period) + 15
 
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         if not self.warm(state):
             return []
 
@@ -862,12 +905,10 @@ class BollingerSqueezeStrategy(StrategyBase):
         bb_upper, bb_mid, bb_lower, bandwidth = _bollinger_bandwidth(closes, self.bb_period, self.bb_std)
 
         # 2. Keltner Channel
-        kc_upper, kc_mid, kc_lower = _keltner_channel(
-            highs, lows, closes, self.keltner_period, self.keltner_mult
-        )
+        kc_upper, kc_mid, kc_lower = _keltner_channel(highs, lows, closes, self.keltner_period, self.keltner_mult)
 
         # 3. Squeeze = BB inside KC + bandwidth tight
-        squeeze = bb_upper < kc_upper and bb_lower > kc_lower and bandwidth < self.max_bandwidth
+        _squeeze = bb_upper < kc_upper and bb_lower > kc_lower and bandwidth < self.max_bandwidth
 
         # Check previous bar for squeeze (we want squeeze→release transition)
         bb_upper_prev, _, bb_lower_prev, bw_prev = _bollinger_bandwidth(closes[:-1], self.bb_period, self.bb_std)
@@ -891,43 +932,51 @@ class BollingerSqueezeStrategy(StrategyBase):
             atr = _atr_np(highs, lows, closes, 14)
             score = min(1.0, 0.7 + 0.1 * (volumes[-1] / avg_vol - 1) + 0.1 * (price - bb_upper) / (atr + 1e-12))
 
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.BUY,
-                score=min(1.0, score),
-                portfolio_weight=0.15,
-                risk_level="NORMAL",
-                reason=f"squeeze_break_up bw={bandwidth:.1f}% vol={volumes[-1]/avg_vol:.1f}x",
-                price=price,
-                stop_loss=round(bb_mid, 2),
-                target=round(price + 2.5 * atr, 2),
-                ts=datetime.now(timezone.utc),
-                metadata={"bandwidth": bandwidth, "bb_upper": bb_upper, "bb_mid": bb_mid,
-                          "macd_hist": macd_hist, "vol_ratio": volumes[-1] / avg_vol},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.BUY,
+                    score=min(1.0, score),
+                    portfolio_weight=0.15,
+                    risk_level="NORMAL",
+                    reason=f"squeeze_break_up bw={bandwidth:.1f}% vol={volumes[-1] / avg_vol:.1f}x",
+                    price=price,
+                    stop_loss=round(bb_mid, 2),
+                    target=round(price + 2.5 * atr, 2),
+                    ts=datetime.now(UTC),
+                    metadata={
+                        "bandwidth": bandwidth,
+                        "bb_upper": bb_upper,
+                        "bb_mid": bb_mid,
+                        "macd_hist": macd_hist,
+                        "vol_ratio": volumes[-1] / avg_vol,
+                    },
+                )
+            ]
 
         # ── SELL: breakout below lower BB with MACD negative ──
         if price < bb_lower and macd_hist < 0 and macd_hist < macd_hist_prev:
             atr = _atr_np(highs, lows, closes, 14)
             score = min(1.0, 0.7 + 0.1 * (volumes[-1] / avg_vol - 1) + 0.1 * (bb_lower - price) / (atr + 1e-12))
 
-            return [Signal(
-                strategy_id=self.strategy_id,
-                symbol=state.symbol,
-                exchange=state.exchange,
-                side=SignalSide.SELL,
-                score=min(1.0, score),
-                portfolio_weight=0.15,
-                risk_level="NORMAL",
-                reason=f"squeeze_break_down bw={bandwidth:.1f}% vol={volumes[-1]/avg_vol:.1f}x",
-                price=price,
-                stop_loss=round(bb_mid, 2),
-                target=round(price - 2.5 * atr, 2),
-                ts=datetime.now(timezone.utc),
-                metadata={"bandwidth": bandwidth, "bb_lower": bb_lower, "bb_mid": bb_mid,
-                          "macd_hist": macd_hist},
-            )]
+            return [
+                Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=state.symbol,
+                    exchange=state.exchange,
+                    side=SignalSide.SELL,
+                    score=min(1.0, score),
+                    portfolio_weight=0.15,
+                    risk_level="NORMAL",
+                    reason=f"squeeze_break_down bw={bandwidth:.1f}% vol={volumes[-1] / avg_vol:.1f}x",
+                    price=price,
+                    stop_loss=round(bb_mid, 2),
+                    target=round(price - 2.5 * atr, 2),
+                    ts=datetime.now(UTC),
+                    metadata={"bandwidth": bandwidth, "bb_lower": bb_lower, "bb_mid": bb_mid, "macd_hist": macd_hist},
+                )
+            ]
 
         return []

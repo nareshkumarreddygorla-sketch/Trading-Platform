@@ -1,5 +1,4 @@
 """Slippage model for backtest and execution simulation."""
-from typing import Optional
 
 import numpy as np
 
@@ -17,7 +16,7 @@ class SlippageModel:
             return price * (1 + pct)
         return price * (1 - pct)
 
-    def apply_random(self, price: float, side: str, seed: Optional[int] = None) -> float:
+    def apply_random(self, price: float, side: str, seed: int | None = None) -> float:
         """Random slippage within 0..2*bps."""
         if seed is not None:
             np.random.seed(seed)

@@ -1,8 +1,9 @@
 """Strategy marketplace data models."""
+
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any
 
 
 class StrategyCategory(str, Enum):
@@ -33,10 +34,10 @@ class StrategyListing:
     author: str
     category: StrategyCategory
     risk_level: StrategyRisk
-    indicators: List[str]
-    backtest_stats: Dict[str, Any]
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    indicators: list[str]
+    backtest_stats: dict[str, Any]
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     subscribers: int = 0
     rating: float = 0.0
     reviews: int = 0
@@ -47,9 +48,9 @@ class StrategyListing:
     sharpe_ratio: float = 0.0
     win_rate: float = 0.0
     total_return_pct: float = 0.0
-    monthly_returns: List[float] = field(default_factory=list)
-    supported_exchanges: List[str] = field(default_factory=lambda: ["NSE"])
-    tags: List[str] = field(default_factory=list)
+    monthly_returns: list[float] = field(default_factory=list)
+    supported_exchanges: list[str] = field(default_factory=lambda: ["NSE"])
+    tags: list[str] = field(default_factory=list)
     is_published: bool = False
     code_hash: str = ""
 
@@ -74,4 +75,4 @@ class StrategyReview:
     user_id: str
     rating: float
     comment: str
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())

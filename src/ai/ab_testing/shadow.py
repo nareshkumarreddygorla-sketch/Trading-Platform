@@ -20,8 +20,8 @@ import math
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 
@@ -34,17 +34,20 @@ logger = logging.getLogger(__name__)
 # Daily snapshot kept for audit / visualisation
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _DailyRecord:
     """Internal per-day metrics for one model (production or shadow)."""
+
     date: str
-    signals: List[Tuple[float, float]] = field(default_factory=list)  # (predicted, actual)
+    signals: list[tuple[float, float]] = field(default_factory=list)  # (predicted, actual)
     cumulative_return: float = 0.0
 
 
 # ---------------------------------------------------------------------------
 # Public comparison result
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ShadowComparison:
@@ -98,6 +101,7 @@ class ShadowComparison:
 # Main runner
 # ---------------------------------------------------------------------------
 
+
 class ShadowModelRunner:
     """
     Orchestrates A/B (shadow-mode) testing between two
@@ -127,8 +131,8 @@ class ShadowModelRunner:
         self._min_days = min_comparison_days
 
         # Per-date signal stores: date_str -> list[(predicted_direction, actual_return)]
-        self._prod_signals: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
-        self._shadow_signals: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
+        self._prod_signals: dict[str, list[tuple[float, float]]] = defaultdict(list)
+        self._shadow_signals: dict[str, list[tuple[float, float]]] = defaultdict(list)
 
         # Thread safety
         self._lock = threading.RLock()
@@ -154,12 +158,12 @@ class ShadowModelRunner:
         """
         today = self._today_str()
         with self._lock:
-            self._prod_signals[today].append(
-                (float(predicted_direction), float(actual_return))
-            )
+            self._prod_signals[today].append((float(predicted_direction), float(actual_return)))
         logger.debug(
             "Prod signal recorded | %s | pred=%.4f actual=%.4f",
-            symbol, predicted_direction, actual_return,
+            symbol,
+            predicted_direction,
+            actual_return,
         )
 
     def record_shadow_signal(
@@ -178,12 +182,12 @@ class ShadowModelRunner:
         """
         today = self._today_str()
         with self._lock:
-            self._shadow_signals[today].append(
-                (float(predicted_direction), float(actual_return))
-            )
+            self._shadow_signals[today].append((float(predicted_direction), float(actual_return)))
         logger.debug(
             "Shadow signal recorded | %s | pred=%.4f actual=%.4f",
-            symbol, predicted_direction, actual_return,
+            symbol,
+            predicted_direction,
+            actual_return,
         )
 
     # ------------------------------------------------------------------
@@ -192,8 +196,8 @@ class ShadowModelRunner:
 
     def run_shadow_prediction(
         self,
-        features: Dict[str, float],
-        context: Optional[Dict[str, Any]] = None,
+        features: dict[str, float],
+        context: dict[str, Any] | None = None,
     ) -> PredictionOutput:
         """
         Run the shadow ensemble on *features* and return its prediction.
@@ -224,14 +228,12 @@ class ShadowModelRunner:
         included so that the comparison is apples-to-apples.
         """
         with self._lock:
-            common_dates = sorted(
-                set(self._prod_signals.keys()) & set(self._shadow_signals.keys())
-            )
+            common_dates = sorted(set(self._prod_signals.keys()) & set(self._shadow_signals.keys()))
 
-            prod_daily_ret: List[float] = []
-            shadow_daily_ret: List[float] = []
-            prod_daily_ic: List[float] = []
-            shadow_daily_ic: List[float] = []
+            prod_daily_ret: list[float] = []
+            shadow_daily_ret: list[float] = []
+            prod_daily_ic: list[float] = []
+            shadow_daily_ic: list[float] = []
 
             for d in common_dates:
                 p_signals = self._prod_signals[d]
@@ -315,7 +317,7 @@ class ShadowModelRunner:
     # Daily metrics for dashboards
     # ------------------------------------------------------------------
 
-    def get_daily_metrics(self) -> List[Dict[str, Any]]:
+    def get_daily_metrics(self) -> list[dict[str, Any]]:
         """
         Return a list of per-day comparison dicts for charting / audit.
 
@@ -329,11 +331,9 @@ class ShadowModelRunner:
             - ``shadow_cumulative``: Cumulative return for shadow.
         """
         with self._lock:
-            common_dates = sorted(
-                set(self._prod_signals.keys()) & set(self._shadow_signals.keys())
-            )
+            common_dates = sorted(set(self._prod_signals.keys()) & set(self._shadow_signals.keys()))
 
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
             prod_cum = 0.0
             shadow_cum = 0.0
 
@@ -343,15 +343,17 @@ class ShadowModelRunner:
                 prod_cum += p_ret
                 shadow_cum += s_ret
 
-                results.append({
-                    "date": d,
-                    "production_return": p_ret,
-                    "shadow_return": s_ret,
-                    "production_ic": self._daily_ic(self._prod_signals[d]),
-                    "shadow_ic": self._daily_ic(self._shadow_signals[d]),
-                    "production_cumulative": prod_cum,
-                    "shadow_cumulative": shadow_cum,
-                })
+                results.append(
+                    {
+                        "date": d,
+                        "production_return": p_ret,
+                        "shadow_return": s_ret,
+                        "production_ic": self._daily_ic(self._prod_signals[d]),
+                        "shadow_ic": self._daily_ic(self._shadow_signals[d]),
+                        "production_cumulative": prod_cum,
+                        "shadow_cumulative": shadow_cum,
+                    }
+                )
 
         return results
 
@@ -365,7 +367,7 @@ class ShadowModelRunner:
         return self._production
 
     @property
-    def shadow_ensemble(self) -> Optional[Any]:
+    def shadow_ensemble(self) -> Any | None:
         """The shadow ensemble under evaluation (or ``None``)."""
         return self._shadow
 
@@ -376,10 +378,10 @@ class ShadowModelRunner:
     @staticmethod
     def _today_str() -> str:
         """ISO date string for the current UTC day."""
-        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return datetime.now(UTC).strftime("%Y-%m-%d")
 
     @staticmethod
-    def _daily_return(signals: List[Tuple[float, float]]) -> float:
+    def _daily_return(signals: list[tuple[float, float]]) -> float:
         """
         Compute the mean *directional return* for a day's signals.
 
@@ -389,13 +391,11 @@ class ShadowModelRunner:
         """
         if not signals:
             return 0.0
-        directional = [
-            np.sign(pred) * actual for pred, actual in signals if pred != 0.0
-        ]
+        directional = [np.sign(pred) * actual for pred, actual in signals if pred != 0.0]
         return float(np.mean(directional)) if directional else 0.0
 
     @staticmethod
-    def _daily_ic(signals: List[Tuple[float, float]]) -> float:
+    def _daily_ic(signals: list[tuple[float, float]]) -> float:
         """
         Pearson correlation between predicted direction and actual return
         for a single day's signals.  Returns 0.0 when data is insufficient
@@ -411,7 +411,7 @@ class ShadowModelRunner:
         return float(corr) if math.isfinite(corr) else 0.0
 
     @staticmethod
-    def _sharpe(daily_returns: List[float], annualisation_factor: float = 252.0) -> float:
+    def _sharpe(daily_returns: list[float], annualisation_factor: float = 252.0) -> float:
         """
         Annualised Sharpe ratio from a list of daily returns.
 
@@ -428,7 +428,7 @@ class ShadowModelRunner:
         return (mean / std) * math.sqrt(annualisation_factor)
 
     @staticmethod
-    def _max_drawdown(daily_returns: List[float]) -> float:
+    def _max_drawdown(daily_returns: list[float]) -> float:
         """
         Maximum drawdown as a positive fraction from peak cumulative return.
 

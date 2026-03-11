@@ -2,9 +2,11 @@
 Capital deployment gate: validate Redis, broker, market data, stress/restart pass.
 If validate() fails, system must refuse to enable autonomous live mode. Manual paper still allowed.
 """
+
 import asyncio
 import logging
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +20,9 @@ class CapitalGate:
 
     def __init__(
         self,
-        check_redis: Optional[Callable[[], Any]] = None,
-        check_broker: Optional[Callable[[], Any]] = None,
-        check_market_data: Optional[Callable[[], Any]] = None,
+        check_redis: Callable[[], Any] | None = None,
+        check_broker: Callable[[], Any] | None = None,
+        check_market_data: Callable[[], Any] | None = None,
         stress_tests_passed: bool = False,
         restart_simulation_passed: bool = False,
     ):
@@ -30,12 +32,12 @@ class CapitalGate:
         self.stress_tests_passed = stress_tests_passed
         self.restart_simulation_passed = restart_simulation_passed
 
-    async def validate(self) -> Dict[str, Any]:
+    async def validate(self) -> dict[str, Any]:
         """
         Run all checks. Returns dict with keys: ok (bool), checks (dict), message (str).
         If ok is False, autonomous live mode must not be enabled.
         """
-        checks: Dict[str, Any] = {}
+        checks: dict[str, Any] = {}
         all_ok = True
 
         if self.check_redis:

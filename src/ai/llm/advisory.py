@@ -2,9 +2,9 @@
 LLM advisory: multi-source aggregation, event severity, risk multiplier (0.5x–1.5x).
 Guardrails: no trade instructions; cap multiplier; require source for material claims.
 """
+
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
 
 from .client import LLMClient
 
@@ -25,7 +25,7 @@ class AdvisoryResult:
     event_severity: str  # low | medium | high
     exposure_multiplier: float  # 0.5 to 1.5
     reason: str
-    sources_cited: List[str]
+    sources_cited: list[str]
 
 
 def _clamp_multiplier(x: float, low: float = 0.5, high: float = 1.5) -> float:
@@ -44,25 +44,23 @@ class AdvisoryService:
 
     async def aggregate_and_advise(
         self,
-        items: List[dict],
+        items: list[dict],
         max_tokens: int = 256,
-    ) -> Optional[AdvisoryResult]:
+    ) -> AdvisoryResult | None:
         """
         items: list of { "source": str, "text": str, "timestamp": str }.
         Returns event_severity, exposure_multiplier (0.5–1.5), reason, sources_cited.
         """
         if not items:
             return AdvisoryResult("low", 1.0, "No inputs", [])
-        combined = "\n\n".join(
-            f"[{x.get('source', 'unknown')}] {x.get('text', '')[:500]}"
-            for x in items[:20]
-        )
+        combined = "\n\n".join(f"[{x.get('source', 'unknown')}] {x.get('text', '')[:500]}" for x in items[:20])
         user = f"Aggregated inputs:\n{combined[:6000]}"
         raw = await self.llm.complete(SYSTEM_ADVISORY, user, max_tokens=max_tokens)
         if not raw:
             return None
         try:
             import json
+
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
             d = json.loads(raw)

@@ -2,12 +2,12 @@
 Circuit breaker + global kill switch integration.
 Auto-triggers: max daily loss, max drawdown, rejection spike, broker latency spike, fill mismatch, India VIX spike.
 """
+
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from collections import deque
-from typing import Deque, Optional
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from .kill_switch import KillReason, KillSwitch
 
@@ -38,12 +38,12 @@ class CircuitAndKillController:
         self,
         risk_manager,
         kill_switch: KillSwitch,
-        config: Optional[CircuitKillConfig] = None,
+        config: CircuitKillConfig | None = None,
     ):
         self.risk_manager = risk_manager
         self.kill_switch = kill_switch
         self.config = config or CircuitKillConfig()
-        self._recent_rejections: Deque[datetime] = deque(maxlen=max(1, self.config.rejection_spike_window * 2))
+        self._recent_rejections: deque[datetime] = deque(maxlen=max(1, self.config.rejection_spike_window * 2))
         self._lock = asyncio.Lock()
 
     async def check_daily_loss_and_trip(self, current_equity: float) -> bool:
@@ -61,7 +61,7 @@ class CircuitAndKillController:
 
     async def check_drawdown_and_trip(self, peak_equity: float, current_equity: float) -> bool:
         if self.risk_manager.check_drawdown(peak_equity, current_equity):
-            await self.kill_switch.arm(KillReason.MAX_DRAWDOWN, f"drawdown_limit")
+            await self.kill_switch.arm(KillReason.MAX_DRAWDOWN, "drawdown_limit")
             self.risk_manager.open_circuit(reason="max_drawdown")
             return True
         return False
@@ -69,15 +69,18 @@ class CircuitAndKillController:
     async def record_rejection(self) -> None:
         """Call on each risk/gate rejection. Trip if spike within time window."""
         async with self._lock:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             self._recent_rejections.append(now)
             # Time-based decay: only count rejections within last 5 minutes
             from datetime import timedelta
+
             cutoff = now - timedelta(minutes=5)
             while self._recent_rejections and self._recent_rejections[0] < cutoff:
                 self._recent_rejections.popleft()
             if len(self._recent_rejections) >= self.config.rejection_spike_threshold:
-                await self.kill_switch.arm(KillReason.REJECTION_SPIKE, f"rejections_{len(self._recent_rejections)}_in_5min")
+                await self.kill_switch.arm(
+                    KillReason.REJECTION_SPIKE, f"rejections_{len(self._recent_rejections)}_in_5min"
+                )
                 logger.warning("Kill switch: rejection spike")
 
     async def check_broker_latency_and_trip(self, latency_ms: float) -> bool:
@@ -103,4 +106,3 @@ class CircuitAndKillController:
             self.risk_manager.open_circuit(reason="market_feed_unhealthy")
             return True
         return False
-

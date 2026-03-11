@@ -1,8 +1,8 @@
 """Trade lifecycle: persist order state, handle fills/rejections, retries, latency metrics."""
+
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from src.core.events import Order, OrderStatus
 from src.execution.lifecycle_transitions import is_allowed_transition_domain
@@ -31,10 +31,11 @@ class OrderLifecycle:
             return False
         async with self._lock:
             self._orders[str(oid)] = order
-            self._placed_at[str(oid)] = datetime.now(timezone.utc)
+            self._placed_at[str(oid)] = datetime.now(UTC)
         logger.info(
             "Order REGISTERED: id=%s symbol=%s side=%s qty=%s type=%s status=%s price=%s strategy=%s",
-            oid, order.symbol,
+            oid,
+            order.symbol,
             order.side.value if hasattr(order.side, "value") else order.side,
             order.quantity,
             order.order_type.value if hasattr(order.order_type, "value") else order.order_type,
@@ -44,12 +45,15 @@ class OrderLifecycle:
         )
         return True
 
-    async def update_status(self, order_id: str, status: OrderStatus, filled_qty: float = 0.0, avg_price: Optional[float] = None) -> None:
+    async def update_status(
+        self, order_id: str, status: OrderStatus, filled_qty: float = 0.0, avg_price: float | None = None
+    ) -> None:
         async with self._lock:
             if order_id not in self._orders:
                 logger.warning(
                     "Order TRANSITION FAILED: id=%s not found in lifecycle (target=%s)",
-                    order_id, status.value,
+                    order_id,
+                    status.value,
                 )
                 return
             order = self._orders[order_id]
@@ -57,7 +61,10 @@ class OrderLifecycle:
             if not is_allowed_transition_domain(current, status):
                 logger.warning(
                     "Order TRANSITION BLOCKED: id=%s symbol=%s illegal %s -> %s; skipping",
-                    order_id, order.symbol, current.value, status.value,
+                    order_id,
+                    order.symbol,
+                    current.value,
+                    status.value,
                 )
                 return
             order.status = status
@@ -69,15 +76,21 @@ class OrderLifecycle:
             if status in (OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELLED):
                 placed = self._placed_at.get(order_id)
                 if placed:
-                    lat_ms = (datetime.now(timezone.utc) - placed).total_seconds() * 1000
+                    lat_ms = (datetime.now(UTC) - placed).total_seconds() * 1000
                     latency_info = f" latency={lat_ms:.0f}ms"
         logger.info(
             "Order TRANSITION: id=%s symbol=%s %s -> %s filled=%s/%s avg_price=%s%s",
-            order_id, order.symbol, current.value, status.value,
-            filled_qty, order.quantity, avg_price, latency_info,
+            order_id,
+            order.symbol,
+            current.value,
+            status.value,
+            filled_qty,
+            order.quantity,
+            avg_price,
+            latency_info,
         )
 
-    async def get_order(self, order_id: str) -> Optional[Order]:
+    async def get_order(self, order_id: str) -> Order | None:
         async with self._lock:
             return self._orders.get(order_id)
 
@@ -86,7 +99,7 @@ class OrderLifecycle:
         async with self._lock:
             return sum(1 for o in self._orders.values() if getattr(o, "status", None) in ACTIVE_STATUSES)
 
-    def latency_ms(self, order_id: str) -> Optional[float]:
+    def latency_ms(self, order_id: str) -> float | None:
         """Time from place to now (or to fill time if stored).
 
         BUG 58 NOTE: This reads _placed_at without acquiring _lock. This is safe
@@ -95,7 +108,7 @@ class OrderLifecycle:
         """
         if order_id not in self._placed_at:
             return None
-        return (datetime.now(timezone.utc) - self._placed_at[order_id]).total_seconds() * 1000
+        return (datetime.now(UTC) - self._placed_at[order_id]).total_seconds() * 1000
 
     async def get_orders_snapshot(self) -> list:
         """Return a snapshot (list copy) of all orders, safely acquiring the lock.
@@ -106,7 +119,7 @@ class OrderLifecycle:
         async with self._lock:
             return list(self._orders.values())
 
-    def load_for_recovery(self, orders: List[Order]) -> None:
+    def load_for_recovery(self, orders: list[Order]) -> None:
         """
         Cold start only: repopulate lifecycle from persisted active orders.
         Uses order.ts as placed_at. Must not be used during normal trading.
@@ -116,14 +129,14 @@ class OrderLifecycle:
             if not oid or not str(oid).strip():
                 continue
             self._orders[str(oid)] = order
-            self._placed_at[str(oid)] = order.ts if order.ts else datetime.now(timezone.utc)
+            self._placed_at[str(oid)] = order.ts if order.ts else datetime.now(UTC)
         logger.info("OrderLifecycle loaded %d active orders for recovery", len(orders))
 
-    async def sweep_stale_orders(self, max_age_seconds: float = 300.0) -> List[str]:
+    async def sweep_stale_orders(self, max_age_seconds: float = 300.0) -> list[str]:
         """Cancel orders that have been PENDING for longer than max_age_seconds.
         Returns list of cancelled order IDs (phantom order protection)."""
-        now = datetime.now(timezone.utc)
-        stale_ids: List[str] = []
+        now = datetime.now(UTC)
+        stale_ids: list[str] = []
         async with self._lock:
             for oid, order in list(self._orders.items()):
                 if order.status not in ACTIVE_STATUSES:
@@ -137,11 +150,14 @@ class OrderLifecycle:
                     stale_ids.append(oid)
                     logger.warning(
                         "Stale order sweep: cancelled %s (age=%.0fs, status=%s, symbol=%s)",
-                        oid, age, order.status.value, order.symbol,
+                        oid,
+                        age,
+                        order.status.value,
+                        order.symbol,
                     )
         return stale_ids
 
-    def list_recent(self, limit: int = 100) -> List[Order]:
+    def list_recent(self, limit: int = 100) -> list[Order]:
         """Return most recently placed orders (by placement time)."""
         if not self._orders:
             return []

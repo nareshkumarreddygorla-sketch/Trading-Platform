@@ -1,10 +1,11 @@
 """Base contract for ML predictors: directional prob, expected return, confidence."""
+
 import logging
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 
@@ -20,19 +21,26 @@ MIN_CONFIDENCE_THRESHOLD = 0.55  # Production: require meaningful edge (was 0.15
 @dataclass
 class PredictionOutput:
     """Standard output for every model in the ensemble."""
+
     prob_up: float  # P(price up)
     expected_return: float
     confidence: float  # 0-1
     model_id: str
     version: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     symbol: str = ""
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self):
         """Validate bounds on construction to prevent garbage propagation."""
         if not math.isfinite(self.prob_up) or self.prob_up < 0 or self.prob_up > 1:
-            logger.warning("PredictionOutput(%s): invalid prob_up=%.6f clamped to 0.5", self.model_id, self.prob_up if isinstance(self.prob_up, (int, float)) and math.isfinite(self.prob_up) else float('nan'))
+            logger.warning(
+                "PredictionOutput(%s): invalid prob_up=%.6f clamped to 0.5",
+                self.model_id,
+                self.prob_up
+                if isinstance(self.prob_up, (int, float)) and math.isfinite(self.prob_up)
+                else float("nan"),
+            )
             self.prob_up = 0.5
         if not math.isfinite(self.expected_return):
             logger.warning("PredictionOutput(%s): non-finite expected_return clamped to 0.0", self.model_id)
@@ -45,9 +53,9 @@ class PredictionOutput:
 
 def estimate_empirical_return(
     prob_up: float,
-    historical_returns: Optional[np.ndarray] = None,
+    historical_returns: np.ndarray | None = None,
     n_bins: int = 10,
-) -> Optional[float]:
+) -> float | None:
     """
     Estimate expected return empirically by binning predictions vs actual
     realized returns, instead of using the fabricated formula
@@ -88,11 +96,11 @@ def estimate_empirical_return(
             if len(bin_returns) >= 10:
                 empirical_return = float(np.mean(bin_returns))
                 # Sanity check: if direction disagrees with probability, return None
-                if (prob_up > 0.5 and empirical_return < -0.005) or \
-                   (prob_up < 0.5 and empirical_return > 0.005):
+                if (prob_up > 0.5 and empirical_return < -0.005) or (prob_up < 0.5 and empirical_return > 0.005):
                     logger.warning(
                         "Empirical return (%.4f) contradicts prob_up (%.3f) — halting",
-                        empirical_return, prob_up,
+                        empirical_return,
+                        prob_up,
                     )
                     return None
                 return empirical_return
@@ -113,10 +121,10 @@ class BasePredictor(ABC):
 
     # Historical prediction/return pairs for empirical return estimation.
     # Subclasses can populate this during calibration or from stored data.
-    _empirical_returns: Optional[np.ndarray] = None
+    _empirical_returns: np.ndarray | None = None
 
     @abstractmethod
-    def predict(self, features: Dict[str, float], context: Optional[Dict[str, Any]] = None) -> Optional[PredictionOutput]:
+    def predict(self, features: dict[str, float], context: dict[str, Any] | None = None) -> PredictionOutput | None:
         """Return prob_up, expected_return, confidence, or None to halt trading.
 
         Returning None signals that the model does not have sufficient
@@ -135,7 +143,8 @@ class BasePredictor(ABC):
         if abs(prob_up - 0.5) < 0.05:  # Require 5% directional edge (was 2%)
             logger.debug(
                 "%s: prediction prob_up=%.4f too close to 0.5, halting",
-                self.model_id, prob_up,
+                self.model_id,
+                prob_up,
             )
             return False
 
@@ -143,13 +152,17 @@ class BasePredictor(ABC):
         if confidence < MIN_CONFIDENCE_THRESHOLD:
             logger.debug(
                 "%s: confidence=%.4f below threshold %.4f, halting",
-                self.model_id, confidence, MIN_CONFIDENCE_THRESHOLD,
+                self.model_id,
+                confidence,
+                MIN_CONFIDENCE_THRESHOLD,
             )
             return False
 
         return True
 
-    def batch_predict(self, feature_batch: List[Dict[str, float]], contexts: Optional[List[Dict[str, Any]]] = None) -> List[Optional[PredictionOutput]]:
+    def batch_predict(
+        self, feature_batch: list[dict[str, float]], contexts: list[dict[str, Any]] | None = None
+    ) -> list[PredictionOutput | None]:
         """Batch prediction for multiple symbols. Default: sequential predict() calls.
         Override in subclasses for GPU-batched inference.
         Returns None for any symbol where the model declines to trade."""

@@ -1,4 +1,5 @@
 """Training management API: trigger training, check status, view results."""
+
 import json
 import logging
 import os
@@ -6,13 +7,12 @@ import subprocess
 import sys
 import threading
 from collections import deque
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from src.api.auth import get_current_user, require_roles
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def _drain_pipe(pipe, buf: deque, state: dict):
 
 class TrainRequest(BaseModel):
     mode: str = "quick"  # quick, standard, full
-    models: Optional[str] = None  # comma-separated: lstm,transformer,rl
+    models: str | None = None  # comma-separated: lstm,transformer,rl
     skip_data: bool = False
 
 
@@ -83,7 +83,7 @@ async def get_training_status(current_user: dict = Depends(get_current_user)):
         _training_state["result"] = {
             "returncode": proc.returncode,
             "success": proc.returncode == 0,
-            "finished_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "finished_at": datetime.now(UTC).isoformat() + "Z",
         }
         _training_state["process"] = None
 
@@ -146,8 +146,11 @@ async def start_training(req: TrainRequest, current_user: dict = Depends(require
 
     try:
         proc = subprocess.Popen(
-            cmd, env=env, cwd=PROJECT_ROOT,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cmd,
+            env=env,
+            cwd=PROJECT_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
         )
         _log_buffer.clear()
@@ -164,7 +167,7 @@ async def start_training(req: TrainRequest, current_user: dict = Depends(require
 
         _training_state["running"] = True
         _training_state["process"] = proc
-        _training_state["started_at"] = datetime.now(timezone.utc).isoformat() + "Z"
+        _training_state["started_at"] = datetime.now(UTC).isoformat() + "Z"
         _training_state["mode"] = req.mode
         _training_state["logs"] = _log_buffer  # point to the shared deque
         _training_state["result"] = None
@@ -177,9 +180,9 @@ async def start_training(req: TrainRequest, current_user: dict = Depends(require
             "mode": req.mode,
             "models": req.models or "all",
         }
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to start training")
-        raise HTTPException(status_code=500, detail="Training start failed")
+        raise HTTPException(status_code=500, detail="Training start failed") from None
 
 
 @router.post("/stop")
@@ -190,6 +193,7 @@ async def stop_training(current_user: dict = Depends(require_roles(["admin"]))):
         raise HTTPException(status_code=404, detail="No training in progress")
 
     import asyncio
+
     try:
         proc.terminate()
         loop = asyncio.get_running_loop()

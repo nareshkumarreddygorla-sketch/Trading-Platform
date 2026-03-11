@@ -2,8 +2,8 @@
 Broker realism tests: timeout, session expiry, cancel, order status mapping.
 Invariant: no fake Order in live mode (live must return Order with broker_order_id from broker or raise).
 """
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+
+from unittest.mock import patch
 
 import pytest
 
@@ -91,6 +91,7 @@ async def test_broker_timeout_raises():
 
     def slow_place(*args, **kwargs):
         import time
+
         time.sleep(5)
         return {"orderid": "1", "uniqueorderid": "u1"}
 

@@ -4,8 +4,8 @@ Rolling correlation matrix; MCR, portfolio heat, concentration;
 risk parity / vol target / Kelly cap / correlation penalty;
 max gross, net, sector, correlated cluster exposure (vs effective_equity).
 """
+
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -24,11 +24,11 @@ class OptimizerConfig:
 
 @dataclass
 class PortfolioWeights:
-    symbols: List[str]
-    weights: Dict[str, float]
+    symbols: list[str]
+    weights: dict[str, float]
     gross_exposure: float
     net_exposure: float
-    mcr: Dict[str, float]
+    mcr: dict[str, float]
     heat: float
     concentration: float
 
@@ -60,17 +60,17 @@ class CorrelationOptimizer:
     correlation penalty; enforce gross/net/sector/cluster vs effective_equity.
     """
 
-    def __init__(self, config: Optional[OptimizerConfig] = None):
+    def __init__(self, config: OptimizerConfig | None = None):
         self.config = config or OptimizerConfig()
-        self._cov: Optional[np.ndarray] = None
-        self._symbols: List[str] = []
+        self._cov: np.ndarray | None = None
+        self._symbols: list[str] = []
 
-    def set_covariance(self, symbols: List[str], cov: np.ndarray) -> None:
+    def set_covariance(self, symbols: list[str], cov: np.ndarray) -> None:
         """Set rolling covariance matrix (symbols order must match cov rows/cols)."""
         self._symbols = list(symbols)
         self._cov = np.asarray(cov)
 
-    def set_correlation_from_returns(self, symbols: List[str], returns: np.ndarray) -> None:
+    def set_correlation_from_returns(self, symbols: list[str], returns: np.ndarray) -> None:
         """returns shape (T, n); compute cov and set."""
         self._symbols = list(symbols)
         if returns.shape[1] != len(symbols):
@@ -79,7 +79,7 @@ class CorrelationOptimizer:
         if self._cov.ndim == 0:
             self._cov = np.array([[self._cov]])
 
-    def mcr(self, weights: Dict[str, float]) -> Dict[str, float]:
+    def mcr(self, weights: dict[str, float]) -> dict[str, float]:
         """Marginal contribution to risk per symbol."""
         if self._cov is None or not self._symbols:
             return {}
@@ -87,27 +87,27 @@ class CorrelationOptimizer:
         m = _mcr_contributions(w, self._cov)
         return {s: float(m[i]) for i, s in enumerate(self._symbols)}
 
-    def heat(self, weights: Dict[str, float], position_values: Dict[str, float], equity: float) -> float:
+    def heat(self, weights: dict[str, float], position_values: dict[str, float], equity: float) -> float:
         """Portfolio heat = sum |position_value| / equity."""
         if equity <= 0:
             return 0.0
         total = sum(abs(position_values.get(s, 0.0)) for s in weights)
         return total / equity
 
-    def concentration(self, weights: Dict[str, float]) -> float:
+    def concentration(self, weights: dict[str, float]) -> float:
         """Herfindahl: sum of squared weights."""
         w = list(weights.values())
         return sum(wi * wi for wi in w)
 
     def optimize(
         self,
-        symbols: List[str],
-        expected_returns: Optional[Dict[str, float]] = None,
-        volatilities: Optional[Dict[str, float]] = None,
-        sector: Optional[Dict[str, str]] = None,
-        cluster: Optional[Dict[str, int]] = None,
+        symbols: list[str],
+        expected_returns: dict[str, float] | None = None,
+        volatilities: dict[str, float] | None = None,
+        sector: dict[str, str] | None = None,
+        cluster: dict[str, int] | None = None,
         effective_equity: float = 1.0,
-        current_position_values: Optional[Dict[str, float]] = None,
+        current_position_values: dict[str, float] | None = None,
     ) -> PortfolioWeights:
         """
         Compute weights: risk parity base; vol target scale; Kelly cap; correlation penalty;

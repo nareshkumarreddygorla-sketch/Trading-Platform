@@ -1,8 +1,8 @@
 """DTOs for order entry: request and result. All flows use these."""
+
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
 
 from src.core.events import OrderType, Signal, SignalSide
 
@@ -24,11 +24,12 @@ class RejectReason(str, Enum):
 @dataclass
 class OrderEntryRequest:
     """Single request type for all order flows (AI, API, internal)."""
+
     signal: Signal
     quantity: int
     order_type: OrderType = OrderType.LIMIT
-    limit_price: Optional[float] = None
-    idempotency_key: Optional[str] = None
+    limit_price: float | None = None
+    idempotency_key: str | None = None
     source: str = "api"  # api | ai_engine | manual | test
     metadata: dict = field(default_factory=dict)
     force_reduce: bool = False  # True for emergency close-outs: bypass daily loss, circuit breaker, rate limiter
@@ -51,7 +52,7 @@ class OrderEntryRequest:
         symbol = self.signal.symbol.strip()
         if len(symbol) > 50:
             return False, f"symbol too long ({len(symbol)} chars, max 50)"
-        if any(c in symbol for c in ('\n', '\r', '\t', '\0')):
+        if any(c in symbol for c in ("\n", "\r", "\t", "\0")):
             return False, "symbol contains invalid characters"
         if self.signal.side not in (SignalSide.BUY, SignalSide.SELL):
             return False, "side must be BUY or SELL"
@@ -61,13 +62,14 @@ class OrderEntryRequest:
 @dataclass
 class OrderEntryResult:
     """Result of submit_order: either order_id or reject reason."""
+
     success: bool
-    order_id: Optional[str] = None
-    broker_order_id: Optional[str] = None
-    reject_reason: Optional[RejectReason] = None
+    order_id: str | None = None
+    broker_order_id: str | None = None
+    reject_reason: RejectReason | None = None
     reject_detail: str = ""
-    latency_ms: Optional[float] = None
-    market_impact_bps: Optional[float] = None
-    circuit_check_passed: Optional[bool] = None
-    lot_size_adjusted: Optional[bool] = None
-    ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    latency_ms: float | None = None
+    market_impact_bps: float | None = None
+    circuit_check_passed: bool | None = None
+    lot_size_adjusted: bool | None = None
+    ts: datetime = field(default_factory=lambda: datetime.now(UTC))

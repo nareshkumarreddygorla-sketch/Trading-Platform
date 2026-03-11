@@ -1,17 +1,19 @@
 """Strategy plugin contract: scored signals, portfolio weight, risk level."""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any
 
-from src.core.events import Bar, Exchange, Signal, SignalSide
+from src.core.events import Bar, Exchange, Signal
 
 
 @dataclass
 class MarketState:
     """Current market context passed to strategies."""
+
     symbol: str
     exchange: Exchange
-    bars: List[Bar]  # recent OHLCV (e.g. last 100 bars)
+    bars: list[Bar]  # recent OHLCV (e.g. last 100 bars)
     latest_price: float
     volume: float
     order_book: Any = None  # optional L2 snapshot
@@ -29,7 +31,7 @@ class StrategyBase(ABC):
     description: str = ""
 
     @abstractmethod
-    def generate_signals(self, state: MarketState) -> List[Signal]:
+    def generate_signals(self, state: MarketState) -> list[Signal]:
         """
         Return list of signals. Each signal must have:
         - strategy_id, symbol, side, score (0-1), portfolio_weight (0-1), risk_level.

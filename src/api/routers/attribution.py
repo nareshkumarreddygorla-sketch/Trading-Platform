@@ -1,8 +1,8 @@
 """
 Performance Attribution API: break down P&L by model, strategy, symbol, sector, regime.
 """
+
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -14,17 +14,21 @@ router = APIRouter(prefix="/api/v1/attribution", tags=["attribution"])
 
 def _get_repo():
     from src.persistence.trade_outcome_repo import TradeOutcomeRepository
+
     return TradeOutcomeRepository()
 
 
 def _get_engine(repo=None):
     from src.reporting.performance_attribution import PerformanceAttributionEngine
+
     return PerformanceAttributionEngine(trade_outcome_repo=repo or _get_repo())
 
 
 @router.get("/by-dimension")
 async def get_attribution(
-    dimension: str = Query("model_id", pattern="^(model_id|strategy_id|symbol|sector|regime|time_bucket|exit_reason|side)$"),
+    dimension: str = Query(
+        "model_id", pattern="^(model_id|strategy_id|symbol|sector|regime|time_bucket|exit_reason|side)$"
+    ),
     days: int = Query(30, ge=1, le=365),
     _user=Depends(require_auth),
 ):
@@ -68,7 +72,9 @@ async def get_full_attribution(
         return {
             "days": days,
             "total_trades": len(trades),
-            "total_pnl": sum(t.get("realized_pnl", 0) if isinstance(t, dict) else getattr(t, "realized_pnl", 0) for t in trades),
+            "total_pnl": sum(
+                t.get("realized_pnl", 0) if isinstance(t, dict) else getattr(t, "realized_pnl", 0) for t in trades
+            ),
             "win_rate": 0,
             "best_model": "--",
             "dimensions": {
@@ -111,8 +117,8 @@ async def get_feature_importance(
 @router.get("/trade-outcomes")
 async def get_trade_outcomes(
     limit: int = Query(50, ge=1, le=500),
-    model_id: Optional[str] = None,
-    strategy_id: Optional[str] = None,
+    model_id: str | None = None,
+    strategy_id: str | None = None,
     _user=Depends(require_auth),
 ):
     """Get recent trade outcomes with optional filtering."""

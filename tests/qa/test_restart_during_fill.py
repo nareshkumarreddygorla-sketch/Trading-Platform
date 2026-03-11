@@ -3,14 +3,12 @@ QA Phase 4 — Restart during partial fill (11).
 Simulate: broker ACK, partial fill, kill process, restart.
 Expect: no duplicate fill, no position corruption, lifecycle correct.
 """
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.core.events import Exchange, Order, OrderStatus, Position, SignalSide
-from src.execution.fill_handler.events import FillEvent, FillType
+from src.core.events import Exchange, OrderStatus, SignalSide
 from src.execution.fill_handler import FillHandler
+from src.execution.fill_handler.events import FillEvent, FillType
 from src.execution.lifecycle import OrderLifecycle
 from src.risk_engine import RiskManager
 from src.risk_engine.limits import RiskLimits
@@ -26,7 +24,16 @@ async def test_restart_during_fill_no_duplicate_fill():
     rm = RiskManager(equity=100_000.0, limits=RiskLimits(max_open_positions=10))
     lifecycle = OrderLifecycle()
     from src.core.events import Order as O
-    o = O(order_id="O1", strategy_id="s1", symbol="INFY", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=10.0, status=OrderStatus.LIVE)
+
+    o = O(
+        order_id="O1",
+        strategy_id="s1",
+        symbol="INFY",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
+        quantity=10.0,
+        status=OrderStatus.LIVE,
+    )
     await lifecycle.register(o)
     handler = FillHandler(risk_manager=rm, lifecycle=lifecycle)
     event = FillEvent(
@@ -57,12 +64,6 @@ async def test_restart_during_fill_no_duplicate_fill():
 async def test_idempotency_same_key_after_restart_returns_existing_order():
     """After 'restart', same idempotency key returns existing order_id; no second broker call."""
     from src.execution.order_entry.idempotency import IdempotencyStore
-    from src.execution.order_entry.request import OrderEntryRequest
-    from src.execution.order_entry import OrderEntryService
-    from src.execution.order_entry.kill_switch import KillSwitch
-    from src.execution.order_entry.reservation import ExposureReservation
-    from src.execution.order_router import OrderRouter
-    from src.core.events import Order, OrderStatus, OrderType, Signal
 
     store = IdempotencyStore(redis_url="redis://localhost:6379/0")
     try:

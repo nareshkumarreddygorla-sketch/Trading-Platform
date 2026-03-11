@@ -3,9 +3,9 @@ Meta-model: predicts P(primary wrong), P(confidence inflated), P(regime flip).
 Inputs: primary prediction, confidence, recent errors, recent calibration error, regime state.
 Trained on historical model errors, confidence vs realized hit rate, regime transitions.
 """
+
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -29,8 +29,8 @@ class MetaAlphaPredictor:
 
     def __init__(self, model=None):
         self._model = model
-        self._recent_errors: List[float] = []
-        self._recent_conf: List[float] = []
+        self._recent_errors: list[float] = []
+        self._recent_conf: list[float] = []
         self._window = 50
 
     def update(self, primary_correct: bool, confidence: float, realized_hit: float) -> None:
@@ -45,9 +45,9 @@ class MetaAlphaPredictor:
         self,
         primary_pred: int,
         confidence: float,
-        regime_id: Optional[int] = None,
+        regime_id: int | None = None,
         vol: float = 0.01,
-        features: Optional[Dict[str, float]] = None,
+        features: dict[str, float] | None = None,
     ) -> MetaAlphaOutput:
         """
         Return P(primary wrong), P(confidence inflated), P(regime flip).
@@ -74,14 +74,16 @@ class MetaAlphaPredictor:
             )
         # Model-based prediction
         try:
-            feature_vector = np.array([
-                float(primary_pred),
-                float(confidence),
-                float(np.mean(self._recent_errors)) if self._recent_errors else 0.5,
-                float(np.mean(self._recent_conf)) if self._recent_conf else 0.0,
-                float(regime_id) if regime_id is not None else -1.0,
-                float(vol),
-            ]).reshape(1, -1)
+            feature_vector = np.array(
+                [
+                    float(primary_pred),
+                    float(confidence),
+                    float(np.mean(self._recent_errors)) if self._recent_errors else 0.5,
+                    float(np.mean(self._recent_conf)) if self._recent_conf else 0.0,
+                    float(regime_id) if regime_id is not None else -1.0,
+                    float(vol),
+                ]
+            ).reshape(1, -1)
 
             if hasattr(self._model, "predict_proba"):
                 preds = self._model.predict_proba(feature_vector)[0]

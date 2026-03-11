@@ -13,31 +13,24 @@ Covers:
 Run:
     PYTHONPATH=. pytest tests/test_critical_paths.py -v --tb=short
 """
+
 import json
-import math
-import os
-import tempfile
 import threading
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import List
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
-import numpy as np
-import pytest
-
-from src.core.events import Bar, Exchange, Position, Signal, SignalSide
+from src.core.events import Bar, Exchange, Signal, SignalSide
 from src.risk_engine.circuit_breaker import CircuitBreaker, CircuitState
-from src.risk_engine.limits import LimitCheckResult, RiskLimits
+from src.risk_engine.limits import RiskLimits
 from src.risk_engine.manager import RiskManager
-from src.risk_engine.var import PortfolioVaR, _cornish_fisher_z, Z_95, Z_99
+from src.risk_engine.var import Z_95, PortfolioVaR, _cornish_fisher_z
 from src.strategy_engine.allocator import AllocatorConfig, PortfolioAllocator
 from src.strategy_engine.base import MarketState
-
 
 # ════════════════════════════════════════════════════════════════════════
 # Helpers
 # ════════════════════════════════════════════════════════════════════════
+
 
 def _make_signal(
     symbol: str = "RELIANCE",
@@ -59,36 +52,39 @@ def _make_signal(
     )
 
 
-def _make_bars(n: int = 200, symbol: str = "RELIANCE", base_price: float = 2500.0) -> List[Bar]:
+def _make_bars(n: int = 200, symbol: str = "RELIANCE", base_price: float = 2500.0) -> list[Bar]:
     """Generate deterministic synthetic bars (no randomness)."""
     bars = []
-    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    ts = datetime(2024, 1, 1, tzinfo=UTC)
     price = base_price
     for i in range(n):
         # Deterministic drift: small uptrend with deterministic noise
         noise = ((i * 7 + 13) % 11 - 5) * 0.001
-        price *= (1 + 0.0003 + noise)
+        price *= 1 + 0.0003 + noise
         o = price * (1 + ((i * 3) % 7 - 3) * 0.001)
         h = max(o, price) * (1 + abs(noise) * 0.5)
         low = min(o, price) * (1 - abs(noise) * 0.5)
         vol = 500_000 + ((i * 17) % 100) * 10_000
-        bars.append(Bar(
-            symbol=symbol,
-            exchange=Exchange.NSE,
-            interval="1d",
-            open=round(o, 2),
-            high=round(h, 2),
-            low=round(low, 2),
-            close=round(price, 2),
-            volume=vol,
-            ts=ts + timedelta(days=i),
-        ))
+        bars.append(
+            Bar(
+                symbol=symbol,
+                exchange=Exchange.NSE,
+                interval="1d",
+                open=round(o, 2),
+                high=round(h, 2),
+                low=round(low, 2),
+                close=round(price, 2),
+                volume=vol,
+                ts=ts + timedelta(days=i),
+            )
+        )
     return bars
 
 
 # ════════════════════════════════════════════════════════════════════════
 # 1. Kelly Sizing — Fixed Bug Verification
 # ════════════════════════════════════════════════════════════════════════
+
 
 class TestKellySizing:
     """Verify Kelly criterion position sizing produces correct, bounded results."""
@@ -131,9 +127,7 @@ class TestKellySizing:
         # Even with Kelly dampening, the hard cap applies.
         # The key is that kelly_pct (8.33) gets clamped to max_position_pct (5.0).
         max_qty_at_cap = int(100_000 * 0.05 / 2500.0)  # 2
-        assert qty <= max_qty_at_cap, (
-            f"score=0.5 qty={qty} should not exceed max_position cap qty={max_qty_at_cap}"
-        )
+        assert qty <= max_qty_at_cap, f"score=0.5 qty={qty} should not exceed max_position cap qty={max_qty_at_cap}"
         assert qty > 0, "score=0.5 should still produce a position"
 
     def test_score_06_gets_appropriately_sized_position(self):
@@ -142,18 +136,14 @@ class TestKellySizing:
         assert qty > 0, "score=0.6 should produce a nonzero position"
         # Notional should be reasonable
         notional = qty * 2500.0
-        assert notional <= 100_000 * 0.05, (
-            f"Notional {notional} exceeds max_position_pct=5% of 100k"
-        )
+        assert notional <= 100_000 * 0.05, f"Notional {notional} exceeds max_position_pct=5% of 100k"
 
     def test_score_09_larger_than_score_06(self):
         """Higher score should produce equal or larger position than lower score."""
         # Use a larger max_position_pct so Kelly differences are visible
         qty_06 = self._allocate_single(score=0.6, max_position_pct=20.0, strategy_cap_pct=20.0)
         qty_09 = self._allocate_single(score=0.9, max_position_pct=20.0, strategy_cap_pct=20.0)
-        assert qty_09 >= qty_06, (
-            f"score=0.9 qty={qty_09} should be >= score=0.6 qty={qty_06}"
-        )
+        assert qty_09 >= qty_06, f"score=0.9 qty={qty_09} should be >= score=0.6 qty={qty_06}"
 
     def test_kelly_never_exceeds_max_position_pct(self):
         """No signal score should produce allocation exceeding max_position_pct."""
@@ -178,9 +168,7 @@ class TestKellySizing:
             max_allowed = 100_000 * 0.10  # max_position_pct is the outer bound
             strategy_cap_allowed = 100_000 * 0.03
             # Kelly should be min(kelly_pct, strategy_cap, max_position_pct)
-            assert notional <= max_allowed + 1, (
-                f"score={score}: notional {notional} exceeds max_position_pct"
-            )
+            assert notional <= max_allowed + 1, f"score={score}: notional {notional} exceeds max_position_pct"
 
     def test_kelly_disabled_uses_flat_allocation(self):
         """With use_kelly=False, allocation uses strategy_cap directly."""
@@ -209,6 +197,7 @@ class TestKellySizing:
 # 2. VaR Fallback — Fixed Bug Verification
 # ════════════════════════════════════════════════════════════════════════
 
+
 class TestVaRFallback:
     """Verify VaR falls back to cornish_fisher when other methods fail."""
 
@@ -236,9 +225,7 @@ class TestVaRFallback:
             result = var_calc.compute(positions, 100_000.0, method="monte_carlo")
 
         # Should have fallen back to cornish_fisher
-        assert result.method == "cornish_fisher", (
-            f"Expected cornish_fisher fallback, got {result.method}"
-        )
+        assert result.method == "cornish_fisher", f"Expected cornish_fisher fallback, got {result.method}"
         assert result.var_95 > 0, "VaR95 should be non-zero after fallback"
         assert result.var_99 > 0, "VaR99 should be non-zero after fallback"
 
@@ -250,9 +237,7 @@ class TestVaRFallback:
         result = var_calc.compute(positions, 100_000.0, method="cornish_fisher")
 
         assert result.var_95 > 0, f"VaR95 should be positive, got {result.var_95}"
-        assert result.var_99 > result.var_95, (
-            f"VaR99 ({result.var_99}) should exceed VaR95 ({result.var_95})"
-        )
+        assert result.var_99 > result.var_95, f"VaR99 ({result.var_99}) should exceed VaR95 ({result.var_95})"
         assert result.method == "cornish_fisher"
 
     def test_historical_falls_back_when_insufficient_data(self):
@@ -279,20 +264,17 @@ class TestVaRFallback:
 
         # Positive skew should increase the 95th percentile z-score (shifts right tail out)
         z_posskew = _cornish_fisher_z(Z_95, 0.5, 0.0)
-        assert z_posskew > Z_95, (
-            f"Positive skew should increase z-score: {z_posskew} vs {Z_95}"
-        )
+        assert z_posskew > Z_95, f"Positive skew should increase z-score: {z_posskew} vs {Z_95}"
 
         # Any nonzero skew or kurtosis should produce a different z from Gaussian
         z_adjusted = _cornish_fisher_z(Z_95, -0.5, 2.0)
-        assert z_adjusted != Z_95, (
-            f"CF with nonzero skew/kurt should differ from Gaussian: {z_adjusted}"
-        )
+        assert z_adjusted != Z_95, f"CF with nonzero skew/kurt should differ from Gaussian: {z_adjusted}"
 
 
 # ════════════════════════════════════════════════════════════════════════
 # 3. Daily PnL Persistence
 # ════════════════════════════════════════════════════════════════════════
+
 
 class TestDailyPnLPersistence:
     """Verify that register_pnl triggers state persistence and survives restart."""
@@ -302,8 +284,10 @@ class TestDailyPnLPersistence:
         state_file = tmp_path / "circuit_state.json"
 
         # Patch the module-level paths to use tmp_path
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", state_file):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", state_file),
+        ):
             rm = RiskManager(equity=100_000.0, load_persisted_state=False)
             rm.register_pnl(-500.0)
 
@@ -316,8 +300,10 @@ class TestDailyPnLPersistence:
         """Daily PnL should survive save-then-load cycle (simulated crash recovery)."""
         state_file = tmp_path / "circuit_state.json"
 
-        with patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path), \
-             patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", state_file):
+        with (
+            patch("src.risk_engine.manager._CIRCUIT_STATE_DIR", tmp_path),
+            patch("src.risk_engine.manager._CIRCUIT_STATE_PATH", state_file),
+        ):
             # Phase 1: original manager registers PnL
             rm1 = RiskManager(equity=100_000.0, load_persisted_state=False)
             rm1.register_pnl(-200.0)
@@ -326,9 +312,7 @@ class TestDailyPnLPersistence:
 
             # Phase 2: new manager loads persisted state (simulates restart)
             rm2 = RiskManager(equity=100_000.0, load_persisted_state=True)
-            assert rm2.daily_pnl == -500.0, (
-                f"Daily PnL not restored: expected -500, got {rm2.daily_pnl}"
-            )
+            assert rm2.daily_pnl == -500.0, f"Daily PnL not restored: expected -500, got {rm2.daily_pnl}"
             assert rm2._consecutive_losses == 2, (
                 f"Consecutive losses not restored: expected 2, got {rm2._consecutive_losses}"
             )
@@ -337,6 +321,7 @@ class TestDailyPnLPersistence:
 # ════════════════════════════════════════════════════════════════════════
 # 4. force_reduce Validation
 # ════════════════════════════════════════════════════════════════════════
+
 
 class TestForceReduceValidation:
     """Verify force_reduce=True requires is_reducing=True."""
@@ -370,9 +355,7 @@ class TestForceReduceValidation:
             is_reducing=True,
             force_reduce=True,
         )
-        assert result.allowed is True, (
-            f"force_reduce + is_reducing should bypass circuit: {result.reason}"
-        )
+        assert result.allowed is True, f"force_reduce + is_reducing should bypass circuit: {result.reason}"
 
     def test_non_force_reduce_blocked_by_circuit(self):
         """Normal orders should be blocked when circuit is open."""
@@ -388,6 +371,7 @@ class TestForceReduceValidation:
 # ════════════════════════════════════════════════════════════════════════
 # 5. Circuit Breaker Thread Safety
 # ════════════════════════════════════════════════════════════════════════
+
 
 class TestCircuitBreakerThreadSafety:
     """Verify concurrent allow_order() calls respect half_open_max_trades."""
@@ -421,9 +405,7 @@ class TestCircuitBreakerThreadSafety:
             t.join(timeout=5.0)
 
         allowed_count = sum(1 for r in results if r)
-        assert allowed_count == max_trades, (
-            f"Expected exactly {max_trades} allowed in HALF_OPEN, got {allowed_count}"
-        )
+        assert allowed_count == max_trades, f"Expected exactly {max_trades} allowed in HALF_OPEN, got {allowed_count}"
 
     def test_closed_state_allows_all_orders(self):
         """CLOSED state should allow all orders regardless of concurrency."""
@@ -463,6 +445,7 @@ class TestCircuitBreakerThreadSafety:
 # ════════════════════════════════════════════════════════════════════════
 # 6. Risk Limits Validation
 # ════════════════════════════════════════════════════════════════════════
+
 
 class TestRiskLimitsValidation:
     """Verify individual risk limit checks work correctly."""
@@ -549,6 +532,7 @@ class TestRiskLimitsValidation:
 # 7. End-to-End Signal Flow (integration)
 # ════════════════════════════════════════════════════════════════════════
 
+
 class TestEndToEndSignalFlow:
     """Integration: strategy -> allocator -> risk gate."""
 
@@ -567,12 +551,14 @@ class TestEndToEndSignalFlow:
         # Setup allocator: disable Kelly so that classical strategies (score~0.3) still
         # produce allocations. Kelly with score=0.3 yields kelly_full=0 which rounds to
         # zero shares at typical NSE prices.
-        allocator = PortfolioAllocator(AllocatorConfig(
-            max_active_signals=5,
-            max_capital_pct_per_signal=10.0,
-            min_confidence=0.1,
-            use_kelly=False,
-        ))
+        allocator = PortfolioAllocator(
+            AllocatorConfig(
+                max_active_signals=5,
+                max_capital_pct_per_signal=10.0,
+                min_confidence=0.1,
+                use_kelly=False,
+            )
+        )
 
         # Setup risk manager (permissive limits for integration test)
         limits = RiskLimits(
@@ -592,7 +578,7 @@ class TestEndToEndSignalFlow:
         total_rejected = 0
 
         for i in range(50, len(bars)):
-            window = bars[max(0, i - 100): i + 1]
+            window = bars[max(0, i - 100) : i + 1]
             state = MarketState(
                 symbol="RELIANCE",
                 exchange=Exchange.NSE,
@@ -622,9 +608,7 @@ class TestEndToEndSignalFlow:
                 else:
                     total_rejected += 1
 
-        assert total_approved > 0, (
-            "Pipeline should produce at least one approved order over 150 bars"
-        )
+        assert total_approved > 0, "Pipeline should produce at least one approved order over 150 bars"
 
     def test_oversized_allocation_rejected_by_risk(self):
         """An oversized allocation should be caught by risk manager."""
@@ -638,11 +622,13 @@ class TestEndToEndSignalFlow:
 
     def test_signal_quantity_pairs_are_valid(self):
         """All (signal, quantity) pairs from allocator should have positive values."""
-        allocator = PortfolioAllocator(AllocatorConfig(
-            max_active_signals=5,
-            max_capital_pct_per_signal=10.0,
-            min_confidence=0.3,
-        ))
+        allocator = PortfolioAllocator(
+            AllocatorConfig(
+                max_active_signals=5,
+                max_capital_pct_per_signal=10.0,
+                min_confidence=0.3,
+            )
+        )
 
         signals = [
             _make_signal(symbol="RELIANCE", score=0.8, price=2500.0, strategy_id="s1"),
@@ -673,9 +659,7 @@ class TestEndToEndSignalFlow:
 
         signal = _make_signal(score=0.8, price=2500.0)
         result = rm.can_place_order(signal, quantity=2, price=2500.0)
-        assert result.allowed is False, (
-            f"Should reject when daily loss exceeded: {result.reason}"
-        )
+        assert result.allowed is False, f"Should reject when daily loss exceeded: {result.reason}"
 
     def test_reducing_order_bypasses_daily_loss_check(self):
         """Reducing (exit) orders should bypass daily loss checks."""
@@ -686,12 +670,8 @@ class TestEndToEndSignalFlow:
         rm.register_pnl(-3_000.0)
 
         signal = _make_signal(score=0.8, price=2500.0)
-        result = rm.can_place_order(
-            signal, quantity=2, price=2500.0, is_reducing=True
-        )
-        assert result.allowed is True, (
-            f"Reducing order should bypass daily loss check: {result.reason}"
-        )
+        result = rm.can_place_order(signal, quantity=2, price=2500.0, is_reducing=True)
+        assert result.allowed is True, f"Reducing order should bypass daily loss check: {result.reason}"
 
     def test_empty_signals_produce_no_allocations(self):
         """Allocator should return empty list for empty signals."""

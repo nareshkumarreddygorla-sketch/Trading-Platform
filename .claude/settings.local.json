@@ -14,7 +14,28 @@
       "Bash(git add -A)",
       "Bash(git commit:*)",
       "Bash(git add src/api/routers/broker.py src/api/app.py src/execution/autonomous_loop.py src/strategy_engine/runner.py trading-ui/app/\\\\\\(dashboard\\\\\\)/broker/page.tsx trading-ui/lib/api/client.ts)",
-      "Bash(python -c \"from src.execution.order_entry.kill_switch import KillSwitch, KillReason, _MANUAL_DISARM_ONLY; print\\(''KillSwitch import OK''\\); print\\(''_MANUAL_DISARM_ONLY:'', _MANUAL_DISARM_ONLY\\)\")"
+      "Bash(python -c \"from src.execution.order_entry.kill_switch import KillSwitch, KillReason, _MANUAL_DISARM_ONLY; print\\(''KillSwitch import OK''\\); print\\(''_MANUAL_DISARM_ONLY:'', _MANUAL_DISARM_ONLY\\)\")",
+      "WebSearch",
+      "Bash(ls /Users/nishitareddy/Trading-Platform/trading-ui/app/\\\\\\(dashboard\\\\\\)/)",
+      "Bash(python -c \":*)",
+      "Bash(python -m json.tool)",
+      "Bash(__NEW_LINE_efcb2a4bc0fe5a93__ echo \"=== Simulation ===\")",
+      "Bash(curl -s -H \"Authorization: Bearer $TOKEN\" http://localhost:8000/api/v1/simulation/status)",
+      "Bash(__NEW_LINE_08fb82a1f2cb422f__ echo \"=== Data Quality ===\")",
+      "Bash(curl -s -H \"Authorization: Bearer $TOKEN\" http://localhost:8000/api/v1/data/quality)",
+      "Bash(__NEW_LINE_dd4a58e900908112__ echo \"=== Data Instrument Map ===\")",
+      "Bash(curl -s -H \"Authorization: Bearer $TOKEN\" http://localhost:8000/api/v1/data/instrument-map)",
+      "Bash(__NEW_LINE_1e130c05637b34dc__ echo \"=== Trading Mode ===\")",
+      "Bash(curl -s -H \"Authorization: Bearer $TOKEN\" http://localhost:8000/api/v1/trading/mode)",
+      "Bash(__NEW_LINE_1a7d5ae9dbed9850__ echo \"=== Strategies ===\")",
+      "Bash(curl -s -H \"Authorization: Bearer $TOKEN\" http://localhost:8000/api/v1/strategies)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f''Strategies: {len\\(d.get\\(\"\"strategies\"\",[]\\)\\)} registered''\\)\")",
+      "Bash(__NEW_LINE_97c4f849bc6bd20c__ echo \"=== Risk State ===\")",
+      "Bash(curl -s -H \"Authorization: Bearer $TOKEN\" http://localhost:8000/api/v1/risk/state)",
+      "Bash(xargs ls -lh)",
+      "Bash(grep -r \"class\\\\|def \" /Users/nishitareddy/Trading-Platform/src/api/lifespan/*.py)",
+      "Bash(grep -h \"^@router\\\\|^async def\\\\|^def \" /Users/nishitareddy/Trading-Platform/src/api/routers/*.py)",
+      "Bash(grep -n \"CRITICAL\\\\|TODO\\\\|FIXME\\\\|BUG\\\\|WARNING\" /Users/nishitareddy/Trading-Platform/src/ai/models/*.py)"
     ]
   }
 }

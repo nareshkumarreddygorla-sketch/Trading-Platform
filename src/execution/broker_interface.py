@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Type
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class BrokerInterface(ABC):
         side: str,
         quantity: float,
         order_type: str,
-        price: Optional[float] = None,
+        price: float | None = None,
         product_type: str = "INTRADAY",
         **kwargs: Any,
     ) -> dict:
@@ -176,10 +176,10 @@ class BrokerInterface(ABC):
 
 
 # Internal registry: broker_name (lower) -> gateway class
-_BROKER_REGISTRY: Dict[str, Type[BrokerInterface]] = {}
+_BROKER_REGISTRY: dict[str, type[BrokerInterface]] = {}
 
 
-def register_broker(name: str, cls: Type[BrokerInterface]) -> None:
+def register_broker(name: str, cls: type[BrokerInterface]) -> None:
     """Register a broker gateway class under *name* (case-insensitive)."""
     key = name.strip().lower()
     if key in _BROKER_REGISTRY:
@@ -205,16 +205,16 @@ class BrokerFactory:
 
     def __init__(self) -> None:
         # Instance-level overrides (take precedence over module-level registry)
-        self._local: Dict[str, Type[BrokerInterface]] = {}
+        self._local: dict[str, type[BrokerInterface]] = {}
 
     # -- registration -------------------------------------------------------
 
-    def register(self, name: str, cls: Type[BrokerInterface]) -> None:
+    def register(self, name: str, cls: type[BrokerInterface]) -> None:
         """Register a gateway class on this factory instance."""
         self._local[name.strip().lower()] = cls
 
     @staticmethod
-    def register_global(name: str, cls: Type[BrokerInterface]) -> None:
+    def register_global(name: str, cls: type[BrokerInterface]) -> None:
         """Register a gateway class globally (all factory instances see it)."""
         register_broker(name, cls)
 
@@ -242,13 +242,12 @@ class BrokerFactory:
         if cls is None:
             available = sorted(set(self._local) | set(_BROKER_REGISTRY))
             raise ValueError(
-                f"Unknown broker {broker_name!r}. "
-                f"Available: {', '.join(available) or '(none registered)'}"
+                f"Unknown broker {broker_name!r}. Available: {', '.join(available) or '(none registered)'}"
             )
         return cls(**config)
 
     # -- introspection ------------------------------------------------------
 
-    def available_brokers(self) -> List[str]:
+    def available_brokers(self) -> list[str]:
         """Return sorted list of registered broker names."""
         return sorted(set(self._local) | set(_BROKER_REGISTRY))

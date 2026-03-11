@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RetentionPolicy:
     """Configurable retention periods for each data type."""
+
     # Hot table retention (days)
     orders_hot_days: int = 90
     order_events_hot_days: int = 90
@@ -48,6 +49,7 @@ class RetentionPolicy:
 @dataclass
 class ArchivalResult:
     """Result of a single archival operation."""
+
     table_name: str
     rows_archived: int
     rows_deleted: int
@@ -67,7 +69,8 @@ class DataArchivalManager:
         self.policy = policy or RetentionPolicy()
         self.archive_dir = archive_dir or os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "data", "archive",
+            "data",
+            "archive",
         )
         os.makedirs(self.archive_dir, exist_ok=True)
         self._last_run: list[ArchivalResult] = []
@@ -78,6 +81,7 @@ class DataArchivalManager:
     def archive_orders(self, session) -> ArchivalResult:
         """Archive completed orders older than retention period."""
         import time
+
         start = time.time()
         cutoff = self._cutoff_date(self.policy.orders_hot_days)
         rows = 0
@@ -85,7 +89,7 @@ class DataArchivalManager:
             # Move to archive table
             result = session.execute(
                 session.bind.execute(
-                    f"""
+                    """
                     INSERT INTO orders_archive
                     SELECT * FROM orders
                     WHERE status IN ('FILLED', 'REJECTED', 'CANCELLED')
@@ -118,6 +122,7 @@ class DataArchivalManager:
     def cleanup_ohlcv(self, session) -> list[ArchivalResult]:
         """Clean up OHLCV bars beyond retention periods per interval."""
         import time
+
         results = []
         interval_days = {
             "1m": self.policy.ohlcv_1m_hot_days,
@@ -147,12 +152,15 @@ class DataArchivalManager:
                     session.rollback()
                 except Exception:
                     pass
-                results.append(ArchivalResult(f"ohlcv_{interval}", 0, 0, cutoff.isoformat(), time.time() - start, str(e)))
+                results.append(
+                    ArchivalResult(f"ohlcv_{interval}", 0, 0, cutoff.isoformat(), time.time() - start, str(e))
+                )
         return results
 
     def cleanup_risk_snapshots(self, session) -> ArchivalResult:
         """Delete old risk snapshots beyond retention."""
         import time
+
         start = time.time()
         cutoff = self._cutoff_date(self.policy.risk_snapshots_hot_days)
         try:
@@ -209,7 +217,9 @@ class DataArchivalManager:
 
         logger.info(
             "Archival cycle complete: archived=%d, deleted=%d, errors=%d",
-            total_archived, total_deleted, errors,
+            total_archived,
+            total_deleted,
+            errors,
         )
         return results
 
@@ -238,5 +248,7 @@ class DataArchivalManager:
                     "error": r.error,
                 }
                 for r in self._last_run
-            ] if self._last_run else None,
+            ]
+            if self._last_run
+            else None,
         }
