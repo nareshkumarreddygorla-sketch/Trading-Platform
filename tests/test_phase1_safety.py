@@ -517,6 +517,8 @@ class TestAuditTrailWriteThroughAndHashChain:
     def test_hash_chain_includes_previous_hash(self):
         """Each hash must include the previous hash as input, forming a chain.
         Changing one event should invalidate all subsequent hashes."""
+        import hmac as _hmac
+
         trail = SEBIAuditTrail()
 
         # Record 3 events and capture the chain
@@ -534,14 +536,15 @@ class TestAuditTrailWriteThroughAndHashChain:
             hashes.append(trail._last_hash)
 
         # Manually recompute hash for event[1] using the hash from event[0]
-        # to verify the chain dependency
+        # to verify the chain dependency (must match HMAC-SHA256 with details)
         prev_hash_for_event_1 = hashes[0]
         evt1 = events[1]
         payload = (
             f"{prev_hash_for_event_1}|{evt1.event_id}|"
-            f"{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}"
+            f"{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}|"
+            f"{json.dumps(evt1.details, sort_keys=True, default=str)}"
         )
-        expected_hash_1 = hashlib.sha256(payload.encode()).hexdigest()
+        expected_hash_1 = _hmac.new(trail._HMAC_KEY, payload.encode(), hashlib.sha256).hexdigest()
         assert hashes[1] == expected_hash_1, (
             "Hash for event[1] does not match manual recomputation -- chain does not include previous hash"
         )
@@ -551,13 +554,16 @@ class TestAuditTrailWriteThroughAndHashChain:
         evt2 = events[2]
         payload2 = (
             f"{prev_hash_for_event_2}|{evt2.event_id}|"
-            f"{evt2.timestamp.isoformat()}|{evt2.event_type.value}|{evt2.symbol}"
+            f"{evt2.timestamp.isoformat()}|{evt2.event_type.value}|{evt2.symbol}|"
+            f"{json.dumps(evt2.details, sort_keys=True, default=str)}"
         )
-        expected_hash_2 = hashlib.sha256(payload2.encode()).hexdigest()
+        expected_hash_2 = _hmac.new(trail._HMAC_KEY, payload2.encode(), hashlib.sha256).hexdigest()
         assert hashes[2] == expected_hash_2
 
     def test_hash_chain_genesis_for_first_event(self):
         """The first event in the chain should use 'genesis' as the previous hash."""
+        import hmac as _hmac
+
         trail = SEBIAuditTrail()
         evt = trail.record_signal(
             symbol="FIRST.NS",
@@ -567,15 +573,20 @@ class TestAuditTrailWriteThroughAndHashChain:
         )
         first_hash = trail._last_hash
 
-        # Manually compute with "genesis" as previous
-        payload = f"genesis|{evt.event_id}|{evt.timestamp.isoformat()}|{evt.event_type.value}|{evt.symbol}"
-        expected = hashlib.sha256(payload.encode()).hexdigest()
+        # Manually compute with "genesis" as previous (HMAC-SHA256 with details)
+        payload = (
+            f"genesis|{evt.event_id}|{evt.timestamp.isoformat()}|{evt.event_type.value}|{evt.symbol}|"
+            f"{json.dumps(evt.details, sort_keys=True, default=str)}"
+        )
+        expected = _hmac.new(trail._HMAC_KEY, payload.encode(), hashlib.sha256).hexdigest()
         assert first_hash == expected
 
     def test_tampering_detection_changing_event_invalidates_chain(self):
         """If we replay the chain computation with a modified event in the
         middle, the resulting hash will differ from the stored chain hash.
         This proves tamper detection works."""
+        import hmac as _hmac
+
         trail = SEBIAuditTrail()
 
         events = []
@@ -595,9 +606,10 @@ class TestAuditTrailWriteThroughAndHashChain:
         # Recompute what hash[0] WOULD be with a different symbol
         tampered_payload_0 = (
             f"genesis|{tampered_evt0.event_id}|"
-            f"{tampered_evt0.timestamp.isoformat()}|{tampered_evt0.event_type.value}|TAMPERED_SYMBOL"
+            f"{tampered_evt0.timestamp.isoformat()}|{tampered_evt0.event_type.value}|TAMPERED_SYMBOL|"
+            f"{json.dumps(tampered_evt0.details, sort_keys=True, default=str)}"
         )
-        tampered_hash_0 = hashlib.sha256(tampered_payload_0.encode()).hexdigest()
+        tampered_hash_0 = _hmac.new(trail._HMAC_KEY, tampered_payload_0.encode(), hashlib.sha256).hexdigest()
 
         # This tampered hash should differ from the real hash[0]
         assert tampered_hash_0 != hashes[0]
@@ -605,9 +617,10 @@ class TestAuditTrailWriteThroughAndHashChain:
         # Now recompute hash[1] using the tampered hash[0]
         evt1 = events[1]
         tampered_payload_1 = (
-            f"{tampered_hash_0}|{evt1.event_id}|{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}"
+            f"{tampered_hash_0}|{evt1.event_id}|{evt1.timestamp.isoformat()}|{evt1.event_type.value}|{evt1.symbol}|"
+            f"{json.dumps(evt1.details, sort_keys=True, default=str)}"
         )
-        tampered_hash_1 = hashlib.sha256(tampered_payload_1.encode()).hexdigest()
+        tampered_hash_1 = _hmac.new(trail._HMAC_KEY, tampered_payload_1.encode(), hashlib.sha256).hexdigest()
 
         # The cascaded hash for event[1] should now differ from the real chain
         assert tampered_hash_1 != hashes[1], "Tampering event[0] should cascade and invalidate event[1]'s hash"
