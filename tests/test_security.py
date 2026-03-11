@@ -560,5 +560,5 @@ class TestSecurityHeaders:
             resp = await client.get("/health")
         assert resp.headers.get("x-content-type-options") == "nosniff"
         assert resp.headers.get("x-frame-options") == "DENY"
-        assert resp.headers.get("x-xss-protection") == "1; mode=block"
+        # X-XSS-Protection intentionally omitted; CSP provides superior protection
         assert "strict-origin" in resp.headers.get("referrer-policy", "")
