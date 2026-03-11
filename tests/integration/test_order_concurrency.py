@@ -408,43 +408,43 @@ class TestReconciliation:
     @pytest.mark.asyncio
     async def test_detects_missing_broker_position(self):
         """Should detect position that exists locally but not at broker."""
-        from src.execution.reconciliation import BrokerReconciliator
+        from src.execution.reconciliation.reconciler import ReconciliationJob
 
         local_positions = [
             Position(symbol="RELIANCE", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=100, avg_price=2500.0),
         ]
-        broker_positions = []  # Empty - broker has nothing
 
-        reconciliator = BrokerReconciliator(
+        async def fetch_empty():
+            return []
+
+        job = ReconciliationJob(
+            fetch_broker_positions=fetch_empty,
             get_local_positions=lambda: local_positions,
-            get_broker_positions=lambda: broker_positions,
         )
 
-        report = await reconciliator.reconcile()
-        assert len(report.discrepancies) > 0
-        assert report.discrepancies[0].discrepancy_type == "missing_broker"
-        assert report.status in ("warning", "critical")
+        report = await job.run()
+        assert not report.in_sync
+        assert len(report.mismatches) > 0
 
     @pytest.mark.asyncio
     async def test_no_discrepancy_when_matched(self):
         """Should report ok when positions match."""
-        from src.execution.reconciliation import BrokerReconciliator
+        from src.execution.reconciliation.reconciler import ReconciliationJob
 
         local_positions = [
             Position(symbol="RELIANCE", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=100, avg_price=2500.0),
         ]
-        broker_positions = [
-            {"symbol": "RELIANCE", "exchange": "NSE", "side": "BUY", "quantity": 100, "avg_price": 2500.0},
-        ]
 
-        reconciliator = BrokerReconciliator(
+        async def fetch_matching():
+            return [{"symbol": "RELIANCE", "exchange": "NSE", "side": "BUY", "quantity": 100, "avg_price": 2500.0}]
+
+        job = ReconciliationJob(
+            fetch_broker_positions=fetch_matching,
             get_local_positions=lambda: local_positions,
-            get_broker_positions=lambda: broker_positions,
         )
 
-        report = await reconciliator.reconcile()
-        assert report.matched == 1
-        assert report.status == "ok"
+        report = await job.run()
+        assert report.in_sync
 
 
 class TestDatabaseHealth:
