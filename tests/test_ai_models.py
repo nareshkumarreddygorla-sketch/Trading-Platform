@@ -129,6 +129,9 @@ class TestPredictionOutput:
         assert po.metadata == {}
 
     def test_equality(self):
+        from datetime import UTC, datetime
+
+        ts = datetime.now(UTC)
         a = PredictionOutput(
             prob_up=0.5,
             expected_return=0.0,
@@ -136,6 +139,7 @@ class TestPredictionOutput:
             model_id="x",
             version="v1",
             metadata={},
+            timestamp=ts,
         )
         b = PredictionOutput(
             prob_up=0.5,
@@ -144,6 +148,7 @@ class TestPredictionOutput:
             model_id="x",
             version="v1",
             metadata={},
+            timestamp=ts,
         )
         assert a == b
 

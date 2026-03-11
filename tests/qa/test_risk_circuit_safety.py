@@ -68,7 +68,7 @@ def test_var_breach_rejects_no_reservation_leak():
 async def test_cluster_reservation_overflow_max_5_broker_calls():
     """Set max_open_positions=5; submit 10 concurrent; expect at most 5 broker calls."""
     limits = RiskLimits(max_open_positions=5, max_position_pct=10.0)
-    risk_manager = RiskManager(equity=1_000_000.0, limits=limits)
+    risk_manager = RiskManager(equity=1_000_000.0, limits=limits, load_persisted_state=False)
     gateway = MagicMock(spec=AngelOneExecutionGateway)
     gateway.place_order = AsyncMock(
         return_value=Order(

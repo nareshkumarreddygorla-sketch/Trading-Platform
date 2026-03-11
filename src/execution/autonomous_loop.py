@@ -717,17 +717,25 @@ class AutonomousLoop:
                         end_min = now_ist.minute if end_hour < 15 else 15
                         end_hhmm = f"{end_hour:02d}:{end_min:02d}"
                     if end_hhmm <= start_hhmm:
+                        # Market window too small for VWAP — fall back to direct
                         algo_type = "direct"
-                    config = VWAPConfig(
-                        total_quantity=qty,
-                        symbol=signal.symbol,
-                        side=signal.side.value,
-                        exchange=exchange_str,
-                        start_time=start_hhmm,
-                        end_time=end_hhmm,
-                    )
-                    execution = algo.create_schedule(config)
-                    await algo.execute(execution, get_market_price=self._get_market_price)
+                        logger.info(
+                            "VWAP schedule invalid (end=%s <= start=%s) — falling back to direct for %s",
+                            end_hhmm,
+                            start_hhmm,
+                            signal.symbol,
+                        )
+                    else:
+                        config = VWAPConfig(
+                            total_quantity=qty,
+                            symbol=signal.symbol,
+                            side=signal.side.value,
+                            exchange=exchange_str,
+                            start_time=start_hhmm,
+                            end_time=end_hhmm,
+                        )
+                        execution = algo.create_schedule(config)
+                        await algo.execute(execution, get_market_price=self._get_market_price)
 
                 # Broadcast algo completion
                 await self._broadcast(
@@ -2097,24 +2105,18 @@ class AutonomousLoop:
                             if side == "BUY"
                             else (entry - current_price) * trade["qty"]
                         )
-                        # Delegate PnL to RiskManager (single source of truth)
-                        self._register_pnl(pnl)
-
-                        if self.performance_tracker:
-                            try:
-                                self.performance_tracker.record_fill(trade.get("strategy_id") or "unknown", pnl)
-                            except Exception as e:
-                                logger.debug("Performance tracker record_fill failed: %s", e)
+                        # NOTE: PnL is NOT registered here. It is deferred to Phase 2
+                        # after the close order is confirmed, to prevent counting PnL
+                        # for positions that fail to close.
 
                         logger.info(
-                            "%s hit for %s %s: entry=%.2f exit=%.2f PnL=%.2f daily_total=%.2f",
+                            "%s hit for %s %s: entry=%.2f exit=%.2f estimated_PnL=%.2f",
                             reason,
                             side,
                             symbol,
                             entry,
                             current_price,
                             pnl,
-                            self._get_daily_pnl(),
                         )
                         to_close.append((trade_key, symbol, trade, current_price, reason, pnl))
                 except Exception as e:
@@ -2164,8 +2166,15 @@ class AutonomousLoop:
             try:
                 result = await self.submit_order_fn(req)
                 if result.success:
+                    # Register PnL only after close order is accepted
+                    self._register_pnl(pnl)
+                    if self.performance_tracker:
+                        try:
+                            self.performance_tracker.record_fill(trade.get("strategy_id") or "unknown", pnl)
+                        except Exception as e:
+                            logger.debug("Performance tracker record_fill failed: %s", e)
                     logger.info(
-                        "%s close order submitted: order_id=%s %s %s qty=%d exit=%.2f pnl=%.2f",
+                        "%s close order submitted: order_id=%s %s %s qty=%d exit=%.2f pnl=%.2f daily_total=%.2f",
                         reason,
                         result.order_id,
                         close_side.value,
@@ -2173,16 +2182,24 @@ class AutonomousLoop:
                         trade["qty"],
                         exit_price,
                         pnl,
+                        self._get_daily_pnl(),
                     )
                 else:
                     logger.warning(
-                        "%s close order rejected for %s: %s — removing from tracking anyway",
+                        "%s close order rejected for %s: %s — keeping trade open for retry",
                         reason,
                         symbol,
                         result.reject_reason,
                     )
+                    continue  # Don't remove trade — position is still open
             except Exception as e:
-                logger.exception("%s close order submit failed for %s: %s — removing from tracking", reason, symbol, e)
+                logger.exception(
+                    "%s close order submit failed for %s: %s — keeping trade open for retry",
+                    reason,
+                    symbol,
+                    e,
+                )
+                continue  # Don't remove trade — position is still open
 
             # Broadcast trade closed event
             await self._broadcast(
@@ -2239,9 +2256,13 @@ class AutonomousLoop:
         if not self._open_trades or not self.get_bars:
             return
 
+        # Snapshot under lock to avoid mutation during iteration
+        async with self._open_trades_lock:
+            trades_snapshot = list(self._open_trades.items())
+
         total_unrealized = 0.0
         open_positions = []
-        for trade_key, trade in list(self._open_trades.items()):
+        for trade_key, trade in trades_snapshot:
             symbol = trade.get("symbol") or trade_key.split(":")[0]
             try:
                 trade_exchange = (

@@ -165,6 +165,8 @@ class BrokerReconciliator:
         # Get positions from both sources
         try:
             local_raw = self._get_local() if self._get_local else []
+            if hasattr(local_raw, "__await__"):
+                local_raw = await asyncio.wait_for(local_raw, timeout=30.0)
             if not isinstance(local_raw, list):
                 local_raw = list(local_raw)
         except Exception as e:

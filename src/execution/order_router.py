@@ -675,9 +675,14 @@ class OrderRouter:
         order_type: OrderType,
         price: float | None,
     ) -> Order:
-        """Submit child orders with 1 s delay between them. Return first order as parent."""
+        """Submit child orders with 1 s delay between them. Return first order as parent.
+
+        On partial failure, attempts to cancel all previously successful children
+        to prevent orphaned orders living at the broker but invisible to the caller.
+        """
         exchange = signal.exchange.value
         parent_order: Order | None = None
+        successful_children: list[Order] = []
 
         for i, qty in enumerate(quantities):
             if qty <= 0:
@@ -685,13 +690,44 @@ class OrderRouter:
             if i > 0:
                 await asyncio.sleep(1.0)  # Rate limit between child orders
 
-            order = await self._route_and_place(
-                signal=signal,
-                exchange=exchange,
-                quantity=qty,
-                order_type=order_type,
-                price=price,
-            )
+            try:
+                order = await self._route_and_place(
+                    signal=signal,
+                    exchange=exchange,
+                    quantity=qty,
+                    order_type=order_type,
+                    price=price,
+                )
+            except Exception as child_err:
+                logger.error(
+                    "Split child %d/%d failed for %s: %s — cancelling %d prior children",
+                    i + 1,
+                    len(quantities),
+                    signal.symbol,
+                    child_err,
+                    len(successful_children),
+                )
+                # Best-effort cancel of already-submitted children
+                for prev_order in successful_children:
+                    try:
+                        gw = self._broker_manager.route_exchange(exchange)
+                        if gw is not None:
+                            await gw.cancel_order(prev_order.order_id)
+                            logger.info(
+                                "Cancelled orphaned split child: order_id=%s",
+                                prev_order.order_id,
+                            )
+                    except Exception as cancel_err:
+                        logger.warning(
+                            "Failed to cancel orphaned split child %s: %s",
+                            prev_order.order_id,
+                            cancel_err,
+                        )
+                raise RuntimeError(
+                    f"Split order child {i + 1}/{len(quantities)} failed for {signal.symbol}: {child_err}"
+                ) from child_err
+
+            successful_children.append(order)
             if parent_order is None:
                 parent_order = order
             logger.info(

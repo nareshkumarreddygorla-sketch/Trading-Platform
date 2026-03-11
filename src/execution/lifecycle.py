@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from src.core.events import Order, OrderStatus
@@ -132,11 +133,20 @@ class OrderLifecycle:
             self._placed_at[str(oid)] = order.ts if order.ts else datetime.now(UTC)
         logger.info("OrderLifecycle loaded %d active orders for recovery", len(orders))
 
-    async def sweep_stale_orders(self, max_age_seconds: float = 300.0) -> list[str]:
+    async def sweep_stale_orders(
+        self,
+        max_age_seconds: float = 300.0,
+        broker_cancel_fn: Callable[[str, str], Awaitable[None]] | None = None,
+    ) -> list[str]:
         """Cancel orders that have been PENDING for longer than max_age_seconds.
-        Returns list of cancelled order IDs (phantom order protection)."""
+
+        Returns list of cancelled order IDs (phantom order protection).
+        If *broker_cancel_fn(order_id, exchange)* is provided, also attempts to
+        cancel each stale order at the broker to prevent ghost fills.
+        """
         now = datetime.now(UTC)
         stale_ids: list[str] = []
+        stale_orders: list[Order] = []
         async with self._lock:
             for oid, order in list(self._orders.items()):
                 if order.status not in ACTIVE_STATUSES:
@@ -148,6 +158,7 @@ class OrderLifecycle:
                 if age > max_age_seconds:
                     order.status = OrderStatus.CANCELLED
                     stale_ids.append(oid)
+                    stale_orders.append(order)
                     logger.warning(
                         "Stale order sweep: cancelled %s (age=%.0fs, status=%s, symbol=%s)",
                         oid,
@@ -155,6 +166,24 @@ class OrderLifecycle:
                         order.status.value,
                         order.symbol,
                     )
+
+        # Attempt broker-side cancellation outside the lock
+        for order in stale_orders:
+            if broker_cancel_fn is not None:
+                try:
+                    await broker_cancel_fn(order.order_id, getattr(order, "exchange", ""))
+                    logger.info("Broker cancel sent for stale order %s", order.order_id)
+                except Exception as e:
+                    logger.warning(
+                        "Broker cancel failed for stale order %s: %s — may result in ghost fill",
+                        order.order_id,
+                        e,
+                    )
+            else:
+                logger.warning(
+                    "No broker_cancel_fn: stale order %s cancelled locally only — ghost fill risk",
+                    order.order_id,
+                )
         return stale_ids
 
     def list_recent(self, limit: int = 100) -> list[Order]:

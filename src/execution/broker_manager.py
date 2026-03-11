@@ -160,6 +160,9 @@ class BrokerManager:
                             "reason": primary_err_reason,
                         }
                     )
+                    # Cap history to prevent unbounded memory growth
+                    if len(self._failover_history) > 100:
+                        self._failover_history = self._failover_history[-50:]
                     logger.info(
                         "Failover success: %s → %s for %s",
                         primary_gw.broker_type.value,
