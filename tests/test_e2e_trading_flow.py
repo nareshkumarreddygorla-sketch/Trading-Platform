@@ -20,6 +20,7 @@ from httpx import ASGITransport, AsyncClient
 os.environ["JWT_SECRET"] = "test-secret-minimum-32-characters-long!!"
 os.environ["AUTH_USERNAME"] = "testadmin"
 os.environ["AUTH_PASSWORD"] = "TestP@ss2026!!"
+os.environ["AUTH_ADMIN"] = "1"  # Grant admin role so admin-protected endpoints work
 os.environ["EXEC_PAPER"] = "true"
 os.environ["ENV"] = "development"
 
