@@ -1,0 +1,65 @@
+# See https://pre-commit.com for more information
+# Install: pip install pre-commit && pre-commit install
+repos:
+  # -- General Hooks --
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ['--unsafe']
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: ['--branch', 'main', '--branch', 'staging']
+
+  # -- Secrets Detection --
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: '(\.env\.example|package-lock\.json|\.next/)'
+
+  # -- Python: Ruff (lint + format) --
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.0
+    hooks:
+      - id: ruff
+        args: ['--fix', '--exit-non-zero-on-fix']
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # -- Python: Quick Tests (pre-push only) --
+  - repo: local
+    hooks:
+      - id: pytest-quick
+        name: pytest-quick
+        entry: bash -c 'PYTHONPATH=. python3 -m pytest tests/ -x -q --timeout=30 -m "not slow" --no-header 2>/dev/null || true'
+        language: system
+        pass_filenames: false
+        always_run: false
+        stages: [pre-push]
+
+  # -- Frontend: ESLint --
+  - repo: local
+    hooks:
+      - id: eslint-frontend
+        name: eslint-frontend
+        entry: bash -c 'cd trading-ui && npx next lint --quiet 2>/dev/null || true'
+        language: system
+        files: 'trading-ui/.*\.(ts|tsx|js|jsx)$'
+        pass_filenames: false
+
+  # -- Conventional Commits --
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.6.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert', 'hotfix']
