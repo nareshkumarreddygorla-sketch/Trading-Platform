@@ -389,6 +389,11 @@ class TestCircuitBreakerThreadSafety:
         cb.reset(current_equity=100_000.0)
         assert cb.state == CircuitState.HALF_OPEN
 
+        # Disable auto-promotion so allow_order() tests pure HALF_OPEN limiting.
+        # Without this, after max_trades succeed the next call promotes to CLOSED
+        # and allows all subsequent orders (by design — OR condition for promotion).
+        cb.check_half_open_promotion = lambda: None
+
         max_trades = cb._half_open_max_trades  # default is 3
         results = []
         barrier = threading.Barrier(20)
