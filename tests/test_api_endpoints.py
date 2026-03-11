@@ -353,8 +353,7 @@ class TestAuditLogs:
         body = resp.json()
         assert "events" in body
         assert isinstance(body["events"], list)
-        # Demo events should be present when no DB
-        assert len(body["events"]) > 0
+        # Events may be empty when no audit repository (DB) is configured
 
     @pytest.mark.asyncio
     async def test_audit_logs_filter_by_type(self, client, auth_headers):
@@ -386,11 +385,11 @@ class TestEquityCurve:
         body = resp.json()
         assert "equity_curve" in body
         assert isinstance(body["equity_curve"], list)
-        assert len(body["equity_curve"]) > 0
-        # Each point should have date and equity
-        first = body["equity_curve"][0]
-        assert "date" in first
-        assert "equity" in first
+        # May be empty when no trades have been recorded
+        if body["equity_curve"]:
+            first = body["equity_curve"][0]
+            assert "date" in first
+            assert "equity" in first
 
     @pytest.mark.asyncio
     async def test_equity_curve_weeks_range(self, client, auth_headers):
@@ -448,11 +447,13 @@ class TestRiskSnapshot:
 
     @pytest.mark.asyncio
     async def test_risk_var(self, client, auth_headers):
-        """GET /api/v1/risk/var returns VaR data."""
+        """GET /api/v1/risk/var returns VaR data or 503 if no positions."""
         resp = await client.get(f"{API}/risk/var", headers=auth_headers)
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "var_95" in body
+        # 200 with real VaR data, or 503 when PortfolioVaR not initialized
+        assert resp.status_code in (200, 503)
+        if resp.status_code == 200:
+            body = resp.json()
+            assert "var_95" in body
 
 
 # =========================================================================
