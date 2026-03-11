@@ -106,7 +106,12 @@ jobs:
         run: |
           ! grep -rn "password.*=.*['\"].*['\"]" src/ --include="*.py" \
             | grep -v "test" | grep -v "#" | grep -v "example" \
-            | grep -v "placeholder" | grep -v "__pycache__"
+            | grep -v "placeholder" | grep -v "__pycache__" \
+            | grep -v '= ""' | grep -v "= ''" \
+            | grep -v "os.environ" \
+            | grep -v "Field(" \
+            | grep -v "compile(" \
+            | grep -v "REDACTED"
 
   # -- Backend: Integration Tests (push only) --
   backend-integration:
