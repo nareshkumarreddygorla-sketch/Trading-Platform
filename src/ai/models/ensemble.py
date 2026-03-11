@@ -616,10 +616,17 @@ class EnsembleEngine:
         prob_up = 0.0
         exp_ret = 0.0
         conf = 0.0
+        # Determine if we have any configured weights.
+        # If self.weights is empty (no explicit weights, no IC data, Redis unavailable),
+        # fall back to equal weighting (1.0 per model).
+        use_equal_weights = not self.weights
         for p in predictions:
-            # Default to 0.0 for unregistered models (not 1.0) to prevent
-            # unknown models from dominating the ensemble
-            w = self.weights.get(p.model_id, 0.0)
+            if use_equal_weights:
+                w = 1.0  # Equal weight fallback — no IC data or explicit weights
+            else:
+                # Default to 0.0 for unregistered models (not 1.0) to prevent
+                # unknown models from dominating the ensemble
+                w = self.weights.get(p.model_id, 0.0)
             total_weight += w
             prob_up += p.prob_up * w
             exp_ret += p.expected_return * w
