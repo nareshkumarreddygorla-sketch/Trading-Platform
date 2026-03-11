@@ -98,7 +98,7 @@ def kelly_fraction(returns: np.ndarray, fraction: float = 0.25) -> float:
     if len(returns) < 2:
         return 0.0
     mu = np.mean(returns)
-    var = np.var(returns)
+    var = np.var(returns, ddof=1)  # sample variance, consistent with other metrics
     if var < 1e-12:
         return 0.0
     f = mu / (var + 1e-12)

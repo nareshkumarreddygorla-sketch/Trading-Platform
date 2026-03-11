@@ -119,8 +119,8 @@ class RiskManager:
                 self._consecutive_losses += 1
             elif pnl > 0:
                 self._consecutive_losses = 0
-        # Persist daily PnL to survive crashes
-        self._save_circuit_state("pnl_update")
+            # Persist inside lock for consistent state snapshot
+            self._save_circuit_state("pnl_update")
 
     def reset_daily_pnl(self) -> None:
         """Reset daily P&L at start of new trading day."""
@@ -200,7 +200,7 @@ class RiskManager:
                     if not (p.symbol == symbol and getattr(p.exchange, "value", "") == exch_str)
                 ]
 
-    def open_circuit(self, reason: str = "manual") -> None:
+    def open_circuit(self, reason: str = "unspecified") -> None:
         self._circuit_open = True
         logger.warning("Risk circuit breaker OPEN: new orders blocked (reason=%s)", reason)
         self._save_circuit_state(reason)
@@ -339,21 +339,21 @@ class RiskManager:
         return dd >= self.limits.circuit_breaker_drawdown_pct
 
     def _position_notional_by_symbol(self) -> dict[str, float]:
-        """Symbol -> total notional (quantity * avg_price) across positions."""
+        """Symbol -> total gross notional (abs(quantity * avg_price)) across positions."""
         out: dict[str, float] = {}
         with self._positions_lock:
             for p in list(self.positions):
-                notional = p.quantity * (p.avg_price or 0)
+                notional = abs(p.quantity * (p.avg_price or 0))
                 out[p.symbol] = out.get(p.symbol, 0) + notional
         return out
 
     def _position_notional_by_sector(self) -> dict[str, float]:
-        """Sector -> total notional."""
+        """Sector -> total gross notional."""
         out: dict[str, float] = {}
         with self._positions_lock:
             for p in list(self.positions):
                 sec = self._sector(p.symbol)
-                notional = p.quantity * (p.avg_price or 0)
+                notional = abs(p.quantity * (p.avg_price or 0))
                 out[sec] = out.get(sec, 0) + notional
         return out
 
@@ -410,10 +410,14 @@ class RiskManager:
                         return LimitCheckResult(False, f"intraday_rolling_loss: {drawdown_in_window:.0f} in 60min")
         with self._positions_lock:
             positions_snapshot = list(self.positions)
-        r = self.limits.check_open_positions(len(positions_snapshot))
-        if not r.allowed:
-            logger.warning("Order rejected: %s (symbol=%s qty=%s price=%s)", r.reason, signal.symbol, quantity, price)
-            return r
+        # Skip open-positions check for reducing orders: we always want to allow exits
+        if not is_reducing and not force_reduce:
+            r = self.limits.check_open_positions(len(positions_snapshot))
+            if not r.allowed:
+                logger.warning(
+                    "Order rejected: %s (symbol=%s qty=%s price=%s)", r.reason, signal.symbol, quantity, price
+                )
+                return r
         position_value = quantity * price
         r = self.limits.check_position_size(eff_equity, position_value)
         if not r.allowed:
@@ -437,10 +441,11 @@ class RiskManager:
                 return r
 
         # Compute notional maps from the snapshot to avoid re-acquiring _positions_lock
+        # Use abs() for gross exposure: both long and short positions count toward limits
         by_sym: dict[str, float] = {}
         by_sec: dict[str, float] = {}
         for p in positions_snapshot:
-            notional = p.quantity * (p.avg_price or 0)
+            notional = abs(p.quantity * (p.avg_price or 0))
             by_sym[p.symbol] = by_sym.get(p.symbol, 0) + notional
             sec = self._sector(p.symbol)
             by_sec[sec] = by_sec.get(sec, 0) + notional

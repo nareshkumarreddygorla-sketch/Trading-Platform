@@ -51,12 +51,18 @@ class CircuitBreaker:
         self._last_force_reset_ts: datetime | None = None
 
     def update_equity(self, current_equity: float) -> None:
-        self._peak_equity = max(self._peak_equity, current_equity)
-        if self.risk_manager.check_drawdown(self._peak_equity, current_equity):
-            self.trip()
+        with self._lock:
+            self._peak_equity = max(self._peak_equity, current_equity)
+            if self.risk_manager.check_drawdown(self._peak_equity, current_equity):
+                self._trip_locked()
 
     def trip(self) -> None:
-        """Open circuit and optionally flatten."""
+        """Open circuit and optionally flatten. Thread-safe."""
+        with self._lock:
+            self._trip_locked()
+
+    def _trip_locked(self) -> None:
+        """Internal trip — caller must hold self._lock."""
         if self._state == CircuitState.OPEN:
             return
         self._state = CircuitState.OPEN
@@ -70,15 +76,16 @@ class CircuitBreaker:
     def reset(self, current_equity: float | None = None) -> None:
         """Reset to HALF_OPEN first (ramp-up). Full close after observation period.
         Prevents immediate re-entry at 100% after a loss event."""
-        self._state = CircuitState.HALF_OPEN
-        self._half_open_ts = datetime.now(UTC)
-        self._half_open_trade_count = 0
-        # Set exposure multiplier to 50% during ramp-up
-        self.risk_manager.set_exposure_multiplier(0.5)
-        if current_equity is not None:
-            self._peak_equity = float(current_equity)
-        else:
-            self._peak_equity = float(self.risk_manager.equity)
+        with self._lock:
+            self._state = CircuitState.HALF_OPEN
+            self._half_open_ts = datetime.now(UTC)
+            self._half_open_trade_count = 0
+            # Set exposure multiplier to 50% during ramp-up
+            self.risk_manager.set_exposure_multiplier(0.5)
+            if current_equity is not None:
+                self._peak_equity = float(current_equity)
+            else:
+                self._peak_equity = float(self.risk_manager.equity)
         logger.info(
             "Circuit breaker HALF-OPEN: ramp-up mode (50%% exposure, max %d trades, %ds observation)",
             self._half_open_max_trades,
@@ -86,20 +93,27 @@ class CircuitBreaker:
         )
 
     def check_half_open_promotion(self) -> None:
-        """Promote HALF_OPEN to CLOSED after successful observation period."""
+        """Promote HALF_OPEN to CLOSED after observation period OR sufficient trades.
+
+        Uses OR condition to prevent getting stuck in HALF_OPEN during low-volume
+        periods where fewer than max_trades arrive before the observation period.
+        """
         if self._state != CircuitState.HALF_OPEN:
             return
         if self._half_open_ts is None:
             return
         elapsed = (datetime.now(UTC) - self._half_open_ts).total_seconds()
-        if elapsed >= self._half_open_observation_secs and self._half_open_trade_count >= self._half_open_max_trades:
+        time_ok = elapsed >= self._half_open_observation_secs
+        trades_ok = self._half_open_trade_count >= self._half_open_max_trades
+        if time_ok or trades_ok:
             self._state = CircuitState.CLOSED
             self.risk_manager.set_exposure_multiplier(1.0)
             self.risk_manager.close_circuit()
             logger.info(
-                "Circuit breaker CLOSED: ramp-up complete (%.0fs elapsed, %d trades)",
+                "Circuit breaker CLOSED: ramp-up complete (%.0fs elapsed, %d trades, promoted_by=%s)",
                 elapsed,
                 self._half_open_trade_count,
+                "time" if time_ok else "trades",
             )
             if self.on_close:
                 self.on_close()
@@ -112,27 +126,29 @@ class CircuitBreaker:
         """
         now = datetime.now(UTC)
 
-        # Enforce minimum cooldown between force resets
-        if self._last_force_reset_ts is not None:
-            elapsed = now - self._last_force_reset_ts
-            if elapsed < _FORCE_RESET_COOLDOWN:
-                remaining = (_FORCE_RESET_COOLDOWN - elapsed).total_seconds()
-                logger.warning(
-                    "AUDIT | force_reset REJECTED — cooldown active. "
-                    "Last reset: %s, remaining: %.0fs. Previous state: %s",
-                    self._last_force_reset_ts.isoformat(),
-                    remaining,
-                    self._state.value,
-                )
-                return
+        with self._lock:
+            # Enforce minimum cooldown between force resets
+            if self._last_force_reset_ts is not None:
+                elapsed = now - self._last_force_reset_ts
+                if elapsed < _FORCE_RESET_COOLDOWN:
+                    remaining = (_FORCE_RESET_COOLDOWN - elapsed).total_seconds()
+                    logger.warning(
+                        "AUDIT | force_reset REJECTED — cooldown active. "
+                        "Last reset: %s, remaining: %.0fs. Previous state: %s",
+                        self._last_force_reset_ts.isoformat(),
+                        remaining,
+                        self._state.value,
+                    )
+                    return
 
-        previous_state = self._state
-        self._state = CircuitState.CLOSED
-        self.risk_manager.set_exposure_multiplier(1.0)
-        self.risk_manager.close_circuit()
-        if current_equity is not None:
-            self._peak_equity = float(current_equity)
-        self._last_force_reset_ts = now
+            previous_state = self._state
+            self._state = CircuitState.CLOSED
+            self.risk_manager.set_exposure_multiplier(1.0)
+            self.risk_manager.close_circuit()
+            if current_equity is not None:
+                self._peak_equity = float(current_equity)
+            self._last_force_reset_ts = now
+
         if self.on_close:
             self.on_close()
         logger.warning(
