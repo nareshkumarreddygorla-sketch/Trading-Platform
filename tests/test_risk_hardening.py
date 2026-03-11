@@ -64,16 +64,17 @@ def test_sector_breach_rejection(limits):
     assert "sector" in r.reason.lower()
 
 
-def test_var_breach_rejection(limits):
-    """Order rejected when VaR (notional) exposure would exceed limit."""
-    limits.var_limit_pct = 30.0
-    limits.max_sector_concentration_pct = 100.0  # so VaR check triggers first
+def test_leverage_breach_rejection(limits):
+    """Order rejected when total notional exposure exceeds leverage limit (200% of equity)."""
+    limits.max_sector_concentration_pct = 100.0
     limits.max_open_positions = 10
+    limits.max_position_pct = 100.0  # allow large positions
+    limits.max_per_symbol_pct = 100.0
     rm = RiskManager(equity=100_000.0, limits=limits)
     rm.positions = [
-        Position(symbol="X", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=500, avg_price=50, strategy_id="s1"),
+        Position(symbol="X", exchange=Exchange.NSE, side=SignalSide.BUY, quantity=1500, avg_price=100, strategy_id="s1"),
     ]
-    # 25k notional. Add 10k -> 35k = 35% > 30%
+    # 150k notional existing. Add 60k -> 210k = 210% > 200% leverage limit
     sig = Signal(
         strategy_id="s1",
         symbol="Y",
@@ -83,9 +84,9 @@ def test_var_breach_rejection(limits):
         portfolio_weight=0.1,
         price=100.0,
     )
-    r = rm.can_place_order(sig, 100, 100.0)
+    r = rm.can_place_order(sig, 600, 100.0)
     assert not r.allowed
-    assert "var" in r.reason.lower() or "exposure" in r.reason.lower()
+    assert "leverage" in r.reason.lower()
 
 
 def test_consecutive_loss_disable(limits):
