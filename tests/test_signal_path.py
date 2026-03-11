@@ -159,16 +159,15 @@ class TestXGBPredictor:
         assert out.model_id == "xgb_direction"
 
     def test_predict_without_model_returns_neutral(self):
-        """XGBPredictor with no model should return confidence=0."""
+        """XGBPredictor with no model should return None (no model loaded)."""
         from src.ai.models.xgb_predictor import XGBPredictor
 
         predictor = XGBPredictor(model=None)
         features = {k: 0.0 for k in FEATURE_KEYS}
         out = predictor.predict(features)
 
-        assert out.prob_up == 0.5
-        assert out.confidence == 0.0
-        assert out.metadata.get("reason") == "not_loaded"
+        # Predictors return None when no model is loaded
+        assert out is None
 
 
 # ---------------------------------------------------------------------------
