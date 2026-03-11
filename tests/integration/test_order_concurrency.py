@@ -18,7 +18,7 @@ import pytest
 
 from src.core.events import Exchange, Order, OrderStatus, OrderType, Position, Signal, SignalSide
 from src.execution.order_entry.idempotency import IdempotencyStore
-from src.execution.order_entry.kill_switch import KillSwitch
+from src.execution.order_entry.kill_switch import KillReason, KillSwitch
 from src.execution.order_entry.request import OrderEntryRequest
 from src.execution.order_entry.reservation import ExposureReservation
 from src.execution.order_entry.service import OrderEntryService
@@ -81,8 +81,15 @@ def idempotency_store():
 
 
 @pytest.fixture
-def kill_switch():
-    return KillSwitch()
+def kill_switch(tmp_path):
+    """Kill switch with isolated state file to prevent cross-test contamination."""
+    import src.execution.order_entry.kill_switch as ks_mod
+
+    original_path = ks_mod._KILL_STATE_PATH
+    ks_mod._KILL_STATE_PATH = str(tmp_path / "kill_switch_state.json")
+    ks = KillSwitch()
+    yield ks
+    ks_mod._KILL_STATE_PATH = original_path
 
 
 @pytest.fixture
@@ -220,8 +227,6 @@ class TestKillSwitchSafety:
         )
 
         # Arm kill switch
-        from src.execution.order_entry.kill_switch import KillReason
-
         await kill_switch.arm(KillReason.MAX_DAILY_LOSS)
 
         # Try to BUY more (increasing) - should be rejected
