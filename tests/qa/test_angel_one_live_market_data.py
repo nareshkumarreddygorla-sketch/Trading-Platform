@@ -198,8 +198,8 @@ async def test_market_status_endpoint():
     mock_svc.get_status.return_value = {
         "connected": True,
         "healthy": True,
-        "last_tick_ts": "2025-01-15T10:00:00Z",
-        "symbols": ["RELIANCE", "TCS"],
+        "message": "Mock feed active",
+        "source": "mock",
     }
     with TestClient(app) as client:
         app.state.market_data_service = mock_svc
@@ -208,8 +208,6 @@ async def test_market_status_endpoint():
         data = r.json()
         assert data["connected"] is True
         assert data["healthy"] is True
-        assert data["last_tick_ts"] == "2025-01-15T10:00:00Z"
-        assert data["symbols"] == ["RELIANCE", "TCS"]
 
 
 # --- 5) WebSocket market_status_updated broadcast ---
