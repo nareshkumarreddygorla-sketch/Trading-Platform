@@ -489,6 +489,8 @@ class TestCircuitBreakerAllowOrder:
             cb.trip()
             cb._half_open_observation_secs = 99999  # prevent auto-promotion
             cb.reset(current_equity=100_000)
+            # Disable auto-promotion so allow_order() tests pure HALF_OPEN limiting
+            cb.check_half_open_promotion = lambda: None
 
             max_trades = cb._half_open_max_trades  # 3
 
@@ -507,6 +509,8 @@ class TestCircuitBreakerAllowOrder:
             cb.trip()
             cb._half_open_observation_secs = 99999
             cb.reset(current_equity=100_000)
+            # Disable auto-promotion so we test pure HALF_OPEN blocking
+            cb.check_half_open_promotion = lambda: None
 
             for _ in range(cb._half_open_max_trades):
                 cb.allow_order()
