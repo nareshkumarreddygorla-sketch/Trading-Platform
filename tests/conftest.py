@@ -6,6 +6,7 @@ import pytest
 
 from src.api.app import create_app
 from src.core.events import Bar, Exchange
+from src.risk_engine.manager import RiskManager
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +22,11 @@ def _isolate_circuit_state(tmp_path, monkeypatch):
 
 @pytest.fixture
 def app():
-    return create_app()
+    _app = create_app()
+    # Inject RiskManager so /risk/* endpoints don't return 503 in CI.
+    # In production, this is initialized during the execution lifespan.
+    _app.state.risk_manager = RiskManager(equity=1_000_000, load_persisted_state=False)
+    return _app
 
 
 @pytest.fixture
