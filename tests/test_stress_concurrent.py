@@ -273,7 +273,9 @@ class TestConcurrentOrderSubmission:
             t.join(timeout=30)
 
         total = len(results_by_symbol) + len(submit_errors)
-        assert total == 10, f"Expected 10 completions, got {len(results_by_symbol)} results + {len(submit_errors)} errors"
+        assert total == 10, (
+            f"Expected 10 completions, got {len(results_by_symbol)} results + {len(submit_errors)} errors"
+        )
         for sym, result in results_by_symbol.items():
             assert result.success, f"Order for {sym} failed: {result.reject_reason}"
             assert result.order_id is not None
