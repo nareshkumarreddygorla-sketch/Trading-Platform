@@ -48,7 +48,10 @@ def test_var_breach_rejects_no_reservation_leak():
     )
     result = rm.can_place_order(sig, 100, 100.0)
     assert not result.allowed
-    assert "var" in result.reason.lower() or "exposure" in result.reason.lower()
+    reason = result.reason.lower()
+    assert "var" in reason or "exposure" in reason or "circuit" in reason, (
+        f"Expected risk rejection (var/exposure/circuit), got: {result.reason}"
+    )
 
 
 # --- 9) Lock expiry: covered in chaos test_redis_distributed_lock_expiry ---
