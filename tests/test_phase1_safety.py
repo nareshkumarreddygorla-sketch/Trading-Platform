@@ -728,6 +728,10 @@ class TestPhase1Integration:
         """Every KillReason enum value must be armable without error."""
         for reason in KillReason:
             ks = KillSwitch()
+            # Disarm first to clear any persisted state from previous iteration
+            # (severity-based rejection prevents arming a lower-severity reason
+            # when a higher-severity one is already persisted).
+            await ks.disarm()
             await ks.arm(reason, f"test arming with {reason.value}")
             state = await ks.get_state()
             assert state.armed is True
