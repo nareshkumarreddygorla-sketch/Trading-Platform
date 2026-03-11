@@ -608,6 +608,9 @@ class TestCircuitBreakerThreadSafety:
 
         assert cb.state == CircuitState.HALF_OPEN
 
+        # Disable auto-promotion so allow_order() doesn't promote HALF_OPEN→CLOSED
+        cb.check_half_open_promotion = lambda: None
+
         allowed = []
         lock = threading.Lock()
 
