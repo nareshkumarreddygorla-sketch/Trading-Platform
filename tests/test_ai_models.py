@@ -260,7 +260,7 @@ class TestTransformerPredictor:
     def test_model_id_and_version(self):
         predictor = TransformerPredictor()
         assert predictor.model_id == "transformer_ts"
-        assert predictor.version == "v1"
+        assert predictor.version == "v2"
 
 
 class TestRLPredictor:
