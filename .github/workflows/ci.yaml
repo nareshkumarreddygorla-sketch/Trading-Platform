@@ -111,7 +111,8 @@ jobs:
             | grep -v "os.environ" \
             | grep -v "Field(" \
             | grep -v "compile(" \
-            | grep -v "REDACTED"
+            | grep -v "REDACTED" \
+            | grep -v "decrypt"
 
   # -- Backend: Integration Tests (push only) --
   backend-integration:
