@@ -337,18 +337,20 @@ class TestStrategyGenerator:
 
 
 class TestFIIDIITracker:
-    def test_seeded_data(self):
+    def test_empty_tracker(self):
+        """Tracker initialises with no data; get_recent_flows returns empty."""
         from src.data_pipeline.fii_dii_flow import FIIDIITracker
 
         tracker = FIIDIITracker()
         flows = tracker.get_recent_flows(10)
-        assert len(flows) >= 5
+        assert len(flows) == 0  # No seed data by design
 
     def test_analyze(self):
         from src.data_pipeline.fii_dii_flow import FIIDIITracker
 
         tracker = FIIDIITracker()
         analysis = tracker.analyze()
+        # Empty tracker returns neutral analysis
         assert analysis.trend in ("bullish", "bearish", "neutral")
         assert 0 <= analysis.signal_strength <= 1
         assert isinstance(analysis.recommendation, str)
@@ -358,6 +360,7 @@ class TestFIIDIITracker:
 
         tracker = FIIDIITracker()
         mult = tracker.to_exposure_multiplier()
+        # Empty tracker returns neutral multiplier (1.0)
         assert 0.5 <= mult <= 1.3
 
     def test_add_flow(self):
@@ -413,28 +416,25 @@ class TestFIIDIITracker:
 
 
 class TestNewsAggregator:
-    def test_sample_news_india(self):
+    def test_aggregator_init(self):
+        """Aggregator initialises with empty cache."""
         from src.data_pipeline.news_aggregator import NewsAggregator
 
         agg = NewsAggregator()
-        news = agg._sample_news("india")
-        assert len(news) >= 3
-        assert all(0 <= a.sentiment_score <= 1 for a in news)
+        assert agg._cache == []
 
-    def test_sample_news_us(self):
-        from src.data_pipeline.news_aggregator import NewsAggregator
-
-        agg = NewsAggregator()
-        news = agg._sample_news("us")
-        assert len(news) >= 2
-
-    def test_sentiment_summary(self):
-        from src.data_pipeline.news_aggregator import NewsAggregator
+    def test_sentiment_summary_with_articles(self):
+        """Sentiment summary from manually created articles."""
+        from src.data_pipeline.news_aggregator import NewsAggregator, NewsArticle
 
         agg = NewsAggregator()
-        articles = agg._sample_news("india")
+        articles = [
+            NewsArticle(title="Market rallies", source="Test", url="#", published_at="now", sentiment_score=0.8),
+            NewsArticle(title="Stocks surge", source="Test", url="#", published_at="now", sentiment_score=0.7),
+            NewsArticle(title="Mild correction", source="Test", url="#", published_at="now", sentiment_score=0.4),
+        ]
         summary = agg.get_sentiment_summary(articles)
-        assert summary.article_count == len(articles)
+        assert summary.article_count == 3
         assert 0 <= summary.overall_score <= 1
         assert summary.sentiment_label in ("bullish", "bearish", "neutral")
 
