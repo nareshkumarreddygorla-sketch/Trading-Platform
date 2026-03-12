@@ -49,14 +49,15 @@ def _make_signal(
     )
 
 
-def _make_order(order_id: str = "ORD001", status: OrderStatus = OrderStatus.OPEN) -> Order:
+def _make_order(order_id: str = "ORD001", status: OrderStatus = OrderStatus.LIVE) -> Order:
     return Order(
         order_id=order_id,
+        strategy_id="test_strategy",
         symbol="RELIANCE",
-        exchange="NSE",
-        side="BUY",
+        exchange=Exchange.NSE,
+        side=SignalSide.BUY,
         quantity=100.0,
-        order_type="LIMIT",
+        order_type=OrderType.LIMIT,
         status=status,
     )
 
