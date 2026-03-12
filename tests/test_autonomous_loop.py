@@ -199,7 +199,20 @@ class TestNSEHolidays:
             temp_path = f.name
 
         try:
-            with patch.dict(os.environ, {"NSE_HOLIDAYS_PATH": temp_path}):
+            # Patch os.path.exists to only allow our temp file (skip deploy/ path)
+            real_exists = os.path.exists
+
+            def fake_exists(p):
+                if p == temp_path:
+                    return True
+                if "nse_holidays" in str(p):
+                    return False  # block the real deploy/nse_holidays.json
+                return real_exists(p)
+
+            with (
+                patch.dict(os.environ, {"NSE_HOLIDAYS_PATH": temp_path}),
+                patch("src.execution.autonomous_loop.os.path.exists", side_effect=fake_exists),
+            ):
                 holidays = _load_nse_holidays()
                 assert (2025, 1, 26) in holidays
                 assert (2025, 8, 15) in holidays
@@ -208,7 +221,11 @@ class TestNSEHolidays:
 
     def test_fallback_to_hardcoded(self):
         """Should fallback to hardcoded holidays if no JSON found."""
-        with patch.dict(os.environ, {"NSE_HOLIDAYS_PATH": ""}, clear=False):
+        # Block all real holiday JSON files so we hit the fallback path
+        with (
+            patch.dict(os.environ, {"NSE_HOLIDAYS_PATH": ""}, clear=False),
+            patch("src.execution.autonomous_loop.os.path.exists", return_value=False),
+        ):
             holidays = _load_nse_holidays()
             # Should have at least Republic Day for current year
             current_year = datetime.now(_IST).year
