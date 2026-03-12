@@ -457,6 +457,8 @@ class TestSplitOrders:
 
     @pytest.mark.asyncio
     async def test_split_child_failure_cancels_previous(self):
+        """When a split child fails, prior children are cancelled and router
+        falls back to placing a single full-qty order (graceful degradation)."""
         gw = _make_mock_gateway()
         call_count = 0
 
@@ -472,10 +474,14 @@ class TestSplitOrders:
         freeze_mgr.check_and_split.return_value = [500, 500]
         router = OrderRouter(gw, freeze_qty_manager=freeze_mgr)
         signal = _make_signal()
-        with pytest.raises(RuntimeError, match="Split order child"):
-            await router.place_order(signal, 1000, OrderType.LIMIT, limit_price=2500.0)
+        # The router catches the split failure and falls back to full-qty order
+        order = await router.place_order(signal, 1000, OrderType.LIMIT, limit_price=2500.0)
         # Should have attempted to cancel the first successful child
         gw.cancel_order.assert_called()
+        # call 1 = split child 1 (OK), call 2 = split child 2 (fail),
+        # call 3 = fallback full-qty order
+        assert call_count == 3
+        assert order.order_id == "SPLIT003"
 
 
 # ──────────────────────────────────────────────────
