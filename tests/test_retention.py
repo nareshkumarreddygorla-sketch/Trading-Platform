@@ -270,7 +270,7 @@ class TestCleanupCycle:
         assert counts == {"archived": 0, "purged": 0, "retained": 0, "errors": 0}
 
     def test_cleanup_retains_recent_files(self, manager: RetentionManager, tmp_path):
-        data_dir = tmp_path / "data"
+        data_dir = tmp_path / "retention_data"
         data_dir.mkdir()
         (data_dir / "recent.json").write_text("{}")
         counts = manager.run_cleanup_cycle(str(data_dir), DataCategory.TRADE_RECORDS)
