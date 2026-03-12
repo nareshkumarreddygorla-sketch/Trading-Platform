@@ -90,7 +90,8 @@ class TestPriceValidation:
 
     def test_price_within_bound_passes(self, validator: TickValidator, now_utc: datetime):
         validator.set_previous_close("TCS", 100.0)
-        result = validator.validate_tick("TCS", 500.0, 100, now_utc)
+        # Price must also be within circuit limit (20%), so use 110 (within both)
+        result = validator.validate_tick("TCS", 110.0, 100, now_utc)
         assert result.is_valid is True
 
     def test_price_bound_not_checked_without_previous_close(self, validator: TickValidator, now_utc: datetime):
