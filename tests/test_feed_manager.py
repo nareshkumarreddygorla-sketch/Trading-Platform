@@ -41,10 +41,12 @@ def _make_feed(
     running: bool = True,
     connected: bool = True,
     last_tick_ts: datetime | None = None,
-) -> SimpleNamespace:
+):
     """Create a mock feed with configurable attributes."""
-    feed = SimpleNamespace()
-    feed.__class__ = type(name, (), {})  # give it a class name
+    # Dynamically create a class with the desired name (SimpleNamespace
+    # does not support __class__ reassignment).
+    cls = type(name, (), {})
+    feed = cls()
     feed._running = running
     feed._connected = connected
     feed._last_tick_ts = last_tick_ts
