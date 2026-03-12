@@ -156,13 +156,15 @@ class TestGapDetection:
         result = validator.validate_bar("NOGAP", 102.0, 105.0, 101.0, 104.0, 1000, now_utc)
         assert not any(OHLCWarning.GAP_DETECTED.value in w for w in result.warnings)
 
-    def test_overnight_gap_not_flagged(self, validator: OHLCValidator):
+    def test_overnight_gap_not_flagged(self):
         """Overnight gaps should not be flagged for intraday intervals."""
+        # Use very long stale threshold so fixed timestamps from yesterday/today are valid
+        val = OHLCValidator(stale_seconds=86400 * 365)
         yesterday = datetime(2025, 3, 10, 15, 29, 0, tzinfo=UTC)
         today = datetime(2025, 3, 11, 9, 15, 0, tzinfo=UTC)
-        validator.validate_bar("OVER", 98.0, 102.0, 97.0, 100.0, 1000, yesterday)
+        val.validate_bar("OVER", 98.0, 102.0, 97.0, 100.0, 1000, yesterday)
         # 15% gap (normally flagged), but crosses date boundary
-        result = validator.validate_bar("OVER", 115.0, 120.0, 113.0, 118.0, 1000, today)
+        result = val.validate_bar("OVER", 115.0, 120.0, 113.0, 118.0, 1000, today)
         assert not any(OHLCWarning.GAP_DETECTED.value in w for w in result.warnings)
 
 
@@ -197,22 +199,25 @@ class TestStaleBar:
 
 
 class TestMissingBars:
-    def test_missing_bars_flagged(self, validator: OHLCValidator, now_utc: datetime):
-        # First bar at t
+    def test_missing_bars_flagged(self, now_utc: datetime):
+        # Use a long stale threshold so older bars are still valid
+        val = OHLCValidator(stale_seconds=3600.0)
+        # First bar at t-10min
         t1 = now_utc - timedelta(minutes=10)
-        validator.validate_bar("MISS", 100.0, 105.0, 98.0, 103.0, 500, t1, interval="1m")
-        # Next bar at t+5min (should have had 4 bars between them)
+        val.validate_bar("MISS", 100.0, 105.0, 98.0, 103.0, 500, t1, interval="1m")
+        # Next bar at t-5min (should have had ~4 bars between them)
         t2 = now_utc - timedelta(minutes=5)
-        result = validator.validate_bar("MISS", 103.0, 108.0, 101.0, 106.0, 500, t2, interval="1m")
+        result = val.validate_bar("MISS", 103.0, 108.0, 101.0, 106.0, 500, t2, interval="1m")
         # Gap of 300s with 60s intervals → 4 missing bars
         assert result.missing_bar_count > 0
         assert any(OHLCWarning.MISSING_BARS.value in w for w in result.warnings)
 
-    def test_consecutive_bars_no_missing(self, validator: OHLCValidator, now_utc: datetime):
+    def test_consecutive_bars_no_missing(self, now_utc: datetime):
+        val = OHLCValidator(stale_seconds=3600.0)
         t1 = now_utc - timedelta(minutes=2)
         t2 = now_utc - timedelta(minutes=1)
-        validator.validate_bar("SEQ", 100.0, 105.0, 98.0, 103.0, 500, t1, interval="1m")
-        result = validator.validate_bar("SEQ", 103.0, 108.0, 101.0, 106.0, 500, t2, interval="1m")
+        val.validate_bar("SEQ", 100.0, 105.0, 98.0, 103.0, 500, t1, interval="1m")
+        result = val.validate_bar("SEQ", 103.0, 108.0, 101.0, 106.0, 500, t2, interval="1m")
         assert result.missing_bar_count == 0
 
 
@@ -266,13 +271,15 @@ class TestStats:
         assert summary["valid_bars"] == 1
         assert summary["rejected_bars"] == 1
 
-    def test_gap_and_missing_bar_counts(self, validator: OHLCValidator, now_utc: datetime):
+    def test_gap_and_missing_bar_counts(self, now_utc: datetime):
+        # Use long stale threshold so older bars are still valid
+        val = OHLCValidator(stale_seconds=3600.0)
         t1 = now_utc - timedelta(minutes=10)
         t2 = now_utc - timedelta(minutes=5)
-        validator.validate_bar("GM", 100.0, 105.0, 98.0, 100.0, 500, t1, interval="1m")
+        val.validate_bar("GM", 100.0, 105.0, 98.0, 100.0, 500, t1, interval="1m")
         # Large gap: opens at 120 (20% gap) + 5 min elapsed for 1m bars
-        validator.validate_bar("GM", 120.0, 125.0, 118.0, 122.0, 500, t2, interval="1m")
-        stats = validator.get_stats("GM")
+        val.validate_bar("GM", 120.0, 125.0, 118.0, 122.0, 500, t2, interval="1m")
+        stats = val.get_stats("GM")
         assert stats["total_gaps_detected"] >= 1
         assert stats["total_missing_bars"] >= 1
 
