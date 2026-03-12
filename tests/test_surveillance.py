@@ -79,33 +79,45 @@ class TestConstruction:
 
 class TestLayeringDetection:
     def test_layering_detected(self, strict_engine: SurveillanceEngine):
-        """Place orders at different price levels, cancel most, detect layering."""
-        # Place 4 BUY orders at different prices
-        for i, price in enumerate([100.0, 101.0, 102.0, 103.0]):
-            strict_engine.record_order(f"ORD{i}", "ALGO1", "RELIANCE", "BUY", price, 50.0)
+        """Place orders at different price levels, cancel most, detect layering.
 
-        # Cancel 3 of 4 (75% cancel ratio > 50% threshold)
-        for i in range(3):
-            alerts = strict_engine.record_cancellation(f"ORD{i}")
+        Layering detection runs inside record_order(), so after cancelling
+        several prior orders we submit a *new* order to trigger the check.
+        strict_engine: layering_min_levels=2, layering_cancel_ratio=0.5
+        """
+        # Place 2 BUY orders at different prices
+        strict_engine.record_order("ORD0", "ALGO1", "RELIANCE", "BUY", 100.0, 50.0)
+        strict_engine.record_order("ORD1", "ALGO1", "RELIANCE", "BUY", 101.0, 50.0)
 
-        # The last cancellation should trigger layering
+        # Cancel both (100% cancel ratio, well above 50% threshold)
+        strict_engine.record_cancellation("ORD0")
+        strict_engine.record_cancellation("ORD1")
+
+        # Place a new order at a different price — triggers _detect_layering.
+        # Now 3 orders, 3 distinct prices, 2 cancelled / 3 total = 67% >= 50%
+        alerts = strict_engine.record_order("ORD_TRIGGER", "ALGO1", "RELIANCE", "BUY", 102.0, 50.0)
+
         assert len(alerts) > 0 or len(strict_engine.get_alerts(pattern=ManipulationPattern.LAYERING)) > 0
 
     def test_no_layering_below_min_levels(self, engine: SurveillanceEngine):
-        """With default min_levels=3, only 2 orders should not trigger."""
+        """With default min_levels=3, only 2 orders should not trigger.
+
+        Layering is checked in record_order(), not record_cancellation().
+        """
         engine.record_order("O1", "ALGO1", "SYM", "BUY", 100.0, 50.0)
-        engine.record_order("O2", "ALGO1", "SYM", "BUY", 101.0, 50.0)
         engine.record_cancellation("O1")
-        alerts = engine.record_cancellation("O2")
-        # Not enough levels for layering
+        # Place a second order — only 2 distinct price levels, below min_levels=3
+        alerts = engine.record_order("O2", "ALGO1", "SYM", "BUY", 101.0, 50.0)
         assert len(alerts) == 0
 
     def test_no_layering_with_low_cancel_ratio(self, strict_engine: SurveillanceEngine):
         """If cancel ratio is below threshold, no layering alert."""
-        for i, price in enumerate([100.0, 101.0, 102.0, 103.0]):
+        for i, price in enumerate([100.0, 101.0, 102.0]):
             strict_engine.record_order(f"ORD{i}", "ALGO1", "SYM", "BUY", price, 50.0)
-        # Cancel only 1 of 4 (25% < 50%)
-        alerts = strict_engine.record_cancellation("ORD0")
+        # Cancel only 1 of 3 (33% < 50%)
+        strict_engine.record_cancellation("ORD0")
+        # New order triggers layering check — but cancel ratio too low
+        alerts = strict_engine.record_order("ORD_TRIGGER", "ALGO1", "SYM", "BUY", 103.0, 50.0)
         assert len(alerts) == 0
 
 
