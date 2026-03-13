@@ -192,6 +192,8 @@ export const endpoints = {
   }>("/api/v1/trading/mode"),
   toggleAutonomous: (enabled: boolean) =>
     api.put<{ status: string; autonomous: boolean }>("/api/v1/trading/autonomous", { enabled }),
+  setTradingMode: (mode: "paper" | "live") =>
+    api.put<{ mode: string; switched: boolean; message: string }>("/api/v1/trading/mode", { mode }),
 
   // Auth
   login: (body: { username: string; password: string }) =>
