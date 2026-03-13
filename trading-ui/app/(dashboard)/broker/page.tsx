@@ -697,6 +697,170 @@ export default function BrokerPage() {
         </motion.div>
       )}
 
+      {/* ── Trading Controls: Two Independent Switches ── */}
+      {isConnected && configStep === "idle" && (
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }}>
+          <div className="glass-card p-6">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                <Activity className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold">Trading Controls</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Control how your system trades</p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              {/* Switch 1: Paper / Live */}
+              <div className="rounded-xl border border-border/30 bg-muted/5 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-sm font-semibold">Trading Mode</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      {isLive ? "Real orders with real money" : "Simulated orders, real market data"}
+                    </div>
+                  </div>
+                  <span className={cn(
+                    "text-[10px] font-bold px-2.5 py-1 rounded-full",
+                    isLive
+                      ? "bg-warning/10 text-warning border border-warning/30"
+                      : "bg-primary/10 text-primary border border-primary/30"
+                  )}>
+                    {isLive ? "LIVE" : "PAPER"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-muted/20 border border-border/20">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isLive) return;
+                      endpoints.setTradingMode("paper").then(() => {
+                        queryClient.invalidateQueries({ queryKey: ["broker-status"] });
+                        queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
+                        dispatchToast("success", "Paper Mode", "Switched to paper trading — orders are simulated.");
+                      }).catch((err: Error) => {
+                        dispatchToast("error", "Switch Failed", err.message);
+                      });
+                    }}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all",
+                      !isLive
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/20"
+                    )}
+                  >
+                    <Shield className="h-3.5 w-3.5" />
+                    Paper
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isLive) return;
+                      if (!confirm("Switch to LIVE trading? Real orders will be placed with your broker using real money.")) return;
+                      endpoints.setTradingMode("live").then((res) => {
+                        queryClient.invalidateQueries({ queryKey: ["broker-status"] });
+                        queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
+                        dispatchToast("success", "Live Mode", res.message);
+                      }).catch((err: Error) => {
+                        dispatchToast("error", "Switch Failed", err.message);
+                      });
+                    }}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all",
+                      isLive
+                        ? "bg-warning text-black shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/20"
+                    )}
+                  >
+                    <Zap className="h-3.5 w-3.5" />
+                    Live
+                  </button>
+                </div>
+              </div>
+
+              {/* Switch 2: Manual / Autonomous */}
+              <div className="rounded-xl border border-border/30 bg-muted/5 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-sm font-semibold">Execution Mode</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      {autonomousRunning ? "AI generates signals & executes trades" : "Manual order placement only"}
+                    </div>
+                  </div>
+                  <span className={cn(
+                    "text-[10px] font-bold px-2.5 py-1 rounded-full",
+                    autonomousRunning
+                      ? "bg-profit/10 text-profit border border-profit/30"
+                      : "bg-muted/20 text-muted-foreground border border-border/30"
+                  )}>
+                    {autonomousRunning ? "AUTO" : "MANUAL"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-muted/20 border border-border/20">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!autonomousRunning) return;
+                      autonomousMutation.mutate(false);
+                      dispatchToast("success", "Manual Mode", "Autonomous trading stopped. Place orders manually.");
+                    }}
+                    disabled={autonomousMutation.isPending}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all",
+                      !autonomousRunning
+                        ? "bg-foreground/10 text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/20",
+                      autonomousMutation.isPending && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    <Square className="h-3.5 w-3.5" />
+                    Manual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (autonomousRunning) return;
+                      autonomousMutation.mutate(true);
+                      dispatchToast("success", "Autonomous Mode", "AI trading started — signals will be generated automatically.");
+                    }}
+                    disabled={autonomousMutation.isPending || tradingModeData?.safe_mode}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all",
+                      autonomousRunning
+                        ? "bg-profit text-profit-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/20",
+                      (autonomousMutation.isPending || tradingModeData?.safe_mode) && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    <Play className="h-3.5 w-3.5" />
+                    Autonomous
+                  </button>
+                </div>
+                {tradingModeData?.safe_mode && (
+                  <p className="text-[10px] text-loss mt-2">Safe mode active — cannot enable autonomous trading.</p>
+                )}
+              </div>
+            </div>
+
+            {/* Status summary */}
+            <div className="mt-4 flex items-center gap-4 rounded-lg bg-muted/10 px-4 py-2.5 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <span className={cn("h-1.5 w-1.5 rounded-full", isLive ? "bg-warning" : "bg-primary")} />
+                {isLive ? "Live" : "Paper"}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className={cn("h-1.5 w-1.5 rounded-full", autonomousRunning ? "bg-profit animate-pulse" : "bg-muted-foreground")} />
+                {autonomousRunning ? "Autonomous" : "Manual"}
+              </span>
+              <span>{tickCount} ticks</span>
+              <span>{openTrades} active trades</span>
+              <span>Circuit: {tradingModeData?.circuit_open ? "OPEN" : "CLOSED"}</span>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* Market Feed */}
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
         <div className={cn(

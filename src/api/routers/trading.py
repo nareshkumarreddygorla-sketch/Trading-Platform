@@ -193,6 +193,83 @@ async def trading_mode(request: Request, current_user: dict = Depends(get_curren
     }
 
 
+@router.put("/trading/mode")
+async def set_trading_mode(request: Request, body: dict = None, current_user: dict = Depends(get_current_user)):
+    """
+    Switch between paper and live trading mode using already-stored credentials.
+    Body: {"mode": "paper" | "live"}
+
+    - Switching to paper: instant, no confirmation needed.
+    - Switching to live: requires broker credentials to be configured first.
+      Returns gateway.paper = False so real orders go to the broker.
+    """
+    body = body or {}
+    mode = body.get("mode", "paper")
+    if mode not in ("paper", "live"):
+        return JSONResponse(status_code=400, content={"error": "mode must be 'paper' or 'live'"})
+
+    gateway = getattr(request.app.state, "gateway", None)
+    if gateway is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "gateway_not_initialized", "message": "Gateway not available"},
+        )
+
+    has_creds = bool(getattr(gateway, "api_key", None) and getattr(gateway, "_client_code", None))
+    if not has_creds:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "no_credentials",
+                "message": "Configure broker credentials first via /broker/configure",
+            },
+        )
+
+    current_mode = "paper" if getattr(gateway, "paper", True) else "live"
+    if current_mode == mode:
+        return {"mode": mode, "switched": False, "message": f"Already in {mode} mode"}
+
+    import os
+
+    actor = current_user.get("user_id", "unknown")
+
+    if mode == "paper":
+        gateway.paper = True
+        os.environ["EXEC_PAPER"] = "true"
+        logger.info("AUDIT | trading/mode | actor=%s | switched to PAPER", actor)
+
+        return {"mode": "paper", "switched": True, "message": "Switched to paper trading — orders are simulated"}
+
+    # Switching to live
+    has_client = getattr(gateway, "_client", None) is not None
+    if not has_client:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "client_not_configured",
+                "message": "Broker client not initialized. Reconnect via /broker/configure with live mode.",
+            },
+        )
+
+    gateway.paper = False
+    os.environ["EXEC_PAPER"] = "false"
+    logger.info("AUDIT | trading/mode | actor=%s | switched to LIVE", actor)
+
+    # Audit trail
+    audit_repo = getattr(request.app.state, "audit_repo", None)
+    if audit_repo:
+        try:
+            audit_repo.append_sync("trading_mode_switch", actor, {"mode": "live"})
+        except Exception:
+            pass
+
+    return {
+        "mode": "live",
+        "switched": True,
+        "message": "Switched to LIVE trading — real orders will be placed with your broker",
+    }
+
+
 @router.put("/trading/autonomous")
 async def set_autonomous_mode(
     request: Request, body: dict = None, current_user: dict = Depends(require_roles(["admin"]))
